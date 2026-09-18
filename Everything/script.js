@@ -48,6 +48,22 @@ function seedData(){
 }
 
 function cid(){ return 'i_' + Math.random().toString(36).slice(2,10); }
+function formatDueDisplay(iso){
+  if(!iso) return '';
+  const d = new Date(iso), now = new Date();
+  const timeStr = d.toLocaleTimeString(undefined,{hour:'numeric', minute:'2-digit'});
+  if(d.toDateString() === now.toDateString()) return 'Today, ' + timeStr;
+  const tmrw = new Date(now); tmrw.setDate(now.getDate()+1);
+  if(d.toDateString() === tmrw.toDateString()) return 'Tomorrow, ' + timeStr;
+  return d.toLocaleDateString(undefined,{month:'short', day:'numeric'}) + ', ' + timeStr;
+}
+function nextOccurrence(iso, recurrence){
+  const d = new Date(iso);
+  if(recurrence === 'daily') d.setDate(d.getDate()+1);
+  else if(recurrence === 'weekly') d.setDate(d.getDate()+7);
+  else if(recurrence === 'monthly') d.setMonth(d.getMonth()+1);
+  return d.toISOString();
+}
 
 /* ============================================================
    MULTI-USER DATA LAYER
@@ -257,7 +273,7 @@ function taskRow(item){
   if(item.due){
     const t = document.createElement('div');
     t.className = 'task-time';
-    t.textContent = item.due;
+    t.textContent = (item.recurrence && item.recurrence!=='none' ? '🔁 ' : '') + item.due;
     row.appendChild(t);
   }
   const badgeText = item.priority || item.status || item.kind;
@@ -272,7 +288,15 @@ function taskRow(item){
 
 async function toggleDone(id){
   const item = state.items.find(i=>i.id===id);
-  if(item){ item.done = !item.done; await dbSaveItem(item); }
+  if(!item) return;
+  item.done = !item.done;
+  await dbSaveItem(item);
+  if(item.done && item.recurrence && item.recurrence !== 'none' && item.dueDate){
+    const nextDue = nextOccurrence(item.dueDate, item.recurrence);
+    const next = { ...item, id: cid(), done:false, dueDate: nextDue, due: formatDueDisplay(nextDue), created: Date.now() };
+    state.items.unshift(next);
+    await dbSaveItem(next);
+  }
 }
 
 function renderInbox(filter){
@@ -435,6 +459,40 @@ function closePanel(){
   document.getElementById('panel').classList.remove('open');
   currentItemId = null;
 }
+function openEditModal(){
+  if(!currentItemId) return;
+  const item = state.items.find(i=>i.id===currentItemId);
+  if(!item) return;
+  document.getElementById('editTitle').value = item.title || '';
+  document.getElementById('editSub').value = item.sub || '';
+  document.getElementById('editPriority').value = item.priority || '';
+  document.getElementById('editDueDate').value = item.dueDate ? item.dueDate.slice(0,16) : '';
+  document.getElementById('editRecurrence').value = item.recurrence || 'none';
+  document.getElementById('editPerson').value = item.person || '';
+  const projSel = document.getElementById('editProject');
+  projSel.innerHTML = '<option value="">No project</option>' + state.projects.map(p=>`<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('');
+  projSel.value = item.project || '';
+  document.getElementById('editModal').classList.add('open');
+}
+function closeEditModal(){ document.getElementById('editModal').classList.remove('open'); }
+async function saveEdit(){
+  const item = state.items.find(i=>i.id===currentItemId);
+  if(!item) return closeEditModal();
+  item.title = document.getElementById('editTitle').value.trim() || item.title;
+  item.sub = document.getElementById('editSub').value.trim();
+  item.priority = document.getElementById('editPriority').value;
+  item.dueDate = document.getElementById('editDueDate').value ? new Date(document.getElementById('editDueDate').value).toISOString() : '';
+  item.recurrence = document.getElementById('editRecurrence').value;
+  item.person = document.getElementById('editPerson').value.trim();
+  item.project = document.getElementById('editProject').value;
+  const editDueVal = document.getElementById('editDueDate').value;
+  item.dueDate = editDueVal ? new Date(editDueVal).toISOString() : '';
+  item.recurrence = document.getElementById('editRecurrence').value;
+  if(item.dueDate) item.due = formatDueDisplay(item.dueDate);
+  closeEditModal();
+  closePanel();
+  await dbSaveItem(item);
+}
 async function completeCurrent(){
   if(!currentItemId) return;
   await toggleDone(currentItemId);
@@ -469,6 +527,8 @@ function openCapture(){
   document.getElementById('captureHint').textContent = '';
   populateProjectSelect();
   document.getElementById('captureModal').classList.add('open');
+  document.getElementById('captureDueDate').value = '';
+  document.getElementById('captureRecurrence').value = 'none';
   setTimeout(()=>document.getElementById('captureText').focus(), 50);
 }
 function populateProjectSelect(){
@@ -503,9 +563,15 @@ async function saveCapture(){
   const kindMap = {text:'memory', task:'task', event:'event', memory:'memory'};
   const kind = kindMap[captureType] || 'memory';
   const project = document.getElementById('captureProject').value;
+  const dueVal = document.getElementById('captureDueDate').value;
+  const dueISO = dueVal ? new Date(dueVal).toISOString() : '';
+  const recurrence = document.getElementById('captureRecurrence').value;
   const newItem = {
     id:cid(), kind, title:text, sub: kind==='task' ? 'Captured task' : (kind==='event' ? 'Captured event' : 'Memory'),
-    priority: kind==='task' ? 'medium':'', person:'', due: kind==='task' ? 'Today' : '', status: kind==='task' ? 'Today':'', project, created: Date.now(), done:false,
+    priority: kind==='task' ? 'medium':'', person:'',
+    due: dueISO ? formatDueDisplay(dueISO) : (kind==='task' ? 'Today' : ''),
+    dueDate: dueISO, recurrence,
+    status: kind==='task' ? 'Today':'', project, created: Date.now(), done:false,
     scope: captureScope
   };
   state.items.unshift(newItem);
@@ -607,8 +673,42 @@ function renderAll(){
   renderReports();
   if(activeView==='schedule') renderCalendar();
 }
+let notifiedIds = new Set(JSON.parse(localStorage.getItem('notified_ids') || '[]'));
 
+function requestNotifications(){
+  if(!('Notification' in window)){
+    alert('Notifications aren\'t supported in this browser.');
+    return;
+  }
+  Notification.requestPermission().then(perm => {
+    updateNotifBtn();
+    if(perm === 'granted'){
+      new Notification('Everything', { body: 'Reminders are on — you\'ll get notified when tasks are due.' });
+    }
+  });
+}
+function updateNotifBtn(){
+  const btn = document.getElementById('notifBtn');
+  if(!btn || !('Notification' in window)) return;
+  const perm = Notification.permission;
+  btn.textContent = perm === 'granted' ? '✓ Enabled' : (perm === 'denied' ? 'Blocked — check browser settings' : 'Enable notifications');
+}
+function checkDueNotifications(){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  const now = Date.now();
+  state.items.forEach(item => {
+    if(item.done || !item.dueDate || notifiedIds.has(item.id)) return;
+    const due = new Date(item.dueDate).getTime();
+    if(due <= now && due > now - 5*60000){ // due within the last 5 minutes, not missed by too much
+      new Notification('Due now: ' + item.title, { body: item.sub || 'Tap to open Everything', icon: '' });
+      notifiedIds.add(item.id);
+      localStorage.setItem('notified_ids', JSON.stringify([...notifiedIds]));
+    }
+  });
+}
 /* ---------- Init ---------- */
 document.getElementById('hamburger').style.display = window.innerWidth<900 ? 'flex':'none';
 window.addEventListener('resize', ()=>{ document.getElementById('hamburger').style.display = window.innerWidth<900 ? 'flex':'none'; });
 initMultiUser();
+updateNotifBtn();
+setInterval(checkDueNotifications, 30000);

@@ -134,6 +134,7 @@
       </div>
       <div class="view" id="view-insights"><h1 class="page-title">Insights</h1><p class="page-sub">Patterns Everything has noticed.</p><div class="card" id="insightsFull"></div></div>
       <div class="view" id="view-settings"><h1 class="page-title">Settings</h1><p class="page-sub">Prototype settings.</p>
+        <div class="field-row"> <span class="field-label">Task reminders</span> <button class="btn" id="notifBtn" onclick="requestNotifications()">Enable notifications</button> </div>
         <div class="card">
           <div class="field-row"><span class="field-label">Theme</span><button class="btn" onclick="toggleTheme()">Toggle light / dark</button></div>
           <div class="field-row"><span class="field-label">Reset prototype data</span><button class="btn danger" onclick="resetData()">Reset</button></div>
@@ -162,6 +163,7 @@
     <div class="field-row"><span class="field-label">Created</span><span id="panelCreated"></span></div>
   </div>
   <div class="panel-actions">
+    <button class="btn" onclick="openEditModal()">✏️ Edit</button>
     <button class="btn primary" onclick="completeCurrent()">✓ Mark complete</button>
     <button class="btn danger" onclick="deleteCurrent()">Delete</button>
   </div>
@@ -170,22 +172,281 @@
 <!-- Capture modal -->
 <div class="modal-overlay" id="captureModal">
   <div class="modal">
+
     <h3>Capture something</h3>
+
+    <!-- Capture type -->
     <div class="type-row" id="typeRow"></div>
+
+    <!-- Visibility -->
     <div class="type-row" id="visibilityRow" style="margin-top:-6px;">
-      <div class="type-chip active" data-scope="shared" onclick="pickScope('shared')">🌐 Shared</div>
-      <div class="type-chip" data-scope="private" onclick="pickScope('private')">🔒 Private (only me)</div>
+      <div
+        class="type-chip active"
+        data-scope="shared"
+        onclick="pickScope('shared')">
+        🌐 Shared
+      </div>
+
+      <div
+        class="type-chip"
+        data-scope="private"
+        onclick="pickScope('private')">
+        🔒 Private (only me)
+      </div>
     </div>
-    <textarea id="captureText" placeholder="What's on your mind?" oninput="onCaptureInput()"></textarea>
-    <p style="font-size:12px;color:var(--accent);min-height:16px;margin:6px 0 0;" id="captureHint"></p>
+
+    <!-- Main text -->
+    <textarea
+      id="captureText"
+      placeholder="What's on your mind?"
+      oninput="onCaptureInput()"></textarea>
+
+    <!-- Capture hint -->
+    <p
+      style="font-size:12px;color:var(--accent);min-height:16px;margin:6px 0 0;"
+      id="captureHint">
+    </p>
+
+    <!-- Priority + Due date -->
+    <div
+      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+      <!-- Priority -->
+      <div>
+        <label style="font-size:12.5px;color:var(--muted);">
+          Priority
+        </label>
+
+        <select
+          id="capturePriority"
+          style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+          <option value="">None</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+
+        </select>
+      </div>
+
+      <!-- Due date & time -->
+      <div>
+        <label style="font-size:12.5px;color:var(--muted);">
+          Due date & time
+        </label>
+
+        <input
+          type="datetime-local"
+          id="captureDueDate"
+          class="capture-input"
+          style="margin:4px 0 0;">
+      </div>
+
+    </div>
+
+    <!-- Recurrence + Person -->
+    <div
+      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+      <!-- Repeats -->
+      <div>
+        <label style="font-size:12.5px;color:var(--muted);">
+          Repeats
+        </label>
+
+        <select
+          id="captureRecurrence"
+          style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+          <option value="none">Doesn't repeat</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+
+        </select>
+      </div>
+
+      <!-- Person -->
+      <div>
+        <label style="font-size:12.5px;color:var(--muted);">
+          Person
+        </label>
+
+        <input
+          class="capture-input"
+          id="capturePerson"
+          placeholder="e.g. Ravi"
+          style="margin:4px 0 0;">
+      </div>
+
+    </div>
+
+    <!-- Project -->
     <div style="margin-top:10px;">
-      <label style="font-size:12.5px;color:var(--muted);">Project (optional)</label>
-      <select id="captureProject" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;"></select>
+
+      <label style="font-size:12.5px;color:var(--muted);">
+        Project (optional)
+      </label>
+
+      <select
+        id="captureProject"
+        style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+      </select>
+
     </div>
+
+    <!-- Capture actions -->
     <div class="modal-actions">
-      <button class="btn" onclick="closeCapture()">Cancel</button>
-      <button class="btn primary" onclick="saveCapture()">Save</button>
+
+      <button
+        class="btn"
+        onclick="closeCapture()">
+        Cancel
+      </button>
+
+      <button
+        class="btn primary"
+        onclick="saveCapture()">
+        Save
+      </button>
+
     </div>
+
+  </div>
+</div>
+
+
+<!-- Edit modal -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+
+    <h3>Edit item</h3>
+
+    <!-- Title -->
+    <input
+      class="capture-input"
+      id="editTitle"
+      placeholder="Title">
+
+    <!-- Details -->
+    <textarea
+      id="editSub"
+      placeholder="Details"
+      style="width:100%;min-height:60px;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;margin-top:10px;"></textarea>
+
+    <!-- Priority + Due date -->
+    <div
+      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+      <!-- Priority -->
+      <div>
+
+        <label style="font-size:12.5px;color:var(--muted);">
+          Priority
+        </label>
+
+        <select
+          id="editPriority"
+          style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+          <option value="">None</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+
+        </select>
+
+      </div>
+
+      <!-- Due date & time -->
+      <div>
+
+        <label style="font-size:12.5px;color:var(--muted);">
+          Due date & time
+        </label>
+
+        <input
+          type="datetime-local"
+          id="editDueDate"
+          class="capture-input"
+          style="margin:4px 0 0;">
+
+      </div>
+
+    </div>
+
+    <!-- Repeats + Person -->
+    <div
+      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+      <!-- Repeats -->
+      <div>
+
+        <label style="font-size:12.5px;color:var(--muted);">
+          Repeats
+        </label>
+
+        <select
+          id="editRecurrence"
+          style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+          <option value="none">Doesn't repeat</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+
+        </select>
+
+      </div>
+
+      <!-- Person -->
+      <div>
+
+        <label style="font-size:12.5px;color:var(--muted);">
+          Person
+        </label>
+
+        <input
+          class="capture-input"
+          id="editPerson"
+          placeholder="e.g. Ravi"
+          style="margin:4px 0 0;">
+
+      </div>
+
+    </div>
+
+    <!-- Project -->
+    <div style="margin-top:10px;">
+
+      <label style="font-size:12.5px;color:var(--muted);">
+        Project
+      </label>
+
+      <select
+        id="editProject"
+        style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+      </select>
+
+    </div>
+
+    <!-- Edit actions -->
+    <div class="modal-actions">
+
+      <button
+        class="btn"
+        onclick="closeEditModal()">
+        Cancel
+      </button>
+
+      <button
+        class="btn primary"
+        onclick="saveEdit()">
+        Save changes
+      </button>
+
+    </div>
+
   </div>
 </div>
 
