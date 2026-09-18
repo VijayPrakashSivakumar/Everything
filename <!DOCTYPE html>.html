@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Everything</title>
+<style>
+  :root{
+    --sidebar:#10152b;
+    --sidebar-hover:#1b2246;
+    --sidebar-active:#2b3568;
+    --accent:#4361ee;
+    --accent-2:#7b2ff7;
+    --bg:#f5f6fb;
+    --card:#ffffff;
+    --border:#e6e8f2;
+    --text:#161a2e;
+    --muted:#6b7185;
+    --red-bg:#fde8e8; --red-fg:#c81e3a;
+    --amber-bg:#fef3d6; --amber-fg:#a8710a;
+    --green-bg:#e3f8ec; --green-fg:#0f8a4b;
+    --blue-bg:#e8edff; --blue-fg:#3348c9;
+    --purple-bg:#f1e8ff; --purple-fg:#7429c9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0b0d17; --card:#141726; --border:#252a42; --text:#eef0fb; --muted:#8b90ab;
+      --sidebar:#0a0d1c; --sidebar-hover:#161c38; --sidebar-active:#232c58;
+      --red-bg:#3a1520; --amber-bg:#3a2e0f; --green-bg:#0f2e20; --blue-bg:#151d3d; --purple-bg:#241536;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b0d17; --card:#141726; --border:#252a42; --text:#eef0fb; --muted:#8b90ab;
+    --sidebar:#0a0d1c; --sidebar-hover:#161c38; --sidebar-active:#232c58;
+    --red-bg:#3a1520; --amber-bg:#3a2e0f; --green-bg:#0f2e20; --blue-bg:#151d3d; --purple-bg:#241536;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);}
+  .app{display:flex;height:100vh;overflow:hidden;}
+
+  /* Sidebar */
+  .sidebar{width:230px;background:var(--sidebar);color:#cfd3ec;flex-shrink:0;display:flex;flex-direction:column;padding:18px 12px;overflow-y:auto;}
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 18px;}
+  .brand-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent-2));flex-shrink:0;}
+  .brand-name{font-weight:700;font-size:15px;letter-spacing:0.3px;color:#fff;}
+  .nav{display:flex;flex-direction:column;gap:2px;flex:1;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px;color:#b8bcda;justify-content:space-between;}
+  .nav-item .left{display:flex;align-items:center;gap:10px;}
+  .nav-item:hover{background:var(--sidebar-hover);color:#fff;}
+  .nav-item.active{background:var(--sidebar-active);color:#fff;}
+  .nav-icon{width:18px;text-align:center;opacity:0.9;}
+  .nav-badge{background:#2b3568;color:#dfe3ff;font-size:11px;padding:1px 7px;border-radius:10px;}
+  .nav-item.active .nav-badge{background:var(--accent);}
+  .capture-btn{margin-top:14px;background:var(--accent);color:#fff;border:none;border-radius:9px;padding:11px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;}
+  .capture-btn:hover{opacity:0.92;}
+
+  /* Main */
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+  .topbar{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--card);}
+  .search-box{flex:1;display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:9px 14px;color:var(--muted);cursor:pointer;}
+  .search-box input{border:none;background:transparent;outline:none;flex:1;color:var(--text);font-size:14px;}
+  .icon-btn{width:36px;height:36px;border-radius:9px;border:1px solid var(--border);background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);font-size:16px;position:relative;}
+  .icon-btn:hover{background:var(--bg);}
+  .theme-dot{position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--accent);display:none;}
+  .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;}
+
+  .content{flex:1;overflow-y:auto;padding:24px;}
+  .view{display:none;}
+  .view.active{display:block;}
+
+  h1.page-title{font-size:22px;margin:0 0 2px;}
+  .page-sub{color:var(--muted);font-size:13.5px;margin:0 0 18px;}
+
+  .stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+  .stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:12px;}
+  .stat-num{font-size:20px;font-weight:700;}
+  .stat-label{font-size:12.5px;color:var(--muted);}
+  .stat-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+
+  .grid-2{display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;}
+  .card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  .card-head h3{margin:0;font-size:15px;}
+  .link-btn{color:var(--accent);font-size:13px;cursor:pointer;background:none;border:none;font-weight:600;}
+
+  .task-row{display:flex;align-items:center;gap:12px;padding:11px 8px;border-radius:9px;cursor:pointer;border:1px solid transparent;}
+  .task-row:hover{background:var(--bg);}
+  .task-row.done .task-title{text-decoration:line-through;color:var(--muted);}
+  .checkbox{width:18px;height:18px;border-radius:5px;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .checkbox.checked{background:var(--green-fg);border-color:var(--green-fg);color:#fff;font-size:12px;}
+  .task-meta{flex:1;min-width:0;}
+  .task-title{font-size:14px;font-weight:600;}
+  .task-sub{font-size:12.5px;color:var(--muted);}
+  .task-time{font-size:12.5px;color:var(--muted);white-space:nowrap;}
+  .badge{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:6px;white-space:nowrap;}
+  .badge.high{background:var(--red-bg);color:var(--red-fg);}
+  .badge.medium{background:var(--amber-bg);color:var(--amber-fg);}
+  .badge.low{background:var(--green-bg);color:var(--green-fg);}
+  .badge.work, .badge.event{background:var(--blue-bg);color:var(--blue-fg);}
+  .badge.waiting{background:var(--purple-bg);color:var(--purple-fg);}
+  .badge.task{background:var(--blue-bg);color:var(--blue-fg);}
+
+  .capture-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+  .capture-input{width:100%;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:13.5px;color:var(--text);margin-bottom:10px;}
+  .recent-item{display:flex;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border);cursor:pointer;}
+  .recent-item:last-child{border-bottom:none;}
+  .recent-dot{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .recent-text{font-size:13.5px;font-weight:500;}
+  .recent-tag{font-size:11.5px;color:var(--muted);}
+  .recent-time{font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap;}
+
+  .insight-item{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);}
+  .insight-item:last-child{border-bottom:none;}
+  .insight-title{font-size:13.5px;font-weight:600;}
+  .insight-sub{font-size:12.5px;color:var(--muted);}
+
+  .hero-card{background:linear-gradient(160deg,var(--accent),var(--accent-2));color:#fff;border-radius:12px;padding:18px;margin-bottom:16px;font-size:14px;font-weight:600;line-height:1.5;min-height:90px;}
+
+  .nudge{display:flex;justify-content:space-between;align-items:center;background:var(--amber-bg);border-radius:9px;padding:12px 14px;margin-top:8px;gap:12px;}
+  .nudge-text b{color:var(--text);}
+  .nudge-sub{font-size:12.5px;color:var(--muted);}
+  .btn-small{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:7px 13px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;}
+
+  /* Inbox */
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
+  .tab{padding:7px 13px;border-radius:8px;font-size:13px;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:var(--card);}
+  .tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .inbox-list{display:flex;flex-direction:column;gap:2px;}
+
+  /* Task detail panel (slide-over) */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;z-index:40;}
+  .overlay.open{display:block;}
+  .panel{position:fixed;top:0;right:0;height:100%;width:420px;max-width:92vw;background:var(--card);z-index:50;box-shadow:-8px 0 30px rgba(0,0,0,0.15);transform:translateX(100%);transition:transform .25s ease;display:flex;flex-direction:column;}
+  .panel.open{transform:translateX(0);}
+  .panel-head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);}
+  .panel-body{padding:20px;overflow-y:auto;flex:1;}
+  .close-x{cursor:pointer;font-size:18px;color:var(--muted);background:none;border:none;}
+  .field-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);font-size:13.5px;}
+  .field-label{color:var(--muted);}
+  .panel-actions{display:flex;gap:8px;padding:16px 20px;border-top:1px solid var(--border);}
+  .btn{padding:9px 16px;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--card);color:var(--text);}
+  .btn.primary{background:var(--green-fg);border-color:var(--green-fg);color:#fff;}
+  .btn.danger{background:var(--card);color:var(--red-fg);border-color:var(--red-bg);}
+
+  /* Capture modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;z-index:60;}
+  .modal-overlay.open{display:flex;}
+  .modal{background:var(--card);border-radius:14px;padding:22px;width:440px;max-width:92vw;}
+  .modal h3{margin:0 0 14px;}
+  .type-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .type-chip{padding:7px 13px;border-radius:8px;border:1px solid var(--border);font-size:13px;cursor:pointer;color:var(--muted);}
+  .type-chip.active{background:var(--blue-bg);color:var(--blue-fg);border-color:var(--blue-fg);}
+  .modal textarea{width:100%;min-height:80px;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
+
+  /* Search / Ask panel */
+  .ask-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);display:none;align-items:flex-start;justify-content:center;z-index:55;padding-top:80px;}
+  .ask-overlay.open{display:flex;}
+  .ask-box{background:var(--card);border-radius:14px;width:600px;max-width:92vw;max-height:75vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.25);}
+  .ask-input-row{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--border);}
+  .ask-input-row input{flex:1;border:none;outline:none;background:transparent;font-size:16px;color:var(--text);}
+  .ask-results{padding:16px 18px;overflow-y:auto;}
+  .ask-answer{background:var(--blue-bg);border-radius:10px;padding:14px;margin-bottom:14px;font-size:13.5px;line-height:1.6;color:var(--text);}
+  .ask-result-item{padding:10px 8px;border-radius:8px;cursor:pointer;font-size:13.5px;}
+  .ask-result-item:hover{background:var(--bg);}
+  .empty{color:var(--muted);font-size:13.5px;padding:20px 4px;text-align:center;}
+
+  /* Calendar */
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+  .cal-day-head{background:var(--card);padding:8px;text-align:center;font-size:12px;color:var(--muted);font-weight:600;}
+  .cal-cell{background:var(--card);min-height:90px;padding:6px;font-size:12px;position:relative;}
+  .cal-cell .num{font-size:12px;color:var(--muted);margin-bottom:4px;}
+  .cal-cell.today .num{color:#fff;background:var(--accent);width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;}
+  .cal-event{font-size:10.5px;padding:2px 5px;border-radius:5px;margin-bottom:2px;background:var(--blue-bg);color:var(--blue-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
+
+  @media (max-width:900px){
+    .sidebar{position:fixed;left:-240px;top:0;bottom:0;z-index:70;transition:left .2s;}
+    .sidebar.open{left:0;}
+    .stat-row{grid-template-columns:repeat(2,1fr);}
+    .grid-2{grid-template-columns:1fr;}
+    .cal-cell{min-height:60px;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div class="brand-name">EVERYTHING</div>
+    </div>
+    <div class="nav" id="navList"></div>
+    <button class="capture-btn" onclick="openCapture()">+ Capture</button>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="icon-btn" onclick="toggleSidebar()" style="display:none" id="hamburger">☰</button>
+      <div class="search-box" onclick="openAsk()">
+        <span>🔍</span>
+        <input readonly placeholder="Search anything or ask a question…">
+      </div>
+      <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">🌓</div>
+      <div class="icon-btn" title="Notifications">🔔<span class="theme-dot" id="notifDot" style="display:block"></span></div>
+      <div class="avatar" id="avatarWrap"><span id="avatarInitial">V</span></div>
+    </div>
+
+    <div class="content">
+
+      <!-- TODAY VIEW -->
+      <div class="view active" id="view-today">
+        <h1 class="page-title" id="greeting">Good morning, Vijay!</h1>
+        <p class="page-sub" id="todayDate"></p>
+
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">✓</div><div><div class="stat-num" id="statTasks">0</div><div class="stat-label">Tasks today</div></div></div>
+          <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📅</div><div><div class="stat-num" id="statEvents">0</div><div class="stat-label">Events today</div></div></div>
+          <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);">⏳</div><div><div class="stat-num" id="statWaiting">0</div><div class="stat-label">Waiting for</div></div></div>
+          <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div><div><div class="stat-num" id="statOpen">0</div><div class="stat-label">Open loops</div></div></div>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <div class="card">
+              <div class="card-head"><h3>Today</h3><button class="link-btn" onclick="switchView('tasks')">View all →</button></div>
+              <div id="todayList"></div>
+              <div class="nudge">
+                <div class="nudge-text"><b>One thing to consider</b><div class="nudge-sub">You mentioned your business idea a few times. Want to spend 20 minutes on it today?</div></div>
+                <button class="btn-small" onclick="startNudge()">Start now</button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="hero-card">Progress is not about being busy, it's about making things happen.</div>
+            <div class="card">
+              <div class="card-head"><h3>What do you want to remember?</h3></div>
+              <input class="capture-input" id="quickRemember" placeholder="Type a note and press Enter…" onkeydown="if(event.key==='Enter')quickCapture()">
+              <div class="card-head" style="margin-top:6px;"><h3>Recent captures</h3><button class="link-btn" onclick="switchView('inbox')">View all →</button></div>
+              <div id="recentList"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Insights</h3></div>
+              <div id="insightsList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- INBOX VIEW -->
+      <div class="view" id="view-inbox">
+        <h1 class="page-title">Inbox</h1>
+        <p class="page-sub">Everything you've captured, all in one place.</p>
+        <div class="tabs" id="inboxTabs"></div>
+        <div class="card"><div class="inbox-list" id="inboxList"></div></div>
+      </div>
+
+      <!-- TASKS VIEW -->
+      <div class="view" id="view-tasks">
+        <h1 class="page-title">Tasks</h1>
+        <p class="page-sub">Everything on your plate.</p>
+        <div class="card"><div id="tasksList"></div></div>
+      </div>
+
+      <!-- CALENDAR VIEW -->
+      <div class="view" id="view-schedule">
+        <h1 class="page-title">Schedule</h1>
+        <p class="page-sub" id="calMonthLabel"></p>
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+
+      <!-- MEMORY VIEW -->
+      <div class="view" id="view-memory">
+        <h1 class="page-title">Memory</h1>
+        <p class="page-sub">Notes and things worth remembering.</p>
+        <div class="card"><div id="memoryList"></div></div>
+      </div>
+
+      <!-- Simple placeholder views -->
+      <div class="view" id="view-people"><h1 class="page-title">People</h1><p class="page-sub">People linked to your tasks and projects.</p><div class="card" id="peopleList"></div></div>
+      <div class="view" id="view-projects">
+        <h1 class="page-title">Projects</h1><p class="page-sub">Group related work together.</p>
+        <div class="card">
+          <div class="card-head"><h3>New project</h3></div>
+          <input class="capture-input" id="newProjectInput" placeholder="Project name…" onkeydown="if(event.key==='Enter')addProject()">
+          <button class="btn primary" onclick="addProject()">+ Add project</button>
+        </div>
+        <div id="projectsList"></div>
+      </div>
+      <div class="view" id="view-goals">
+        <h1 class="page-title">Goals</h1><p class="page-sub">Track what you're working toward.</p>
+        <div class="card">
+          <div class="card-head"><h3>New goal</h3></div>
+          <input class="capture-input" id="newGoalInput" placeholder="What are you working toward?…" onkeydown="if(event.key==='Enter')addGoal()">
+          <button class="btn primary" onclick="addGoal()">+ Add goal</button>
+        </div>
+        <div class="card"><div id="goalsList"></div></div>
+      </div>
+      <div class="view" id="view-reports">
+        <h1 class="page-title">Reports</h1><p class="page-sub">A look back at your activity.</p>
+        <div class="stat-row" id="reportStats"></div>
+        <div class="card">
+          <div class="card-head"><h3>Completed this week</h3></div>
+          <div id="reportCompleted"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>By type</h3></div>
+          <div id="reportByType"></div>
+        </div>
+      </div>
+      <div class="view" id="view-insights"><h1 class="page-title">Insights</h1><p class="page-sub">Patterns Everything has noticed.</p><div class="card" id="insightsFull"></div></div>
+      <div class="view" id="view-settings"><h1 class="page-title">Settings</h1><p class="page-sub">Prototype settings.</p>
+        <div class="card">
+          <div class="field-row"><span class="field-label">Theme</span><button class="btn" onclick="toggleTheme()">Toggle light / dark</button></div>
+          <div class="field-row"><span class="field-label">Reset prototype data</span><button class="btn danger" onclick="resetData()">Reset</button></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Task detail slide-over -->
+<div class="overlay" id="overlay" onclick="closePanel()"></div>
+<div class="panel" id="panel">
+  <div class="panel-head">
+    <span id="panelBadge" class="badge high">High</span>
+    <button class="close-x" onclick="closePanel()">✕</button>
+  </div>
+  <div class="panel-body">
+    <h2 id="panelTitle" style="margin:0 0 6px;font-size:19px;"></h2>
+    <p id="panelDesc" style="color:var(--muted);font-size:13.5px;margin:0 0 16px;"></p>
+    <div class="field-row"><span class="field-label">Type</span><span id="panelType"></span></div>
+    <div class="field-row"><span class="field-label">Due</span><span id="panelDue"></span></div>
+    <div class="field-row"><span class="field-label">Person</span><span id="panelPerson"></span></div>
+    <div class="field-row"><span class="field-label">Status</span><span id="panelStatus"></span></div>
+    <div class="field-row"><span class="field-label">Visibility</span><span id="panelVisibility"></span></div>
+    <div class="field-row"><span class="field-label">Created</span><span id="panelCreated"></span></div>
+  </div>
+  <div class="panel-actions">
+    <button class="btn primary" onclick="completeCurrent()">✓ Mark complete</button>
+    <button class="btn danger" onclick="deleteCurrent()">Delete</button>
+  </div>
+</div>
+
+<!-- Capture modal -->
+<div class="modal-overlay" id="captureModal">
+  <div class="modal">
+    <h3>Capture something</h3>
+    <div class="type-row" id="typeRow"></div>
+    <div class="type-row" id="visibilityRow" style="margin-top:-6px;">
+      <div class="type-chip active" data-scope="shared" onclick="pickScope('shared')">🌐 Shared</div>
+      <div class="type-chip" data-scope="private" onclick="pickScope('private')">🔒 Private (only me)</div>
+    </div>
+    <textarea id="captureText" placeholder="What's on your mind?" oninput="onCaptureInput()"></textarea>
+    <p style="font-size:12px;color:var(--accent);min-height:16px;margin:6px 0 0;" id="captureHint"></p>
+    <div style="margin-top:10px;">
+      <label style="font-size:12.5px;color:var(--muted);">Project (optional)</label>
+      <select id="captureProject" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeCapture()">Cancel</button>
+      <button class="btn primary" onclick="saveCapture()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ask / Search overlay -->
+<div class="ask-overlay" id="askOverlay" onclick="if(event.target===this)closeAsk()">
+  <div class="ask-box">
+    <div class="ask-input-row">
+      <span>🔍</span>
+      <input id="askInput" placeholder="Search anything or ask a question…" oninput="runAsk(this.value)">
+      <button class="close-x" onclick="closeAsk()">✕</button>
+    </div>
+    <div class="ask-results" id="askResults"><p class="empty">Start typing to search your captures, tasks and notes.</p></div>
+  </div>
+</div>
+
+<script>
+/* ---------- Data model ---------- */
+const NAV = [
+  {id:'today', icon:'🏠', label:'Today'},
+  {id:'inbox', icon:'📥', label:'Inbox', badgeKey:'inboxCount'},
+  {id:'tasks', icon:'✅', label:'Tasks', badgeKey:'taskCount'},
+  {id:'schedule', icon:'📅', label:'Schedule'},
+  {id:'memory', icon:'🧠', label:'Memory'},
+  {id:'people', icon:'👥', label:'People'},
+  {id:'projects', icon:'📁', label:'Projects'},
+  {id:'goals', icon:'🎯', label:'Goals'},
+  {id:'reports', icon:'📊', label:'Reports'},
+  {id:'insights', icon:'✨', label:'Insights'},
+  {id:'settings', icon:'⚙️', label:'Settings'},
+];
+
+let state = null;
+let currentItemId = null;
+let captureType = 'text';
+
+function seedData(){
+  const now = Date.now();
+  return {
+    items: [
+      {id:cid(), kind:'task', title:'Call Ravi', sub:'Ask about quotation. He promised to send drawings today.', priority:'high', person:'Ravi', due:'Tomorrow, 10:00 AM', status:'Today', project:'Website Design', created: now - 86400000*0.3, done:false},
+      {id:cid(), kind:'task', title:'Send quotation', sub:'Finalize pricing and send to Ravi', priority:'high', person:'', due:'Today', status:'Today', project:'Website Design', created: now - 86400000*1, done:false},
+      {id:cid(), kind:'task', title:'Review project', sub:'Go through latest deliverables', priority:'medium', person:'', due:'Today', status:'Today', project:'', created: now - 86400000*1.2, done:false},
+      {id:cid(), kind:'event', title:'Team meeting', sub:'Weekly sync', priority:'', person:'', due:'3:00 PM Today', status:'Work', project:'', created: now - 86400000*0.5, done:false},
+      {id:cid(), kind:'waiting', title:"Waiting for Ravi's drawings", sub:'Since Monday', priority:'', person:'Ravi', due:'', status:'Waiting for', project:'Website Design', created: now - 86400000*4, done:false},
+      {id:cid(), kind:'memory', title:'Ravi prefers WhatsApp instead of email.', sub:'Memory', priority:'', person:'Ravi', due:'', status:'', project:'', created: now - 3600000*2, done:false},
+      {id:cid(), kind:'project', title:'Project house renovation', sub:'Project', priority:'', person:'', due:'', status:'', project:'', created: now - 86400000*1, done:false},
+      {id:cid(), kind:'openloop', title:'Laptop options - need to decide', sub:'Open loop', priority:'', person:'', due:'', status:'', project:'', created: now - 86400000*1, done:false},
+      {id:cid(), kind:'file', title:'Website design reference', sub:'File', priority:'', person:'', due:'', status:'', project:'Website Design', created: now - 86400000*1, done:false},
+    ],
+    events: [
+      {id:cid(), title:'Call Ravi', day:2, time:'10:00 AM'},
+      {id:cid(), title:'Project Review', day:2, time:'11:00 AM'},
+      {id:cid(), title:'Team Meeting', day:3, time:'3:00 PM'},
+      {id:cid(), title:'Gym', day:4, time:'5:30 PM'},
+    ],
+    projects: [
+      {id:cid(), name:'Website Design', created: now - 86400000*3},
+    ],
+    goals: [
+      {id:cid(), title:'Launch business idea', done:false, created: now - 86400000*5},
+    ],
+    theme: 'light',
+  };
+}
+
+function cid(){ return 'i_' + Math.random().toString(36).slice(2,10); }
+
+/* ============================================================
+   MULTI-USER DATA LAYER
+   Everyone who opens this artifact's link (within the org) shares
+   the same live data via the `db` capability. Falls back to
+   localStorage (single browser only) if `db` isn't granted.
+   ============================================================ */
+let db = null;
+
+let currentUserId = null;
+let sharedItems = [];
+let privateItems = [];
+
+function mergeItems(){
+  state.items = [...sharedItems, ...privateItems];
+}
+
+async function initMultiUser(){
+  db = await window.claude?.use('db');
+  const user = await window.claude?.use('user');
+
+  if(user){
+    try{
+      const me = await user.me();
+      currentUserId = me.id;
+      document.getElementById('greeting').textContent = `Good morning, ${me.name || 'there'}!`;
+      const av = document.getElementById('avatarInitial');
+      if(av) av.textContent = (me.name || 'V').charAt(0).toUpperCase();
+    }catch(e){ /* no identity available in this view — keep defaults */ }
+  }
+
+  if(!db){
+    try{
+      const raw = localStorage.getItem('everything_state_v1');
+      state = raw ? JSON.parse(raw) : seedData();
+    }catch(e){ state = seedData(); }
+    if(!state.projects) state.projects = [];
+    if(!state.goals) state.goals = [];
+    sharedItems = state.items; privateItems = [];
+    if(state.theme) document.documentElement.setAttribute('data-theme', state.theme);
+    renderAll();
+    return;
+  }
+
+  const itemsCol = db.collection('items');
+  const projCol  = db.collection('projects');
+  const goalCol  = db.collection('goals');
+
+  const existing = await itemsCol.get();
+  if(existing.empty){
+    const seed = seedData();
+    for(const it of seed.items)   await itemsCol.doc(it.id).set(it);
+    for(const p of seed.projects) await projCol.doc(p.id).set(p);
+    for(const g of seed.goals)    await goalCol.doc(g.id).set(g);
+  }
+
+  state = { items: [], projects: [], goals: [], theme: 'light' };
+
+  itemsCol.onSnapshot(snap => { sharedItems = snap.docs.map(d => ({...d.data(), scope:'shared'})); mergeItems(); renderAll(); });
+  projCol.onSnapshot (snap => { state.projects = snap.docs.map(d => d.data()); renderProjects(); renderNav(); });
+  goalCol.onSnapshot (snap => { state.goals    = snap.docs.map(d => d.data()); renderGoals(); renderReports(); });
+
+  // Per-person private items — only visible to the signed-in viewer who created them
+  if(currentUserId){
+    const privateItemsCol = db.doc(`data/users/${currentUserId}/profile`).collection('items');
+    privateItemsCol.onSnapshot(snap => { privateItems = snap.docs.map(d => ({...d.data(), scope:'private'})); mergeItems(); renderAll(); });
+  }
+}
+
+/* Use these instead of save() whenever items/projects/goals are mutated.
+   item.scope must be 'shared' (default) or 'private'. */
+function itemCollectionFor(item){
+  if(!db) return null;
+  if(item.scope === 'private' && currentUserId) return db.doc(`data/users/${currentUserId}/profile`).collection('items');
+  return db.collection('items');
+}
+async function dbSaveItem(item){
+  if(!item.scope) item.scope = 'shared';
+  const col = itemCollectionFor(item);
+  if(col){ await col.doc(item.id).set(item); } else { save(); renderAll(); }
+}
+async function dbDeleteItem(id){
+  const item = state.items.find(i=>i.id===id);
+  const col = item ? itemCollectionFor(item) : (db ? db.collection('items') : null);
+  if(col){ await col.doc(id).delete(); } else { state.items = state.items.filter(i=>i.id!==id); save(); renderAll(); }
+}
+async function dbSaveProject(p){ if(db){ await db.collection('projects').doc(p.id).set(p); } else { save(); renderProjects(); renderNav(); } }
+async function dbSaveGoal(g){ if(db){ await db.collection('goals').doc(g.id).set(g); } else { save(); renderGoals(); renderReports(); } }
+
+function save(){
+  try{ localStorage.setItem('everything_state_v1', JSON.stringify(state)); }catch(e){ console.error('save failed', e); }
+}
+function resetData(){
+  if(db){ alert('Reset is disabled in multi-user mode — delete items individually instead.'); return; }
+  state = seedData();
+
+  save();
+  renderAll();
+}
+
+/* ---------- Nav & routing ---------- */
+function renderNav(){
+  const nav = document.getElementById('navList');
+  nav.innerHTML = '';
+  NAV.forEach(item=>{
+    const el = document.createElement('div');
+    el.className = 'nav-item' + (item.id===activeView ? ' active':'');
+    let badge = '';
+    if(item.id==='inbox') badge = state.items.length;
+    if(item.id==='tasks') badge = state.items.filter(i=>i.kind==='task' && !i.done).length;
+    el.innerHTML = `<div class="left"><span class="nav-icon">${item.icon}</span>${item.label}</div>${badge?`<span class="nav-badge">${badge}</span>`:''}`;
+    el.onclick = ()=>switchView(item.id);
+    nav.appendChild(el);
+  });
+}
+
+let activeView = 'today';
+function switchView(id){
+  activeView = id;
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+id).classList.add('active');
+  renderNav();
+  if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
+  if(id==='schedule') renderCalendar();
+  if(id==='reports') renderReports();
+  if(id==='projects') renderProjects();
+  if(id==='goals') renderGoals();
+}
+function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
+
+/* ---------- Rendering ---------- */
+function timeAgo(ts){
+  const diff = Date.now()-ts;
+  const h = Math.floor(diff/3600000);
+  if(h < 1) return 'Just now';
+  if(h < 24) return h+' hour'+(h>1?'s':'')+' ago';
+  const d = Math.floor(h/24);
+  if(d===1) return 'Yesterday';
+  return d+' days ago';
+}
+
+function kindIcon(kind){
+  return {task:'✓', event:'📅', waiting:'⏳', memory:'💭', project:'📁', openloop:'🔴', file:'📄'}[kind] || '•';
+}
+function kindColor(kind){
+  return {task:['var(--blue-bg)','var(--blue-fg)'], event:['var(--purple-bg)','var(--purple-fg)'], waiting:['var(--amber-bg)','var(--amber-fg)'],
+    memory:['var(--green-bg)','var(--green-fg)'], project:['var(--blue-bg)','var(--blue-fg)'], openloop:['var(--red-bg)','var(--red-fg)'], file:['var(--purple-bg)','var(--purple-fg)']}[kind] || ['var(--blue-bg)','var(--blue-fg)'];
+}
+
+function renderToday(){
+  document.getElementById('todayDate').textContent = new Date().toLocaleDateString(undefined,{weekday:'long', year:'numeric', month:'long', day:'numeric'});
+  const todays = state.items.filter(i=> (i.kind==='task'||i.kind==='event'||i.kind==='waiting') );
+  document.getElementById('statTasks').textContent = state.items.filter(i=>i.kind==='task'&&!i.done).length;
+  document.getElementById('statEvents').textContent = state.items.filter(i=>i.kind==='event').length;
+  document.getElementById('statWaiting').textContent = state.items.filter(i=>i.kind==='waiting').length;
+  document.getElementById('statOpen').textContent = state.items.filter(i=>i.kind==='openloop').length;
+
+  const list = document.getElementById('todayList');
+  list.innerHTML = '';
+  todays.forEach(item=>{
+    list.appendChild(taskRow(item));
+  });
+
+  const recent = document.getElementById('recentList');
+  recent.innerHTML = '';
+  [...state.items].sort((a,b)=>b.created-a.created).slice(0,4).forEach(item=>{
+    const [bg,fg] = kindColor(item.kind);
+    const el = document.createElement('div');
+    el.className = 'recent-item';
+    el.onclick = ()=>openPanel(item.id);
+    el.innerHTML = `<div class="recent-dot" style="background:${bg};color:${fg};">${kindIcon(item.kind)}</div>
+      <div><div class="recent-text">${escapeHtml(item.title)}</div><div class="recent-tag">${item.kind.charAt(0).toUpperCase()+item.kind.slice(1)}</div></div>
+      <div class="recent-time">${timeAgo(item.created)}</div>`;
+    recent.appendChild(el);
+  });
+
+  const insights = document.getElementById('insightsList');
+  const insightData = getInsights();
+  insights.innerHTML = insightData.map(i=>`<div class="insight-item"><span>${i.icon}</span><div><div class="insight-title">${i.title}</div><div class="insight-sub">${i.sub}</div></div></div>`).join('');
+  document.getElementById('insightsFull').innerHTML = insights.innerHTML || '<p class="empty">Nothing to show yet.</p>';
+}
+
+function getInsights(){
+  const waiting = state.items.filter(i=>i.kind==='waiting');
+  const openLoops = state.items.filter(i=>i.kind==='openloop' || i.kind==='waiting');
+  const arr = [];
+  if(openLoops.length) arr.push({icon:'✨', title:`You have ${openLoops.length} open loop${openLoops.length>1?'s':''}`, sub: openLoops.map(o=>o.title).join(', ')});
+  arr.push({icon:'📈', title:'You\'re most productive', sub:'Tue, Wed, Thu (9 AM – 12 PM)'});
+  const dueTasks = state.items.filter(i=>i.kind==='task' && !i.done);
+  if(dueTasks.length) arr.push({icon:'⏰', title:'Upcoming deadline', sub:'Finish: '+dueTasks[0].title});
+  return arr;
+}
+
+function taskRow(item){
+  const row = document.createElement('div');
+  row.className = 'task-row' + (item.done?' done':'');
+  row.onclick = (e)=>{ if(e.target.closest('.checkbox')) return; openPanel(item.id); };
+  const check = document.createElement('div');
+  check.className = 'checkbox' + (item.done?' checked':'');
+  check.textContent = item.done?'✓':'';
+  check.onclick = ()=>toggleDone(item.id);
+  row.appendChild(check);
+
+  const meta = document.createElement('div');
+  meta.className = 'task-meta';
+  meta.innerHTML = `<div class="task-title">${item.scope==='private'?'🔒 ':''}${escapeHtml(item.title)}</div><div class="task-sub">${escapeHtml(item.sub||'')}${item.person?' · <span>👤 '+escapeHtml(item.person)+'</span>':''}</div>`;
+  row.appendChild(meta);
+
+  if(item.due){
+    const t = document.createElement('div');
+    t.className = 'task-time';
+    t.textContent = item.due;
+    row.appendChild(t);
+  }
+  const badgeText = item.priority || item.status || item.kind;
+  if(badgeText){
+    const b = document.createElement('span');
+    b.className = 'badge ' + (item.priority || item.kind);
+    b.textContent = item.priority ? item.priority.charAt(0).toUpperCase()+item.priority.slice(1) : badgeText;
+    row.appendChild(b);
+  }
+  return row;
+}
+
+async function toggleDone(id){
+  const item = state.items.find(i=>i.id===id);
+  if(item){ item.done = !item.done; await dbSaveItem(item); }
+}
+
+function renderInbox(filter){
+  filter = filter || 'all';
+  const tabs = [['all','All'],['task','Tasks'],['memory','Memory'],['file','Files'],['event','Events']];
+  const tabRow = document.getElementById('inboxTabs');
+  tabRow.innerHTML = tabs.map(([id,label])=>`<div class="tab ${id===filter?'active':''}" onclick="renderInbox('${id}')">${label}</div>`).join('');
+  const list = document.getElementById('inboxList');
+  list.innerHTML = '';
+  const items = [...state.items].sort((a,b)=>b.created-a.created).filter(i=> filter==='all' || i.kind===filter);
+  if(!items.length){ list.innerHTML = '<p class="empty">Nothing here yet.</p>'; return; }
+  items.forEach(item=>list.appendChild(taskRow(item)));
+}
+
+function renderTasks(){
+  const list = document.getElementById('tasksList');
+  const tasks = state.items.filter(i=>i.kind==='task');
+  list.innerHTML = '';
+  if(!tasks.length){ list.innerHTML = '<p class="empty">No tasks yet. Capture one!</p>'; return; }
+  tasks.forEach(t=>list.appendChild(taskRow(t)));
+}
+
+function renderMemory(){
+  const list = document.getElementById('memoryList');
+  const mem = state.items.filter(i=>i.kind==='memory');
+  list.innerHTML = mem.length ? '' : '<p class="empty">No memories captured yet.</p>';
+  mem.forEach(m=>list.appendChild(taskRow(m)));
+}
+
+function renderPeople(){
+  const names = [...new Set(state.items.filter(i=>i.person).map(i=>i.person))];
+  const el = document.getElementById('peopleList');
+  if(!names.length){ el.innerHTML = '<p class="empty">No people linked yet.</p>'; return; }
+  el.innerHTML = names.map(n=>{
+    const related = state.items.filter(i=>i.person===n).length;
+    return `<div class="task-row"><div class="avatar" style="width:32px;height:32px;font-size:12px;">${n.charAt(0)}</div><div class="task-meta"><div class="task-title">${escapeHtml(n)}</div><div class="task-sub">${related} linked item${related>1?'s':''}</div></div></div>`;
+  }).join('');
+}
+
+/* ---------- Projects ---------- */
+async function addProject(){
+  const input = document.getElementById('newProjectInput');
+  const name = input.value.trim();
+  if(!name) return;
+  const p = {id:cid(), name, created:Date.now()};
+  state.projects.unshift(p);
+  input.value = '';
+  await dbSaveProject(p);
+}
+function renderProjects(){
+  const el = document.getElementById('projectsList');
+  if(!el) return;
+  if(!state.projects.length){ el.innerHTML = '<div class="card"><p class="empty">No projects yet.</p></div>'; return; }
+  el.innerHTML = state.projects.map(p=>{
+    const items = state.items.filter(i=>i.project===p.name);
+    const open = items.filter(i=>!i.done).length;
+    return `<div class="card">
+      <div class="card-head"><h3>${escapeHtml(p.name)}</h3><span class="badge task">${open} open</span></div>
+      ${items.length ? items.map(i=>`<div class="task-row" onclick="openPanel('${i.id}')"><div class="checkbox ${i.done?'checked':''}">${i.done?'✓':''}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub||'')}</div></div></div>`).join('') : '<p class="empty">No items linked to this project yet.</p>'}
+    </div>`;
+  }).join('');
+}
+
+/* ---------- Goals ---------- */
+async function addGoal(){
+  const input = document.getElementById('newGoalInput');
+  const title = input.value.trim();
+  if(!title) return;
+  const g = {id:cid(), title, done:false, created:Date.now()};
+  state.goals.unshift(g);
+  input.value = '';
+  await dbSaveGoal(g);
+}
+async function toggleGoal(id){
+  const g = state.goals.find(g=>g.id===id);
+  if(g){ g.done = !g.done; await dbSaveGoal(g); }
+}
+function renderGoals(){
+  const el = document.getElementById('goalsList');
+  if(!el) return;
+  if(!state.goals.length){ el.innerHTML = '<p class="empty">No goals set yet.</p>'; return; }
+  el.innerHTML = state.goals.map(g=>`<div class="task-row"><div class="checkbox ${g.done?'checked':''}" onclick="toggleGoal('${g.id}')">${g.done?'✓':''}</div><div class="task-meta"><div class="task-title" style="${g.done?'text-decoration:line-through;color:var(--muted);':''}">${escapeHtml(g.title)}</div></div></div>`).join('');
+}
+
+/* ---------- Reports ---------- */
+function renderReports(){
+  const statsEl = document.getElementById('reportStats');
+  if(!statsEl) return;
+  const weekAgo = Date.now() - 7*86400000;
+  const completed = state.items.filter(i=>i.done);
+  const createdThisWeek = state.items.filter(i=>i.created >= weekAgo);
+  const byType = {};
+  state.items.forEach(i=>{ byType[i.kind] = (byType[i.kind]||0)+1; });
+
+  statsEl.innerHTML = `
+    <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div><div><div class="stat-num">${completed.length}</div><div class="stat-label">Completed total</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">📥</div><div><div class="stat-num">${createdThisWeek.length}</div><div class="stat-label">Captured this week</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📁</div><div><div class="stat-num">${state.projects.length}</div><div class="stat-label">Active projects</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);">🎯</div><div><div class="stat-num">${state.goals.filter(g=>!g.done).length}</div><div class="stat-label">Open goals</div></div></div>
+  `;
+
+  const completedEl = document.getElementById('reportCompleted');
+  completedEl.innerHTML = completed.length ? completed.slice(0,10).map(i=>`<div class="task-row"><div class="checkbox checked">✓</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div></div></div>`).join('') : '<p class="empty">Nothing completed yet.</p>';
+
+  const typeEl = document.getElementById('reportByType');
+  typeEl.innerHTML = Object.keys(byType).length ? Object.entries(byType).map(([k,v])=>`<div class="field-row"><span class="field-label">${k.charAt(0).toUpperCase()+k.slice(1)}</span><span>${v}</span></div>`).join('') : '<p class="empty">No data yet.</p>';
+}
+
+/* ---------- Calendar ---------- */
+function renderCalendar(){
+  const now = new Date();
+  document.getElementById('calMonthLabel').textContent = now.toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  const grid = document.getElementById('calGrid');
+  grid.innerHTML = '';
+  ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{
+    const h = document.createElement('div'); h.className='cal-day-head'; h.textContent=d; grid.appendChild(h);
+  });
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOffset = firstDay.getDay();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  for(let i=0;i<startOffset;i++){
+    const c = document.createElement('div'); c.className='cal-cell'; grid.appendChild(c);
+  }
+  for(let d=1; d<=daysInMonth; d++){
+    const c = document.createElement('div');
+    c.className = 'cal-cell' + (d===now.getDate() ? ' today':'');
+    const num = document.createElement('div'); num.className='num'; num.textContent=d;
+    c.appendChild(num);
+    state.events.filter(e=>e.day===d).forEach(e=>{
+      const ev = document.createElement('div');
+      ev.className = 'cal-event';
+      ev.textContent = e.time+' '+e.title;
+      c.appendChild(ev);
+    });
+    grid.appendChild(c);
+  }
+}
+
+/* ---------- Task detail panel ---------- */
+function openPanel(id){
+  currentItemId = id;
+  const item = state.items.find(i=>i.id===id);
+  if(!item) return;
+  document.getElementById('panelTitle').textContent = item.title;
+  document.getElementById('panelDesc').textContent = item.sub || '';
+  document.getElementById('panelType').textContent = item.kind.charAt(0).toUpperCase()+item.kind.slice(1);
+  document.getElementById('panelDue').textContent = item.due || '—';
+  document.getElementById('panelPerson').textContent = item.person || '—';
+  document.getElementById('panelStatus').textContent = item.done ? 'Complete' : (item.status || 'Open');
+  document.getElementById('panelVisibility').textContent = item.scope==='private' ? '🔒 Private (only you)' : '🌐 Shared';
+  document.getElementById('panelCreated').textContent = new Date(item.created).toLocaleString();
+  const badge = document.getElementById('panelBadge');
+  badge.textContent = item.priority ? item.priority.charAt(0).toUpperCase()+item.priority.slice(1) : item.kind;
+  badge.className = 'badge ' + (item.priority || item.kind);
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('panel').classList.add('open');
+}
+function closePanel(){
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('panel').classList.remove('open');
+  currentItemId = null;
+}
+async function completeCurrent(){
+  if(!currentItemId) return;
+  await toggleDone(currentItemId);
+  closePanel();
+}
+async function deleteCurrent(){
+  if(!currentItemId) return;
+  const id = currentItemId;
+  state.items = state.items.filter(i=>i.id!==id);
+  closePanel();
+  await dbDeleteItem(id);
+}
+
+/* ---------- Capture modal ---------- */
+const CAPTURE_TYPES = [
+  {id:'text', label:'📝 Text'}, {id:'task', label:'✓ Task'}, {id:'event', label:'📅 Event'}, {id:'memory', label:'💭 Memory'}
+];
+let captureAutoDetected = false;
+let captureScope = 'shared';
+function pickScope(scope){
+  captureScope = scope;
+  document.querySelectorAll('#visibilityRow .type-chip').forEach(el=>el.classList.toggle('active', el.dataset.scope===scope));
+}
+function openCapture(){
+  captureType = 'text';
+  captureAutoDetected = false;
+  captureScope = 'shared';
+  pickScope('shared');
+  const row = document.getElementById('typeRow');
+  row.innerHTML = CAPTURE_TYPES.map(t=>`<div class="type-chip ${t.id===captureType?'active':''}" data-type="${t.id}" onclick="pickType('${t.id}', true)">${t.label}</div>`).join('');
+  document.getElementById('captureText').value = '';
+  document.getElementById('captureHint').textContent = '';
+  populateProjectSelect();
+  document.getElementById('captureModal').classList.add('open');
+  setTimeout(()=>document.getElementById('captureText').focus(), 50);
+}
+function populateProjectSelect(){
+  const sel = document.getElementById('captureProject');
+  sel.innerHTML = '<option value="">No project</option>' + state.projects.map(p=>`<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('');
+}
+function pickType(id, manual){
+  captureType = id;
+  if(manual) captureAutoDetected = false;
+  document.querySelectorAll('.type-chip').forEach(el=>el.classList.toggle('active', el.dataset.type===id));
+}
+function detectType(text){
+  const t = text.toLowerCase();
+  if(/\b(tomorrow|today|at \d|am|pm|meeting|call|deadline|due|schedule)\b/.test(t) && /\b(meeting|call|event|appointment|sync|demo)\b/.test(t)) return 'event';
+  if(/\b(todo|to-do|task|need to|have to|remind me|follow up|send|finish|complete|call|email)\b/.test(t)) return 'task';
+  return 'memory';
+}
+function onCaptureInput(){
+  const text = document.getElementById('captureText').value;
+  document.getElementById('captureHint').textContent = '';
+  if(!text.trim() || captureAutoDetected) { if(!text.trim()){captureAutoDetected=false;} return; }
+  const guessed = detectType(text);
+  if(guessed !== captureType){
+    pickType(guessed, false);
+    document.getElementById('captureHint').textContent = `Detected as ${guessed} — tap a type above to change it.`;
+  }
+}
+function closeCapture(){ document.getElementById('captureModal').classList.remove('open'); }
+async function saveCapture(){
+  const text = document.getElementById('captureText').value.trim();
+  if(!text) return closeCapture();
+  const kindMap = {text:'memory', task:'task', event:'event', memory:'memory'};
+  const kind = kindMap[captureType] || 'memory';
+  const project = document.getElementById('captureProject').value;
+  const newItem = {
+    id:cid(), kind, title:text, sub: kind==='task' ? 'Captured task' : (kind==='event' ? 'Captured event' : 'Memory'),
+    priority: kind==='task' ? 'medium':'', person:'', due: kind==='task' ? 'Today' : '', status: kind==='task' ? 'Today':'', project, created: Date.now(), done:false,
+    scope: captureScope
+  };
+  state.items.unshift(newItem);
+  closeCapture();
+  await dbSaveItem(newItem);
+}
+async function quickCapture(){
+  const input = document.getElementById('quickRemember');
+  const text = input.value.trim();
+  if(!text) return;
+  const newItem = {id:cid(), kind:'memory', title:text, sub:'Memory', priority:'', person:'', due:'', status:'', project:'', created:Date.now(), done:false};
+  state.items.unshift(newItem);
+  input.value='';
+  await dbSaveItem(newItem);
+}
+async function startNudge(){
+  const newItem = {id:cid(), kind:'task', title:'Work on business idea', sub:'20-minute focus block', priority:'medium', person:'', due:'Today', status:'Today', project:'', created:Date.now(), done:false};
+  state.items.unshift(newItem);
+  await dbSaveItem(newItem);
+  switchView('tasks');
+}
+
+/* ---------- Ask / Search ---------- */
+function openAsk(){
+  document.getElementById('askOverlay').classList.add('open');
+  document.getElementById('askInput').value='';
+  document.getElementById('askResults').innerHTML = '<p class="empty">Start typing to search your captures, tasks and notes.</p>';
+  setTimeout(()=>document.getElementById('askInput').focus(), 50);
+}
+function closeAsk(){ document.getElementById('askOverlay').classList.remove('open'); }
+let askDebounce = null;
+let lastAskQuery = '';
+function runAsk(q){
+  lastAskQuery = q;
+  const results = document.getElementById('askResults');
+  if(!q.trim()){ results.innerHTML = '<p class="empty">Start typing to search your captures, tasks and notes.</p>'; return; }
+  const ql = q.toLowerCase();
+  const matches = state.items.filter(i => (i.title+' '+(i.sub||'')+' '+(i.person||'')).toLowerCase().includes(ql));
+  let html = `<div id="aiAnswerSlot"></div>`;
+  html += matches.length ? matches.map(m=>`<div class="ask-result-item" onclick="closeAsk();openPanel('${m.id}')"><b>${escapeHtml(m.title)}</b><br><span style="color:var(--muted)">${escapeHtml(m.sub||'')}</span></div>`).join('') : '<p class="empty">No matching items — you can still ask the AI below.</p>';
+  results.innerHTML = html;
+
+  clearTimeout(askDebounce);
+  askDebounce = setTimeout(()=>{ if(lastAskQuery===q) askAI(q); }, 550);
+}
+
+async function askAI(q){
+  const slot = document.getElementById('aiAnswerSlot');
+  if(!slot) return;
+  slot.innerHTML = `<div class="ask-answer">Thinking…</div>`;
+  let sample;
+  try{
+    sample = await window.claude?.use('sample');
+  }catch(e){ sample = null; }
+  if(!sample){
+    const matches = state.items.filter(i => (i.title+' '+(i.sub||'')+' '+(i.person||'')).toLowerCase().includes(q.toLowerCase()));
+    slot.innerHTML = matches.length
+      ? `<div class="ask-answer"><b>Answer:</b> Based on what you've captured — ${escapeHtml(matches.slice(0,3).map(m=>m.title).join('; '))}.</div>`
+      : `<div class="ask-answer">AI answers aren't available in this preview. Showing keyword matches instead.</div>`;
+    return;
+  }
+  const context = state.items.slice(0,60).map(i=>`- [${i.kind}${i.priority?'/'+i.priority:''}] ${i.title}${i.sub?': '+i.sub:''}${i.person?' (person: '+i.person+')':''}${i.due?' (due: '+i.due+')':''}`).join('\n');
+  const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${q}`;
+  try{
+    const result = await sample(prompt, {
+      modelTier: 'quick',
+      onText: ({text}) => { slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`; }
+    });
+    slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}</div>`;
+  }catch(err){
+    slot.innerHTML = `<div class="ask-answer">Couldn't reach the AI just now (${escapeHtml(err && err.code || 'error')}). Showing your matches above instead.</div>`;
+  }
+}
+
+/* ---------- Theme ---------- */
+function toggleTheme(){
+  const root = document.documentElement;
+  const cur = root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  const next = cur === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  state.theme = next;
+  save();
+}
+
+/* ---------- Utility ---------- */
+function escapeHtml(str){
+  return (str||'').replace(/[&<>"']/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+}
+
+function renderAll(){
+  renderNav();
+  renderToday();
+  renderInbox();
+  renderTasks();
+  renderMemory();
+  renderPeople();
+  renderProjects();
+  renderGoals();
+  renderReports();
+  if(activeView==='schedule') renderCalendar();
+}
+
+/* ---------- Init ---------- */
+document.getElementById('hamburger').style.display = window.innerWidth<900 ? 'flex':'none';
+window.addEventListener('resize', ()=>{ document.getElementById('hamburger').style.display = window.innerWidth<900 ? 'flex':'none'; });
+initMultiUser();
+</script>
+</body>
+</html>
