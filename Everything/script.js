@@ -1,3 +1,79 @@
+const SUPABASE_URL = 'https://fyikavzqkezjykvxhqnz.supabase.co';       // e.g. https://xxxx.supabase.co
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+async function authSignUp(){
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const authError = document.getElementById('authError');
+
+  if(!email || !password){
+    authError.textContent = 'Enter both email and password.';
+    return;
+  }
+
+  try {
+    const { error } = await sb.auth.signUp({ email, password });
+    authError.textContent = error ? error.message : 'Check your email to confirm, then sign in.';
+  } catch (err) {
+    authError.textContent = err?.message || 'Could not create the account.';
+  }
+}
+async function authSignIn(){
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const authError = document.getElementById('authError');
+
+  if(!email || !password){
+    authError.textContent = 'Enter both email and password.';
+    return;
+  }
+
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    authError.textContent = error ? error.message : '';
+  } catch (err) {
+    authError.textContent = err?.message || 'Could not sign in.';
+  }
+}
+async function authSignOut(){
+  const authError = document.getElementById('authError');
+  if(authError) authError.textContent = '';
+  await sb.auth.signOut();
+}
+function toggleAvatarMenu(){
+  const menu = document.getElementById('avatarMenu');
+  menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+}
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('avatarMenu');
+  const wrap = document.getElementById('avatarWrap');
+  if(menu && menu.style.display === 'block' && !menu.contains(e.target) && e.target !== wrap && !wrap.contains(e.target)){
+    menu.style.display = 'none';
+  }
+});
+function confirmSignOut(){
+  if(confirm('Sign out of Everything?')){
+    authSignOut();
+  }
+  document.getElementById('avatarMenu').style.display = 'none';
+}
+
+sb.auth.onAuthStateChange((event, session) => {
+  const authScreen = document.getElementById('authScreen');
+  if(session){
+    authScreen.style.display = 'none';
+    const name = session.user.email.split('@')[0];
+    const greetEl = document.getElementById('greeting');
+    if(greetEl) greetEl.textContent = `Good morning, ${name}!`;
+    const av = document.getElementById('avatarInitial');
+    if(av) av.textContent = name.charAt(0).toUpperCase();
+    document.getElementById('avatarMenuEmail').textContent = session.user.email;
+  } else {
+    authScreen.style.display = 'flex';
+  }
+});
+
 /* ---------- Data model ---------- */
 const NAV = [
   {id:'today', icon:'🏠', label:'Today'},

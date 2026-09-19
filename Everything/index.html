@@ -1,12 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Everything</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="authScreen" style="position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;align-items:center;justify-content:center;">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;width:340px;">
+    <h2 style="margin:0 0 4px;">Everything</h2>
+    <p style="color:var(--muted);font-size:13.5px;margin:0 0 18px;">Sign in to continue</p>
+    <input class="capture-input" id="authEmail" placeholder="Email" type="email">
+    <input class="capture-input" id="authPassword" placeholder="Password" type="password" style="margin-top:8px;">
+    <p id="authError" style="color:var(--red-fg);font-size:12.5px;min-height:16px;margin:6px 0;"></p>
+    <button class="btn primary" style="width:100%;" onclick="authSignIn()">Sign in</button>
+    <button class="btn" style="width:100%;margin-top:8px;" onclick="authSignUp()">Create account</button>
+  </div>
+</div>
 <div class="app">
 
   <div class="sidebar" id="sidebar">
@@ -27,7 +39,13 @@
       </div>
       <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">🌓</div>
       <div class="icon-btn" title="Notifications">🔔<span class="theme-dot" id="notifDot" style="display:block"></span></div>
-      <div class="avatar" id="avatarWrap"><span id="avatarInitial">V</span></div>
+      <div style="position:relative;">
+      <div class="avatar" id="avatarWrap" onclick="toggleAvatarMenu()" style="cursor:pointer;"><span id="avatarInitial">V</span></div>
+      <div id="avatarMenu" style="display:none;position:absolute;top:42px;right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);min-width:160px;z-index:80;overflow:hidden;">
+        <div id="avatarMenuEmail" style="padding:10px 14px;font-size:12.5px;color:var(--muted);border-bottom:1px solid var(--border);"></div>
+        <div onclick="confirmSignOut()" style="padding:10px 14px;font-size:13.5px;cursor:pointer;color:var(--red-fg);">Sign out</div>
+        </div>
+      </div>
     </div>
 
     <div class="content">
@@ -137,6 +155,7 @@
         <div class="field-row"> <span class="field-label">Task reminders</span> <button class="btn" id="notifBtn" onclick="requestNotifications()">Enable notifications</button> </div>
         <div class="card">
           <div class="field-row"><span class="field-label">Theme</span><button class="btn" onclick="toggleTheme()">Toggle light / dark</button></div>
+          <div class="field-row"><span class="field-label">Account</span><button class="btn" onclick="authSignOut()">Sign out</button></div>
           <div class="field-row"><span class="field-label">Reset prototype data</span><button class="btn danger" onclick="resetData()">Reset</button></div>
         </div>
       </div>
@@ -461,7 +480,6 @@
     <div class="ask-results" id="askResults"><p class="empty">Start typing to search your captures, tasks and notes.</p></div>
   </div>
 </div>
-
 <script src="script.js"></script>
 </body>
 </html>
