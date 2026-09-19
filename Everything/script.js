@@ -37,6 +37,42 @@ async function authSignIn(){
     authError.textContent = err?.message || 'Could not sign in.';
   }
 }
+function togglePasswordVisibility(inputId, toggleId){
+  const input = document.getElementById(inputId);
+  const toggle = document.getElementById(toggleId);
+  const isHidden = input.type === 'password';
+  input.type = isHidden ? 'text' : 'password';
+  toggle.textContent = isHidden ? '🙈' : '👁️';
+}
+
+function showForgotPassword(){
+  document.getElementById('authFormNormal').style.display = 'none';
+  document.getElementById('authFormForgot').style.display = 'block';
+}
+function showNormalAuth(){
+  document.getElementById('authFormForgot').style.display = 'none';
+  document.getElementById('authFormNormal').style.display = 'block';
+}
+
+async function authForgotPassword(){
+  const email = document.getElementById('forgotEmail').value.trim();
+  const msg = document.getElementById('forgotMessage');
+  if(!email){ msg.style.color = 'var(--red-fg)'; msg.textContent = 'Enter your email first.'; return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+  msg.style.color = error ? 'var(--red-fg)' : 'var(--accent)';
+  msg.textContent = error ? error.message : 'Check your email for a reset link.';
+}
+
+async function authUpdatePassword(){
+  const pw = document.getElementById('newPassword').value;
+  const err = document.getElementById('newPasswordError');
+  if(pw.length < 6){ err.textContent = 'Password must be at least 6 characters.'; return; }
+  const { error } = await sb.auth.updateUser({ password: pw });
+  if(error){ err.textContent = error.message; return; }
+  err.style.color = 'var(--accent)';
+  err.textContent = 'Password updated — signing you in…';
+  setTimeout(() => window.location.href = window.location.origin, 1200);
+}
 async function authSignOut(){
   const authError = document.getElementById('authError');
   if(authError) authError.textContent = '';
@@ -50,7 +86,7 @@ function itemToRow(item){
     id: item.id, owner_id: sbUser, scope: item.scope || 'shared', kind: item.kind,
     title: item.title, sub: item.sub || '', priority: item.priority || '', person: item.person || '',
     due: item.due || '', due_date: item.dueDate || null, recurrence: item.recurrence || 'none',
-    status: item.status || '', project: item.project || '', created: item.created, done: !!item.done
+    status: item.status || '', project: item.project || '', created: item.created, done: !!item.done, notified: !!item.notified
   };
 }
 function rowToItem(row){
@@ -58,7 +94,7 @@ function rowToItem(row){
     id: row.id, scope: row.scope, kind: row.kind, title: row.title, sub: row.sub,
     priority: row.priority, person: row.person, due: row.due, dueDate: row.due_date,
     recurrence: row.recurrence, status: row.status, project: row.project,
-    created: row.created, done: row.done
+    created: row.created, done: row.done, notified: row.notified
   };
 }
 async function startSupabaseSync(userId){
@@ -122,6 +158,13 @@ function confirmSignOut(){
 
 sb.auth.onAuthStateChange((event, session) => {
   const authScreen = document.getElementById('authScreen');
+  if(event === 'PASSWORD_RECOVERY'){
+    authScreen.style.display = 'flex';
+    document.getElementById('authFormNormal').style.display = 'none';
+    document.getElementById('authFormForgot').style.display = 'none';
+    document.getElementById('authFormNewPassword').style.display = 'block';
+    return;
+  }
   if(session){
     authScreen.style.display = 'none';
     startSupabaseSync(session.user.id);
@@ -636,7 +679,9 @@ async function saveEdit(){
   item.person = document.getElementById('editPerson').value.trim();
   item.project = document.getElementById('editProject').value;
   const editDueVal = document.getElementById('editDueDate').value;
-  item.dueDate = editDueVal ? new Date(editDueVal).toISOString() : '';
+  const newDueDate = editDueVal ? new Date(editDueVal).toISOString() : '';
+  if(newDueDate !== item.dueDate) item.notified = false;
+  item.dueDate = newDueDate;
   item.recurrence = document.getElementById('editRecurrence').value;
   if(item.dueDate) item.due = formatDueDisplay(item.dueDate);
   closeEditModal();
@@ -658,7 +703,8 @@ async function deleteCurrent(){
 
 /* ---------- Capture modal ---------- */
 const CAPTURE_TYPES = [
-  {id:'text', label:'📝 Text'}, {id:'task', label:'✓ Task'}, {id:'event', label:'📅 Event'}, {id:'memory', label:'💭 Memory'}
+  {id:'text', label:'📝 Text'}, {id:'task', label:'✓ Task'}, {id:'event', label:'📅 Event'}, {id:'memory', label:'💭 Memory'},
+  {id:'waiting', label:'⏳ Waiting for'}, {id:'openloop', label:'🔴 Open loop'}
 ];
 let captureAutoDetected = false;
 let captureScope = 'shared';
@@ -712,7 +758,7 @@ function closeCapture(){ document.getElementById('captureModal').classList.remov
 async function saveCapture(){
   const text = document.getElementById('captureText').value.trim();
   if(!text) return closeCapture();
-  const kindMap = {text:'memory', task:'task', event:'event', memory:'memory'};
+  const kindMap = {text:'memory', task:'task', event:'event', memory:'memory', waiting:'waiting', openloop:'openloop'};
   const kind = kindMap[captureType] || 'memory';
   const project = document.getElementById('captureProject').value;
   const dueVal = document.getElementById('captureDueDate').value;
@@ -721,7 +767,7 @@ async function saveCapture(){
   const priority = document.getElementById('capturePriority').value || (kind==='task' ? 'medium' : '');
   const person = document.getElementById('capturePerson').value.trim();
   const newItem = {
-    id:cid(), kind, title:text, sub: kind==='task' ? 'Captured task' : (kind==='event' ? 'Captured event' : 'Memory'),
+    id:cid(), kind, title:text, sub: kind==='task' ? 'Captured task' : (kind==='event' ? 'Captured event' : (kind==='waiting' ? 'Waiting for' : (kind==='openloop' ? 'Open loop' : 'Memory'))),
     priority, person,
     due: dueISO ? formatDueDisplay(dueISO) : (kind==='task' ? 'Today' : ''),
     dueDate: dueISO, recurrence,
@@ -834,13 +880,14 @@ function requestNotifications(){
     alert('Notifications aren\'t supported in this browser.');
     return;
   }
+
   Notification.requestPermission().then(perm => {
     updateNotifBtn();
     if(perm === 'granted'){
       new Notification('Everything', { body: 'Reminders are on — you\'ll get notified when tasks are due.' });
     }
   });
-  const VAPID_PUBLIC_KEY = 'YOUR_VAPID_PUBLIC_KEY';
+}
 
 function urlBase64ToUint8Array(base64String){
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -854,18 +901,24 @@ async function enablePushNotifications(){
     alert('Push notifications aren\'t supported in this browser.');
     return;
   }
+
   const reg = await navigator.serviceWorker.register('/sw.js');
   const perm = await Notification.requestPermission();
   if(perm !== 'granted') return;
+
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
   });
-  await sb.from('push_subscriptions').upsert({ user_id: sbUser, subscription: sub.toJSON(), created: Date.now() });
-  document.getElementById('notifBtn').textContent = '✓ Push enabled';
+
+  if(sbUser){
+    await sb.from('push_subscriptions').upsert({ user_id: sbUser, subscription: sub.toJSON(), created: Date.now() });
+  }
+
+  const btn = document.getElementById('notifBtn');
+  if(btn) btn.textContent = '✓ Push enabled';
 }
 
-}
 function updateNotifBtn(){
   const btn = document.getElementById('notifBtn');
   if(!btn || !('Notification' in window)) return;

@@ -35,7 +35,7 @@ body{margin:0;background:var(--bg);color:var(--text);}
 /* Sidebar */
 .sidebar{width:230px;background:var(--sidebar);color:#cfd3ec;flex-shrink:0;display:flex;flex-direction:column;padding:18px 12px;overflow-y:auto;}
 .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 18px;}
-.brand-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent-2));flex-shrink:0;}
+.brand-mark{width:50px;height:20px;flex-shrink:0;}
 .brand-name{font-weight:700;font-size:15px;letter-spacing:0.3px;color:#fff;}
 .nav{display:flex;flex-direction:column;gap:2px;flex:1;}
 .nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px;color:#b8bcda;justify-content:space-between;}
