@@ -41,6 +41,66 @@ async function authSignOut(){
   if(authError) authError.textContent = '';
   await sb.auth.signOut();
 }
+let sbUser = null;
+let sbChannel = null;
+
+function itemToRow(item){
+  return {
+    id: item.id, owner_id: sbUser, scope: item.scope || 'shared', kind: item.kind,
+    title: item.title, sub: item.sub || '', priority: item.priority || '', person: item.person || '',
+    due: item.due || '', due_date: item.dueDate || null, recurrence: item.recurrence || 'none',
+    status: item.status || '', project: item.project || '', created: item.created, done: !!item.done
+  };
+}
+function rowToItem(row){
+  return {
+    id: row.id, scope: row.scope, kind: row.kind, title: row.title, sub: row.sub,
+    priority: row.priority, person: row.person, due: row.due, dueDate: row.due_date,
+    recurrence: row.recurrence, status: row.status, project: row.project,
+    created: row.created, done: row.done
+  };
+}
+async function startSupabaseSync(userId){
+  sbUser = userId;
+  const { data, error } = await sb.from('items').select('*').order('created', {ascending:false});
+  if(!error && data){
+    state.items = data.map(rowToItem);
+    if(!state.projects) state.projects = [];
+    if(!state.goals) state.goals = [];
+    renderAll();
+  }
+  if(sbChannel) sb.removeChannel(sbChannel);
+  sbChannel = sb.channel('items-sync')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, payload => {
+      if(payload.eventType === 'DELETE'){
+        state.items = state.items.filter(i => i.id !== payload.old.id);
+      } else {
+        const updated = rowToItem(payload.new);
+        const idx = state.items.findIndex(i => i.id === updated.id);
+        if(idx >= 0) state.items[idx] = updated; else state.items.unshift(updated);
+      }
+      renderAll();
+    })
+    .subscribe();
+
+  const { data: projData } = await sb.from('projects').select('*').order('created', {ascending:false});
+  if(projData) state.projects = projData;
+  const { data: goalData } = await sb.from('goals').select('*').order('created', {ascending:false});
+  if(goalData) state.goals = goalData;
+  renderProjects(); renderGoals(); renderNav(); renderReports();
+
+  sb.channel('projects-sync').on('postgres_changes', { event:'*', schema:'public', table:'projects' }, payload => {
+    if(payload.eventType === 'DELETE') state.projects = state.projects.filter(p => p.id !== payload.old.id);
+    else { const idx = state.projects.findIndex(p => p.id === payload.new.id); if(idx>=0) state.projects[idx]=payload.new; else state.projects.unshift(payload.new); }
+    renderProjects(); renderNav();
+  }).subscribe();
+
+  sb.channel('goals-sync').on('postgres_changes', { event:'*', schema:'public', table:'goals' }, payload => {
+    if(payload.eventType === 'DELETE') state.goals = state.goals.filter(g => g.id !== payload.old.id);
+    else { const idx = state.goals.findIndex(g => g.id === payload.new.id); if(idx>=0) state.goals[idx]=payload.new; else state.goals.unshift(payload.new); }
+    renderGoals(); renderReports();
+  }).subscribe();
+}
 function toggleAvatarMenu(){
   const menu = document.getElementById('avatarMenu');
   menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
@@ -63,6 +123,7 @@ sb.auth.onAuthStateChange((event, session) => {
   const authScreen = document.getElementById('authScreen');
   if(session){
     authScreen.style.display = 'none';
+    startSupabaseSync(session.user.id);
     const name = session.user.email.split('@')[0];
     const greetEl = document.getElementById('greeting');
     if(greetEl) greetEl.textContent = `Good morning, ${name}!`;
@@ -219,15 +280,27 @@ function itemCollectionFor(item){
 async function dbSaveItem(item){
   if(!item.scope) item.scope = 'shared';
   const col = itemCollectionFor(item);
-  if(col){ await col.doc(item.id).set(item); } else { save(); renderAll(); }
+  if(col){ await col.doc(item.id).set(item); }
+  else if(sbUser){ await sb.from('items').upsert(itemToRow(item)); }
+  else { save(); renderAll(); }
 }
 async function dbDeleteItem(id){
   const item = state.items.find(i=>i.id===id);
   const col = item ? itemCollectionFor(item) : (db ? db.collection('items') : null);
-  if(col){ await col.doc(id).delete(); } else { state.items = state.items.filter(i=>i.id!==id); save(); renderAll(); }
+  if(col){ await col.doc(id).delete(); }
+  else if(sbUser){ await sb.from('items').delete().eq('id', id); }
+  else { state.items = state.items.filter(i=>i.id!==id); save(); renderAll(); }
 }
-async function dbSaveProject(p){ if(db){ await db.collection('projects').doc(p.id).set(p); } else { save(); renderProjects(); renderNav(); } }
-async function dbSaveGoal(g){ if(db){ await db.collection('goals').doc(g.id).set(g); } else { save(); renderGoals(); renderReports(); } }
+async function dbSaveProject(p){
+  if(db){ await db.collection('projects').doc(p.id).set(p); }
+  else if(sbUser){ await sb.from('projects').upsert(p); }
+  else { save(); renderProjects(); renderNav(); }
+}
+async function dbSaveGoal(g){
+  if(db){ await db.collection('goals').doc(g.id).set(g); }
+  else if(sbUser){ await sb.from('goals').upsert(g); }
+  else { save(); renderGoals(); renderReports(); }
+}
 
 function save(){
   try{ localStorage.setItem('everything_state_v1', JSON.stringify(state)); }catch(e){ console.error('save failed', e); }
