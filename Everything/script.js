@@ -1,6 +1,7 @@
 const SUPABASE_URL = 'https://fyikavzqkezjykvxhqnz.supabase.co';       // e.g. https://xxxx.supabase.co
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const VAPID_PUBLIC_KEY = 'BHWGWugtw2V9RIk_4mItF_ef3sx0ZJBTPuKZVjTEDfOY-o80jJcXXurZlYBhTJAyhqNQzmtBIjDdEguHwyb0hoU';
 
 async function authSignUp(){
   const email = document.getElementById('authEmail').value.trim();
@@ -678,6 +679,8 @@ function openCapture(){
   document.getElementById('captureModal').classList.add('open');
   document.getElementById('captureDueDate').value = '';
   document.getElementById('captureRecurrence').value = 'none';
+  document.getElementById('capturePriority').value = '';
+  document.getElementById('capturePerson').value = '';
   setTimeout(()=>document.getElementById('captureText').focus(), 50);
 }
 function populateProjectSelect(){
@@ -715,9 +718,11 @@ async function saveCapture(){
   const dueVal = document.getElementById('captureDueDate').value;
   const dueISO = dueVal ? new Date(dueVal).toISOString() : '';
   const recurrence = document.getElementById('captureRecurrence').value;
+  const priority = document.getElementById('capturePriority').value || (kind==='task' ? 'medium' : '');
+  const person = document.getElementById('capturePerson').value.trim();
   const newItem = {
     id:cid(), kind, title:text, sub: kind==='task' ? 'Captured task' : (kind==='event' ? 'Captured event' : 'Memory'),
-    priority: kind==='task' ? 'medium':'', person:'',
+    priority, person,
     due: dueISO ? formatDueDisplay(dueISO) : (kind==='task' ? 'Today' : ''),
     dueDate: dueISO, recurrence,
     status: kind==='task' ? 'Today':'', project, created: Date.now(), done:false,
@@ -835,6 +840,31 @@ function requestNotifications(){
       new Notification('Everything', { body: 'Reminders are on — you\'ll get notified when tasks are due.' });
     }
   });
+  const VAPID_PUBLIC_KEY = 'YOUR_VAPID_PUBLIC_KEY';
+
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function enablePushNotifications(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+    alert('Push notifications aren\'t supported in this browser.');
+    return;
+  }
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  const perm = await Notification.requestPermission();
+  if(perm !== 'granted') return;
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+  });
+  await sb.from('push_subscriptions').upsert({ user_id: sbUser, subscription: sub.toJSON(), created: Date.now() });
+  document.getElementById('notifBtn').textContent = '✓ Push enabled';
+}
+
 }
 function updateNotifBtn(){
   const btn = document.getElementById('notifBtn');
