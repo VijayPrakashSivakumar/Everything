@@ -369,16 +369,29 @@ function itemCollectionFor(item){
 async function dbSaveItem(item){
   if(!item.scope) item.scope = 'shared';
   const col = itemCollectionFor(item);
-  if(col){ await col.doc(item.id).set(item); }
-  else if(sbUser){ await sb.from('items').upsert({...item, household_id: currentHouseholdId}); }
-  else { save(); renderAll(); }
+  if(col){
+    await col.doc(item.id).set(item);
+  } else if(sbUser){
+    const { error } = await sb.from('items').upsert(itemToRow(item));
+    if(error) console.error('Supabase save failed:', error.message);
+  } else {
+    save();
+  }
+  renderAll();
 }
 async function dbDeleteItem(id){
   const item = state.items.find(i=>i.id===id);
   const col = item ? itemCollectionFor(item) : (db ? db.collection('items') : null);
-  if(col){ await col.doc(id).delete(); }
-  else if(sbUser){ await sb.from('items').delete().eq('id', id).eq('household_id', currentHouseholdId); }
-  else { state.items = state.items.filter(i=>i.id!==id); save(); renderAll(); }
+  if(col){
+    await col.doc(id).delete();
+  } else if(sbUser){
+    const { error } = await sb.from('items').delete().eq('id', id).eq('household_id', currentHouseholdId);
+    if(error) console.error('Supabase delete failed:', error.message);
+  } else {
+    state.items = state.items.filter(i=>i.id!==id);
+    save();
+  }
+  renderAll();
 }
 async function dbSaveProject(p){
   if(db){ await db.collection('projects').doc(p.id).set(p); }
@@ -424,6 +437,7 @@ function renderNav(){
 }
 
 let activeView = 'today';
+
 function switchView(id){
   activeView = id;
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -434,7 +448,12 @@ function switchView(id){
   if(id==='reports') renderReports();
   if(id==='projects') renderProjects();
   if(id==='goals') renderGoals();
+  if(id==='tasks') renderTasks();
+  if(id==='inbox') renderInbox();
+  if(id==='memory') renderMemory();
+  if(id==='people') renderPeople();
 }
+
 function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
 
 /* ---------- Rendering ---------- */
