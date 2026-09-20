@@ -221,7 +221,7 @@ sb.auth.onAuthStateChange((event, session) => {
     }
     const name = session.user.email.split('@')[0];
     const greetEl = document.getElementById('greeting');
-    if(greetEl) greetEl.textContent = `Good morning, ${name}!`;
+    if(greetEl) greetEl.textContent = `${greetingText()}, ${name}!`;
     const av = document.getElementById('avatarInitial');
     if(av) av.textContent = name.charAt(0).toUpperCase();
     document.getElementById('avatarMenuEmail').textContent = session.user.email;
@@ -277,6 +277,17 @@ function nextOccurrence(iso, recurrence){
   else if(recurrence === 'weekly') d.setDate(d.getDate()+7);
   else if(recurrence === 'monthly') d.setMonth(d.getMonth()+1);
   return d.toISOString();
+}
+function isToday(dueDate){
+  if(!dueDate) return false;
+  return new Date(dueDate).toDateString() === new Date().toDateString();
+}
+function isOverdue(item){
+  return !!item.dueDate && !item.done && new Date(item.dueDate).getTime() < Date.now() && !isToday(item.dueDate);
+}
+function greetingText(){
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
 }
 
 /* ============================================================
@@ -447,7 +458,10 @@ function kindColor(kind){
 
 function renderToday(){
   document.getElementById('todayDate').textContent = new Date().toLocaleDateString(undefined,{weekday:'long', year:'numeric', month:'long', day:'numeric'});
-  const todays = state.items.filter(i=> (i.kind==='task'||i.kind==='event'||i.kind==='waiting') );
+  const todays = state.items.filter(i => !i.done && (
+  ((i.kind==='task'||i.kind==='event') && (isToday(i.dueDate) || isOverdue(i) || (!i.dueDate && i.due==='Today')))
+  || i.kind==='waiting'
+  ));
   document.getElementById('statTasks').textContent = state.items.filter(i=>i.kind==='task'&&!i.done).length;
   document.getElementById('statEvents').textContent = state.items.filter(i=>i.kind==='event').length;
   document.getElementById('statWaiting').textContent = state.items.filter(i=>i.kind==='waiting').length;
@@ -1031,6 +1045,7 @@ function renderAll(){
   renderProjects();
   renderGoals();
   renderReports();
+  renderNotifDot();
   if(activeView==='schedule') renderCalendar();
 }
 let notifiedIds = new Set(JSON.parse(localStorage.getItem('notified_ids') || '[]'));
@@ -1048,6 +1063,33 @@ function requestNotifications(){
     }
   });
 }
+function getNotificationItems(){
+  return state.items.filter(i => !i.done && ((i.dueDate && (isToday(i.dueDate) || isOverdue(i))) || i.kind === 'waiting'));
+}
+function renderNotifDot(){
+  const dot = document.getElementById('notifDot');
+  if(dot) dot.style.display = getNotificationItems().length ? 'block' : 'none';
+}
+function toggleNotifPanel(){
+  const panel = document.getElementById('notifPanel');
+  const opening = panel.style.display !== 'block';
+  panel.style.display = opening ? 'block' : 'none';
+  if(opening) renderNotifPanel();
+}
+function renderNotifPanel(){
+  const items = getNotificationItems();
+  document.getElementById('notifList').innerHTML = items.length ? items.map(i => `
+    <div class="task-row" style="padding:9px 14px;" onclick="toggleNotifPanel();openPanel('${i.id}')">
+      <div class="task-meta"><div class="task-title">${isOverdue(i)?'⚠️ ':''}${escapeHtml(i.title)}</div>
+      <div class="task-sub">${isOverdue(i) ? 'Overdue' : (i.due || 'Waiting for')}</div></div>
+    </div>`).join('') : '<p class="empty" style="padding:14px;">Nothing needs attention right now.</p>';
+}
+document.addEventListener('click', (e) => {
+  const panel = document.getElementById('notifPanel');
+  if(panel && panel.style.display==='block' && !panel.contains(e.target) && !e.target.closest('.icon-btn')){
+    panel.style.display = 'none';
+  }
+});
 
 function urlBase64ToUint8Array(base64String){
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -1105,3 +1147,4 @@ if(window.claude){ initMultiUser(); }
 else { state = { items:[], events:[], projects:[], goals:[], people:[], theme: localStorage.getItem('theme')||'light' }; if(state.theme) document.documentElement.setAttribute('data-theme', state.theme); }
 updateNotifBtn();
 setInterval(checkDueNotifications, 30000);
+setInterval(renderToday, 60000);

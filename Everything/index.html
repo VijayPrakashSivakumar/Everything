@@ -82,7 +82,13 @@
         <input readonly placeholder="Search anything or ask a question…">
       </div>
       <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">🌓</div>
-      <div class="icon-btn" title="Notifications">🔔<span class="theme-dot" id="notifDot" style="display:block"></span></div>
+      <div style="position:relative;">
+      <div class="icon-btn" onclick="toggleNotifPanel()" title="Notifications" style="cursor:pointer;">🔔<span class="theme-dot" id="notifDot" style="display:none;"></span></div>
+      <div id="notifPanel" style="display:none;position:absolute;top:42px;right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);width:280px;max-height:340px;overflow-y:auto;z-index:80;">
+        <div style="padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);">Notifications</div>
+        <div id="notifList"></div>
+        </div>
+      </div>
       <div style="position:relative;">
       <div class="avatar" id="avatarWrap" onclick="toggleAvatarMenu()" style="cursor:pointer;"><span id="avatarInitial">V</span></div>
       <div id="avatarMenu" style="display:none;position:absolute;top:42px;right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);min-width:160px;z-index:80;overflow:hidden;">
