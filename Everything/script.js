@@ -86,7 +86,8 @@ function itemToRow(item){
     id: item.id, owner_id: sbUser, scope: item.scope || 'shared', kind: item.kind,
     title: item.title, sub: item.sub || '', priority: item.priority || '', person: item.person || '',
     due: item.due || '', due_date: item.dueDate || null, recurrence: item.recurrence || 'none',
-    status: item.status || '', project: item.project || '', created: item.created, done: !!item.done, notified: !!item.notified
+    status: item.status || '', project: item.project || '', created: item.created, done: !!item.done, notified: !!item.notified,
+    household_id: currentHouseholdId
   };
 }
 function rowToItem(row){
@@ -98,8 +99,9 @@ function rowToItem(row){
   };
 }
 async function startSupabaseSync(userId){
+  await ensureHousehold(userId);
   sbUser = userId;
-  const { data, error } = await sb.from('items').select('*').order('created', {ascending:false});
+  const { data, error } = await sb.from('items').select('*').eq('household_id', currentHouseholdId).order('created', {ascending:false});
   if(!error && data){
     state.items = data.map(rowToItem);
     if(!state.projects) state.projects = [];
@@ -108,7 +110,7 @@ async function startSupabaseSync(userId){
   }
   if(sbChannel) sb.removeChannel(sbChannel);
   sbChannel = sb.channel('items-sync')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, payload => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'items', filter: `household_id=eq.${currentHouseholdId}` }, payload => {
       if(payload.eventType === 'DELETE'){
         state.items = state.items.filter(i => i.id !== payload.old.id);
       } else {
@@ -120,23 +122,66 @@ async function startSupabaseSync(userId){
     })
     .subscribe();
 
-  const { data: projData } = await sb.from('projects').select('*').order('created', {ascending:false});
+  const { data: projData } = await sb.from('projects').select('*').eq('household_id', currentHouseholdId).order('created', {ascending:false});
   if(projData) state.projects = projData;
-  const { data: goalData } = await sb.from('goals').select('*').order('created', {ascending:false});
+  const { data: goalData } = await sb.from('goals').select('*').eq('household_id', currentHouseholdId).order('created', {ascending:false});
   if(goalData) state.goals = goalData;
+  const { data: peopleData } = await sb.from('people').select('*').eq('household_id', currentHouseholdId).order('created', {ascending:false});
+  if(peopleData) state.people = peopleData;
   renderProjects(); renderGoals(); renderNav(); renderReports();
 
-  sb.channel('projects-sync').on('postgres_changes', { event:'*', schema:'public', table:'projects' }, payload => {
+  sb.channel('projects-sync').on('postgres_changes', { event:'*', schema:'public', table:'projects', filter: `household_id=eq.${currentHouseholdId}` }, payload => {
     if(payload.eventType === 'DELETE') state.projects = state.projects.filter(p => p.id !== payload.old.id);
     else { const idx = state.projects.findIndex(p => p.id === payload.new.id); if(idx>=0) state.projects[idx]=payload.new; else state.projects.unshift(payload.new); }
     renderProjects(); renderNav();
   }).subscribe();
 
-  sb.channel('goals-sync').on('postgres_changes', { event:'*', schema:'public', table:'goals' }, payload => {
+  sb.channel('goals-sync').on('postgres_changes', { event:'*', schema:'public', table:'goals', filter: `household_id=eq.${currentHouseholdId}` }, payload => {
     if(payload.eventType === 'DELETE') state.goals = state.goals.filter(g => g.id !== payload.old.id);
     else { const idx = state.goals.findIndex(g => g.id === payload.new.id); if(idx>=0) state.goals[idx]=payload.new; else state.goals.unshift(payload.new); }
     renderGoals(); renderReports();
   }).subscribe();
+
+  sb.channel('people-sync').on('postgres_changes', { event:'*', schema:'public', table:'people', filter: `household_id=eq.${currentHouseholdId}` }, payload => {
+    if(payload.eventType === 'DELETE') state.people = state.people.filter(p => p.id !== payload.old.id);
+    else { const idx = state.people.findIndex(p => p.id === payload.new.id); if(idx>=0) state.people[idx]=payload.new; else state.people.unshift(payload.new); }
+    renderPeople();
+  }).subscribe();
+}
+let currentHouseholdId = null;
+
+async function ensureHousehold(userId){
+  const { data: membership } = await sb.from('household_members').select('household_id').eq('user_id', userId).limit(1);
+  if(membership && membership.length){ currentHouseholdId = membership[0].household_id; return; }
+  const { data: newHouse } = await sb.from('households').insert({ created_by: userId, created: Date.now() }).select().single();
+  if(newHouse){
+    currentHouseholdId = newHouse.id;
+    await sb.from('household_members').insert({ household_id: newHouse.id, user_id: userId, role:'owner' });
+  }
+}
+
+async function getInviteCode(){
+  const { data } = await sb.from('households').select('invite_code').eq('id', currentHouseholdId).single();
+  return data ? data.invite_code : null;
+}
+
+async function showInviteCode(){
+  const code = await getInviteCode();
+  document.getElementById('inviteCodeDisplay').textContent = code || '—';
+}
+
+async function joinHousehold(){
+  const code = document.getElementById('joinCodeInput').value.trim();
+  const msg = document.getElementById('joinMessage');
+  if(!code){ msg.textContent = 'Enter a code.'; return; }
+  const { data: house } = await sb.from('households').select('id').eq('invite_code', code).single();
+  if(!house){ msg.style.color='var(--red-fg)'; msg.textContent = 'Invalid invite code.'; return; }
+  await sb.from('household_members').delete().eq('user_id', sbUser);
+  await sb.from('household_members').insert({ household_id: house.id, user_id: sbUser, role:'member' });
+  currentHouseholdId = house.id;
+  msg.style.color='var(--accent)'; msg.textContent = 'Joined! Reloading your data…';
+  await startSupabaseSync(sbUser);
+  showInviteCode();
 }
 function toggleAvatarMenu(){
   const menu = document.getElementById('avatarMenu');
@@ -172,6 +217,7 @@ sb.auth.onAuthStateChange((event, session) => {
     if(syncedUserId !== session.user.id){
       syncedUserId = session.user.id;
       startSupabaseSync(session.user.id);
+      showInviteCode();
     }
     const name = session.user.email.split('@')[0];
     const greetEl = document.getElementById('greeting');
@@ -205,31 +251,12 @@ let currentItemId = null;
 let captureType = 'text';
 
 function seedData(){
-  const now = Date.now();
   return {
-    items: [
-      {id:cid(), kind:'task', title:'Call Ravi', sub:'Ask about quotation. He promised to send drawings today.', priority:'high', person:'Ravi', due:'Tomorrow, 10:00 AM', status:'Today', project:'Website Design', created: now - 86400000*0.3, done:false},
-      {id:cid(), kind:'task', title:'Send quotation', sub:'Finalize pricing and send to Ravi', priority:'high', person:'', due:'Today', status:'Today', project:'Website Design', created: now - 86400000*0.8, done:false},
-      {id:cid(), kind:'task', title:'Review project', sub:'Go through latest deliverables', priority:'medium', person:'', due:'Today', status:'Today', project:'', created: now - 86400000*1.2, done:false},
-      {id:cid(), kind:'event', title:'Team meeting', sub:'Weekly sync', priority:'', person:'', due:'3:00 PM Today', status:'Work', project:'', created: now - 86400000*0.5, done:false},
-      {id:cid(), kind:'waiting', title:"Waiting for Ravi's drawings", sub:'Since Monday', priority:'', person:'Ravi', due:'', status:'Waiting for', project:'Website Design', created: now - 86400000*4, done:false},
-      {id:cid(), kind:'memory', title:'Ravi prefers WhatsApp instead of email.', sub:'Memory', priority:'', person:'Ravi', due:'', status:'', project:'', created: now - 3600000*2, done:false},
-      {id:cid(), kind:'project', title:'Project house renovation', sub:'Project', priority:'', person:'', due:'', status:'', project:'', created: now - 86400000*1, done:false},
-      {id:cid(), kind:'openloop', title:'Laptop options - need to decide', sub:'Open loop', priority:'', person:'', due:'', status:'', project:'', created: now - 86400000*1, done:false},
-      {id:cid(), kind:'file', title:'Website design reference', sub:'File', priority:'', person:'', due:'', status:'', project:'Website Design', created: now - 86400000*1, done:false},
-    ],
-    events: [
-      {id:cid(), title:'Call Ravi', day:2, time:'10:00 AM'},
-      {id:cid(), title:'Project Review', day:2, time:'11:00 AM'},
-      {id:cid(), title:'Team Meeting', day:3, time:'3:00 PM'},
-      {id:cid(), title:'Gym', day:4, time:'5:30 PM'},
-    ],
-    projects: [
-      {id:cid(), name:'Website Design', created: now - 86400000*3},
-    ],
-    goals: [
-      {id:cid(), title:'Launch business idea', done:false, created: now - 86400000*5},
-    ],
+    items: [],
+    events: [],
+    projects: [],
+    goals: [],
+    people: [],
     theme: 'light',
   };
 }
@@ -289,6 +316,7 @@ async function initMultiUser(){
     }catch(e){ state = seedData(); }
     if(!state.projects) state.projects = [];
     if(!state.goals) state.goals = [];
+    if(!state.people) state.people = [];
     sharedItems = state.items; privateItems = [];
     if(state.theme) document.documentElement.setAttribute('data-theme', state.theme);
     renderAll();
@@ -331,25 +359,30 @@ async function dbSaveItem(item){
   if(!item.scope) item.scope = 'shared';
   const col = itemCollectionFor(item);
   if(col){ await col.doc(item.id).set(item); }
-  else if(sbUser){ await sb.from('items').upsert(itemToRow(item)); }
+  else if(sbUser){ await sb.from('items').upsert({...item, household_id: currentHouseholdId}); }
   else { save(); renderAll(); }
 }
 async function dbDeleteItem(id){
   const item = state.items.find(i=>i.id===id);
   const col = item ? itemCollectionFor(item) : (db ? db.collection('items') : null);
   if(col){ await col.doc(id).delete(); }
-  else if(sbUser){ await sb.from('items').delete().eq('id', id); }
+  else if(sbUser){ await sb.from('items').delete().eq('id', id).eq('household_id', currentHouseholdId); }
   else { state.items = state.items.filter(i=>i.id!==id); save(); renderAll(); }
 }
 async function dbSaveProject(p){
   if(db){ await db.collection('projects').doc(p.id).set(p); }
-  else if(sbUser){ await sb.from('projects').upsert(p); }
+  else if(sbUser){ await sb.from('projects').upsert({...p, household_id: currentHouseholdId}); }
   else { save(); renderProjects(); renderNav(); }
 }
 async function dbSaveGoal(g){
   if(db){ await db.collection('goals').doc(g.id).set(g); }
-  else if(sbUser){ await sb.from('goals').upsert(g); }
+  else if(sbUser){ await sb.from('goals').upsert({...g, household_id: currentHouseholdId}); }
   else { save(); renderGoals(); renderReports(); }
+}
+async function dbSavePerson(p){
+  if(db){ await db.collection('people').doc(p.id).set(p); }
+  else if(sbUser){ await sb.from('people').upsert({...p, household_id: currentHouseholdId}); }
+  else { save(); renderPeople(); }
 }
 
 function save(){
@@ -526,13 +559,64 @@ function renderMemory(){
 }
 
 function renderPeople(){
-  const names = [...new Set(state.items.filter(i=>i.person).map(i=>i.person))];
   const el = document.getElementById('peopleList');
-  if(!names.length){ el.innerHTML = '<p class="empty">No people linked yet.</p>'; return; }
-  el.innerHTML = names.map(n=>{
-    const related = state.items.filter(i=>i.person===n).length;
-    return `<div class="task-row"><div class="avatar" style="width:32px;height:32px;font-size:12px;">${n.charAt(0)}</div><div class="task-meta"><div class="task-title">${escapeHtml(n)}</div><div class="task-sub">${related} related item${related>1?'s':''}</div></div></div>`;
+  if(!el) return;
+  const namesFromItems = [...new Set(state.items.filter(i=>i.person).map(i=>i.person))];
+  const knownNames = state.people.map(p=>p.name);
+  const inferredOnly = namesFromItems.filter(n => !knownNames.includes(n));
+
+  const rows = [
+    ...state.people.map(p => ({ id:p.id, name:p.name, notes:p.notes||'', real:true })),
+    ...inferredOnly.map(n => ({ id:null, name:n, notes:'', real:false }))
+  ];
+
+  if(!rows.length){ el.innerHTML = '<p class="empty">No people yet — add one below or tag someone on a task.</p>'; return; }
+
+  el.innerHTML = rows.map(p=>{
+    const count = state.items.filter(i=>i.person===p.name).length;
+    return `<div class="task-row" onclick="openPersonModal(${p.id?`'${p.id}'`:'null'}, '${escapeHtml(p.name)}')">
+      <div class="avatar" style="width:32px;height:32px;font-size:12px;">${p.name.charAt(0).toUpperCase()}</div>
+      <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count!==1?'s':''}${p.notes?' · has notes':''}</div></div>
+    </div>`;
   }).join('');
+}
+let currentPersonName = null;
+function openPersonModal(id, name){
+  currentPersonName = name;
+  const person = state.people.find(p => p.name === name);
+  document.getElementById('personModalName').textContent = name;
+  document.getElementById('personNotes').value = person ? (person.notes || '') : '';
+  const items = state.items.filter(i => i.person === name);
+  const list = document.getElementById('personItemsList');
+  list.innerHTML = items.length
+    ? items.map(i => `<div class="task-row" onclick="closePersonModal();openPanel('${i.id}')"><div class="checkbox ${i.done?'checked':''}">${i.done?'✓':''}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub||'')}</div></div></div>`).join('')
+    : '<p class="empty">No linked items yet.</p>';
+  document.getElementById('personModal').classList.add('open');
+}
+function closePersonModal(){ document.getElementById('personModal').classList.remove('open'); currentPersonName = null; }
+async function savePersonNotes(){
+  if(!currentPersonName) return;
+  let person = state.people.find(p => p.name === currentPersonName);
+  const notes = document.getElementById('personNotes').value.trim();
+  if(!person){
+    person = { id:cid(), name: currentPersonName, notes, created: Date.now() };
+    state.people.unshift(person);
+  } else {
+    person.notes = notes;
+  }
+  await dbSavePerson(person);
+  closePersonModal();
+}
+
+async function addPersonManual(){
+  const input = document.getElementById('newPersonInput');
+  const name = input.value.trim();
+  if(!name) return;
+  if(state.people.some(p=>p.name.toLowerCase()===name.toLowerCase())){ input.value=''; return; }
+  const p = { id:cid(), name, notes:'', created:Date.now() };
+  state.people.unshift(p);
+  input.value = '';
+  await dbSavePerson(p);
 }
 
 /* ---------- Projects ---------- */
@@ -1017,6 +1101,7 @@ function checkDueNotifications(){
 /* ---------- Init ---------- */
 document.getElementById('hamburger').style.display = window.innerWidth<900 ? 'flex':'none';
 window.addEventListener('resize', ()=>{ document.getElementById('hamburger').style.display = window.innerWidth<900 ? 'flex':'none'; });
-initMultiUser();
+if(window.claude){ initMultiUser(); }
+else { state = { items:[], events:[], projects:[], goals:[], people:[], theme: localStorage.getItem('theme')||'light' }; if(state.theme) document.documentElement.setAttribute('data-theme', state.theme); }
 updateNotifBtn();
 setInterval(checkDueNotifications, 30000);

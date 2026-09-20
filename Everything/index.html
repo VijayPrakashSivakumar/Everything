@@ -163,7 +163,15 @@
       </div>
 
       <!-- Simple placeholder views -->
-      <div class="view" id="view-people"><h1 class="page-title">People</h1><p class="page-sub">People linked to your tasks and projects.</p><div class="card" id="peopleList"></div></div>
+      <div class="view" id="view-people">
+        <h1 class="page-title">People</h1><p class="page-sub">People linked to your tasks and projects.</p>
+        <div class="card">
+          <div class="card-head"><h3>Add person</h3></div>
+          <input class="capture-input" id="newPersonInput" placeholder="Name…" onkeydown="if(event.key==='Enter')addPersonManual()">
+          <button class="btn primary" onclick="addPersonManual()">+ Add person</button>
+        </div>
+        <div class="card" id="peopleList"></div>
+      </div>
       <div class="view" id="view-projects">
         <h1 class="page-title">Projects</h1><p class="page-sub">Group related work together.</p>
         <div class="card">
@@ -196,6 +204,16 @@
       </div>
       <div class="view" id="view-insights"><h1 class="page-title">Insights</h1><p class="page-sub">Patterns Everything has noticed.</p><div class="card" id="insightsFull"></div></div>
       <div class="view" id="view-settings"><h1 class="page-title">Settings</h1><p class="page-sub"><button class="btn" id="notifBtn" onclick="enablePushNotifications()">Enable notifications</button> Prototype settings.</p>
+        <div class="field-row">
+          <span class="field-label">Your invite code</span>
+          <span id="inviteCodeDisplay" style="font-weight:700;letter-spacing:1px;">—</span>
+        </div>
+        <div style="margin-top:10px;">
+          <label style="font-size:12.5px;color:var(--muted);">Join a household</label>
+          <input class="capture-input" id="joinCodeInput" placeholder="Enter invite code" style="margin-top:4px;">
+          <p id="joinMessage" style="font-size:12.5px;min-height:16px;margin:4px 0;"></p>
+          <button class="btn primary" onclick="joinHousehold()">Join</button>
+        </div>
         <div class="field-row"> <span class="field-label">Task reminders</span>  </div>
         <div class="card">
           <div class="field-row"><span class="field-label">Theme</span><button class="btn" onclick="toggleTheme()">Toggle light / dark</button></div>
@@ -510,6 +528,20 @@
 
     </div>
 
+  </div>
+</div>
+
+<div class="modal-overlay" id="personModal">
+  <div class="modal">
+    <h3 id="personModalName">Person</h3>
+    <label style="font-size:12.5px;color:var(--muted);">Notes</label>
+    <textarea id="personNotes" placeholder="Anything worth remembering about them…" style="width:100%;min-height:70px;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;margin-top:4px;"></textarea>
+    <div class="card-head" style="margin-top:14px;"><h3 style="font-size:14px;">Linked items</h3></div>
+    <div id="personItemsList"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closePersonModal()">Close</button>
+      <button class="btn primary" onclick="savePersonNotes()">Save notes</button>
+    </div>
   </div>
 </div>
 
