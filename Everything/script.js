@@ -837,6 +837,7 @@ function pickScope(scope){
 }
 function openCapture(){
   captureType = 'text';
+if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
   captureAutoDetected = false;
   captureScope = 'shared';
   pickScope('shared');
