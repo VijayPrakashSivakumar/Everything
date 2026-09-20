@@ -156,6 +156,8 @@ function confirmSignOut(){
   document.getElementById('avatarMenu').style.display = 'none';
 }
 
+let syncedUserId = null;
+
 sb.auth.onAuthStateChange((event, session) => {
   const authScreen = document.getElementById('authScreen');
   if(event === 'PASSWORD_RECOVERY'){
@@ -167,7 +169,10 @@ sb.auth.onAuthStateChange((event, session) => {
   }
   if(session){
     authScreen.style.display = 'none';
-    startSupabaseSync(session.user.id);
+    if(syncedUserId !== session.user.id){
+      syncedUserId = session.user.id;
+      startSupabaseSync(session.user.id);
+    }
     const name = session.user.email.split('@')[0];
     const greetEl = document.getElementById('greeting');
     if(greetEl) greetEl.textContent = `Good morning, ${name}!`;
@@ -175,6 +180,7 @@ sb.auth.onAuthStateChange((event, session) => {
     if(av) av.textContent = name.charAt(0).toUpperCase();
     document.getElementById('avatarMenuEmail').textContent = session.user.email;
   } else {
+    syncedUserId = null;
     authScreen.style.display = 'flex';
   }
 });
@@ -674,16 +680,16 @@ async function saveEdit(){
   item.title = document.getElementById('editTitle').value.trim() || item.title;
   item.sub = document.getElementById('editSub').value.trim();
   item.priority = document.getElementById('editPriority').value;
-  item.dueDate = document.getElementById('editDueDate').value ? new Date(document.getElementById('editDueDate').value).toISOString() : '';
-  item.recurrence = document.getElementById('editRecurrence').value;
   item.person = document.getElementById('editPerson').value.trim();
   item.project = document.getElementById('editProject').value;
+
   const editDueVal = document.getElementById('editDueDate').value;
   const newDueDate = editDueVal ? new Date(editDueVal).toISOString() : '';
   if(newDueDate !== item.dueDate) item.notified = false;
   item.dueDate = newDueDate;
   item.recurrence = document.getElementById('editRecurrence').value;
   if(item.dueDate) item.due = formatDueDisplay(item.dueDate);
+
   closeEditModal();
   closePanel();
   await dbSaveItem(item);
@@ -735,7 +741,7 @@ function populateProjectSelect(){
 }
 function pickType(id, manual){
   captureType = id;
-  if(manual) captureAutoDetected = false;
+  if(manual) captureAutoDetected = true;
   document.querySelectorAll('.type-chip').forEach(el=>el.classList.toggle('active', el.dataset.type===id));
 }
 function detectType(text){
@@ -744,15 +750,79 @@ function detectType(text){
   if(/\b(todo|to-do|task|need to|have to|remind me|follow up|send|finish|complete|call|email)\b/.test(t)) return 'task';
   return 'memory';
 }
+let extractDebounce = null;
 function onCaptureInput(){
   const text = document.getElementById('captureText').value;
   document.getElementById('captureHint').textContent = '';
-  if(!text.trim() || captureAutoDetected) { if(!text.trim()){captureAutoDetected=false;} return; }
-  const guessed = detectType(text);
-  if(guessed !== captureType){
-    pickType(guessed, false);
-    document.getElementById('captureHint').textContent = `Detected as ${guessed} — tap a type above to change it.`;
+  if(!text.trim()){ captureAutoDetected = false; return; }
+
+  if(!captureAutoDetected){
+    const guessed = detectType(text);
+    if(guessed !== captureType) pickType(guessed, false);
   }
+
+  clearTimeout(extractDebounce);
+  document.getElementById('captureHint').textContent = '✨ Reading…';
+  extractDebounce = setTimeout(() => extractWithAI(text), 700);
+}
+
+async function extractWithAI(text){
+  let result = null;
+
+  // Free path: Claude artifact's built-in sample capability (no cost)
+  let sample;
+  try{ sample = await window.claude?.use('sample'); }catch(e){ sample = null; }
+  if(sample){
+    const now = new Date().toISOString();
+    const projectList = state.projects.map(p=>p.name).join(', ') || 'none';
+    const prompt = `You extract structured data from a quick personal note for a productivity app. Current date/time: ${now}. Known projects: ${projectList}.\n\nNote: "${text}"\n\nRespond with ONLY raw JSON:\n{"kind":"task|event|memory|waiting|openloop","priority":"high|medium|low|","dueDate":"ISO 8601 datetime or empty string","person":"name or empty string","project":"one of the known projects if it clearly matches, else empty string","recurrence":"none|daily|weekly|monthly"}`;
+    try{
+      const res = await sample(prompt, { modelTier: 'quick' });
+      result = JSON.parse(res.text.replace(/```json|```/g,'').trim());
+    }catch(e){ result = null; }
+  }
+
+  // Free path: local rule-based extraction (no API, no cost) — used on the live Vercel site
+  if(!result){
+    result = extractLocally(text);
+  }
+
+  if(document.getElementById('captureText').value !== text) return;
+  applyExtraction(result);
+}
+
+function extractLocally(text){
+  const result = { kind:'', priority:'', dueDate:'', person:'', project:'', recurrence:'none' };
+
+  // Date/time via chrono-node
+  if(window.chrono){
+    const parsed = window.chrono.parseDate(text, new Date());
+    if(parsed) result.dueDate = parsed.toISOString();
+  }
+
+  // Person: "call/meet/with/for <Capitalized Name>"
+  const personMatch = text.match(/\b(?:call|meet|with|for|from)\s+([A-Z][a-z]+)\b/);
+  if(personMatch) result.person = personMatch[1];
+
+  // Priority from urgency words
+  if(/\b(urgent|asap|critical|important)\b/i.test(text)) result.priority = 'high';
+  else if(/\b(sometime|eventually|whenever|low priority)\b/i.test(text)) result.priority = 'medium';
+
+  // Recurrence
+  if(/\bevery day|daily\b/i.test(text)) result.recurrence = 'daily';
+  else if(/\bevery week|weekly\b/i.test(text)) result.recurrence = 'weekly';
+  else if(/\bevery month|monthly\b/i.test(text)) result.recurrence = 'monthly';
+
+  // Project — match against known project names
+  const proj = state.projects.find(p => text.toLowerCase().includes(p.name.toLowerCase()));
+  if(proj) result.project = proj.name;
+
+  // Kind
+  result.kind = detectType(text);
+  if(/\bwaiting (on|for)\b/i.test(text)) result.kind = 'waiting';
+  else if(/\b(need to decide|undecided|not sure yet)\b/i.test(text)) result.kind = 'openloop';
+
+  return result;
 }
 function closeCapture(){ document.getElementById('captureModal').classList.remove('open'); }
 async function saveCapture(){
@@ -822,27 +892,33 @@ async function askAI(q){
   const slot = document.getElementById('aiAnswerSlot');
   if(!slot) return;
   slot.innerHTML = `<div class="ask-answer">Thinking…</div>`;
+
   let sample;
+  try{ sample = await window.claude?.use('sample'); }catch(e){ sample = null; }
+
+  if(sample){
+    const context = state.items.slice(0,60).map(i=>`- [${i.kind}${i.priority?'/'+i.priority:''}] ${i.title}${i.sub?': '+i.sub:''}${i.person?' (person: '+i.person+')':''}${i.due?' (due: '+i.due+')':''}`).join('\n');
+    const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${q}`;
+    try{
+      const result = await sample(prompt, { modelTier:'quick', onText: ({text}) => { slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`; } });
+      slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}</div>`;
+      return;
+    }catch(err){ /* fall through to API below */ }
+  }
+
   try{
-    sample = await window.claude?.use('sample');
-  }catch(e){ sample = null; }
-  if(!sample){
+    const res = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, items: state.items })
+    });
+    const data = await res.json();
+    slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer || data.error || 'No answer.')}</div>`;
+  }catch(err){
     const matches = state.items.filter(i => (i.title+' '+(i.sub||'')+' '+(i.person||'')).toLowerCase().includes(q.toLowerCase()));
     slot.innerHTML = matches.length
       ? `<div class="ask-answer"><b>Answer:</b> Based on what you've captured — ${escapeHtml(matches.slice(0,3).map(m=>m.title).join('; '))}.</div>`
-      : `<div class="ask-answer">AI answers aren't available in this preview. Showing keyword matches instead.</div>`;
-    return;
-  }
-  const context = state.items.slice(0,60).map(i=>`- [${i.kind}${i.priority?'/'+i.priority:''}] ${i.title}${i.sub?': '+i.sub:''}${i.person?' (person: '+i.person+')':''}${i.due?' (due: '+i.due+')':''}`).join('\n');
-  const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences).\n\nContext:\n${context}\n\nQuestion: ${q}`;
-  try{
-    const result = await sample(prompt, {
-      modelTier: 'quick',
-      onText: ({text}) => { slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`; }
-    });
-    slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}</div>`;
-  }catch(err){
-    slot.innerHTML = `<div class="ask-answer">Couldn't reach the AI just now (${escapeHtml(err && err.code || 'error')}). Showing your matches above instead.</div>`;
+      : `<div class="ask-answer">Couldn't reach the AI right now.</div>`;
   }
 }
 
