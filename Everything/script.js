@@ -781,14 +781,49 @@ function openPanel(id){
   document.getElementById('panelType').textContent = item.kind.charAt(0).toUpperCase()+item.kind.slice(1);
   document.getElementById('panelDue').textContent = item.due || '—';
   document.getElementById('panelPerson').textContent = item.person || '—';
+  document.getElementById('panelProject').textContent = item.project || '—';
+  document.getElementById('panelPriority').textContent = item.priority ? item.priority.charAt(0).toUpperCase()+item.priority.slice(1) : '—';
   document.getElementById('panelStatus').textContent = item.done ? 'Complete' : (item.status || 'Open');
   document.getElementById('panelVisibility').textContent = item.scope==='private' ? '🔒 Private (only you)' : '🌐 Shared';
   document.getElementById('panelCreated').textContent = new Date(item.created).toLocaleString();
   const badge = document.getElementById('panelBadge');
   badge.textContent = item.priority ? item.priority.charAt(0).toUpperCase()+item.priority.slice(1) : item.kind;
   badge.className = 'badge ' + (item.priority || item.kind);
+
+  renderRelatedChips(item);
+
   document.getElementById('overlay').classList.add('open');
   document.getElementById('panel').classList.add('open');
+}
+
+function renderRelatedChips(item){
+  const container = document.getElementById('panelRelated');
+  const chips = [];
+
+  if(item.person){
+    chips.push({ label: `👤 ${item.person}`, tag: 'Person', onclick: `closePanel();openPersonModal(null,'${escapeHtml(item.person)}')` });
+  }
+  if(item.project){
+    chips.push({ label: `📁 ${item.project}`, tag: 'Project', onclick: `closePanel();switchView('projects')` });
+  }
+
+  const related = state.items.filter(i =>
+    i.id !== item.id && (
+      (item.person && i.person === item.person) ||
+      (item.project && i.project === item.project)
+    )
+  ).slice(0, 5);
+
+  related.forEach(r => {
+    chips.push({ label: `${kindIcon(r.kind)} ${r.title}`, tag: r.kind.charAt(0).toUpperCase()+r.kind.slice(1), onclick: `closePanel();openPanel('${r.id}')` });
+  });
+
+  container.innerHTML = chips.length
+    ? chips.map(c => `<div onclick="${c.onclick}" style="display:flex;flex-direction:column;gap:2px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;cursor:pointer;background:var(--bg);">
+        <span style="font-size:13px;font-weight:600;">${c.label}</span>
+        <span style="font-size:10.5px;color:var(--muted);">${c.tag}</span>
+      </div>`).join('')
+    : '<p class="empty" style="padding:0;">Nothing related yet.</p>';
 }
 function closePanel(){
   document.getElementById('overlay').classList.remove('open');
