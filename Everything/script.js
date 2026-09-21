@@ -1348,5 +1348,8 @@ window.addEventListener('resize', ()=>{ document.getElementById('hamburger').sty
 if(window.claude){ initMultiUser(); }
 else { state = { items:[], events:[], projects:[], goals:[], people:[], theme: localStorage.getItem('theme')||'light' }; if(state.theme) document.documentElement.setAttribute('data-theme', state.theme); }
 updateNotifBtn();
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js');
+}
 setInterval(checkDueNotifications, 30000);
 setInterval(renderToday, 60000);
