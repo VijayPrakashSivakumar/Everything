@@ -80,6 +80,7 @@ async function authSignOut(){
 }
 let sbUser = null;
 let sbChannel = null;
+let syncReadyPromise = null;
 
 function itemToRow(item){
   return {
@@ -87,7 +88,7 @@ function itemToRow(item){
     title: item.title, sub: item.sub || '', priority: item.priority || '', person: item.person || '',
     due: item.due || '', due_date: item.dueDate || null, recurrence: item.recurrence || 'none',
     status: item.status || '', project: item.project || '', created: item.created, done: !!item.done, notified: !!item.notified,
-    household_id: currentHouseholdId
+    household_id: currentHouseholdId,media_url: item.mediaUrl || ''
   };
 }
 function rowToItem(row){
@@ -95,7 +96,7 @@ function rowToItem(row){
     id: row.id, scope: row.scope, kind: row.kind, title: row.title, sub: row.sub,
     priority: row.priority, person: row.person, due: row.due, dueDate: row.due_date,
     recurrence: row.recurrence, status: row.status, project: row.project,
-    created: row.created, done: row.done, notified: row.notified
+    created: Number(row.created), done: row.done, notified: row.notified, mediaUrl: row.media_url
   };
 }
 async function startSupabaseSync(userId){
@@ -166,6 +167,7 @@ async function getInviteCode(){
 }
 
 async function showInviteCode(){
+  if(!currentHouseholdId) return;
   const code = await getInviteCode();
   document.getElementById('inviteCodeDisplay').textContent = code || '—';
 }
@@ -215,10 +217,10 @@ sb.auth.onAuthStateChange((event, session) => {
   if(session){
     authScreen.style.display = 'none';
     if(syncedUserId !== session.user.id){
-      syncedUserId = session.user.id;
-      startSupabaseSync(session.user.id);
-      showInviteCode();
-    }
+    syncedUserId = session.user.id;
+    syncReadyPromise = startSupabaseSync(session.user.id);
+    showInviteCode();
+  }
     const name = session.user.email.split('@')[0];
     const greetEl = document.getElementById('greeting');
     if(greetEl) greetEl.textContent = `${greetingText()}, ${name}!`;
@@ -367,6 +369,7 @@ function itemCollectionFor(item){
   return db.collection('items');
 }
 async function dbSaveItem(item){
+  if(syncReadyPromise) await syncReadyPromise;
   if(!item.scope) item.scope = 'shared';
   const col = itemCollectionFor(item);
   if(col){
@@ -380,6 +383,7 @@ async function dbSaveItem(item){
   renderAll();
 }
 async function dbDeleteItem(id){
+  if(syncReadyPromise) await syncReadyPromise;
   const item = state.items.find(i=>i.id===id);
   const col = item ? itemCollectionFor(item) : (db ? db.collection('items') : null);
   if(col){
@@ -394,16 +398,19 @@ async function dbDeleteItem(id){
   renderAll();
 }
 async function dbSaveProject(p){
+  if(syncReadyPromise) await syncReadyPromise;
   if(db){ await db.collection('projects').doc(p.id).set(p); }
   else if(sbUser){ await sb.from('projects').upsert({...p, household_id: currentHouseholdId}); }
   else { save(); renderProjects(); renderNav(); }
 }
 async function dbSaveGoal(g){
+  if(syncReadyPromise) await syncReadyPromise;
   if(db){ await db.collection('goals').doc(g.id).set(g); }
   else if(sbUser){ await sb.from('goals').upsert({...g, household_id: currentHouseholdId}); }
   else { save(); renderGoals(); renderReports(); }
 }
 async function dbSavePerson(p){
+  if(syncReadyPromise) await syncReadyPromise;
   if(db){ await db.collection('people').doc(p.id).set(p); }
   else if(sbUser){ await sb.from('people').upsert({...p, household_id: currentHouseholdId}); }
   else { save(); renderPeople(); }
@@ -459,8 +466,10 @@ function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('o
 /* ---------- Rendering ---------- */
 function timeAgo(ts){
   const diff = Date.now()-ts;
+  const m = Math.floor(diff/60000);
+  if(m < 1) return 'Just now';
+  if(m < 60) return m+' minute'+(m>1?'s':'')+' ago';
   const h = Math.floor(diff/3600000);
-  if(h < 1) return 'Just now';
   if(h < 24) return h+' hour'+(h>1?'s':'')+' ago';
   const d = Math.floor(h/24);
   if(d===1) return 'Yesterday';
@@ -468,11 +477,12 @@ function timeAgo(ts){
 }
 
 function kindIcon(kind){
-  return {task:'✓', event:'📅', waiting:'⏳', memory:'💭', project:'📁', openloop:'🔴', file:'📄'}[kind] || '•';
+  return {task:'✓', event:'📅', waiting:'⏳', memory:'💭', project:'📁', openloop:'🔴', file:'📄', voice:'🎙️', image:'🖼️', link:'🔗'}[kind] || '•';
 }
 function kindColor(kind){
   return {task:['var(--blue-bg)','var(--blue-fg)'], event:['var(--purple-bg)','var(--purple-fg)'], waiting:['var(--amber-bg)','var(--amber-fg)'],
-    memory:['var(--green-bg)','var(--green-fg)'], project:['var(--blue-bg)','var(--blue-fg)'], openloop:['var(--red-bg)','var(--red-fg)'], file:['var(--purple-bg)','var(--purple-fg)']}[kind] || ['var(--bg)','var(--text)'];
+    memory:['var(--green-bg)','var(--green-fg)'], project:['var(--blue-bg)','var(--blue-fg)'], openloop:['var(--red-bg)','var(--red-fg)'],
+    file:['var(--purple-bg)','var(--purple-fg)'], voice:['var(--red-bg)','var(--red-fg)'], image:['var(--green-bg)','var(--green-fg)'], link:['var(--blue-bg)','var(--blue-fg)']}[kind] || ['var(--bg)','var(--text)'];
 }
 
 function renderToday(){
@@ -532,7 +542,12 @@ function taskRow(item){
 
   const meta = document.createElement('div');
   meta.className = 'task-meta';
-  meta.innerHTML = `<div class="task-title">${item.scope==='private'?'🔒 ':''}${escapeHtml(item.title)}</div><div class="task-sub">${escapeHtml(item.sub||'')}${item.person?' · <span>👤 '+escapeHtml(item.person)+'</span>':''}</div>`;
+  let mediaHtml = '';
+  if(item.kind==='voice' && item.mediaUrl) mediaHtml = `<audio controls src="${item.mediaUrl}" style="height:28px;margin-top:4px;"></audio>`;
+  if(item.kind==='image' && item.mediaUrl) mediaHtml = `<img src="${item.mediaUrl}" style="max-width:120px;border-radius:6px;margin-top:4px;display:block;">`;
+  if(item.kind==='file' && item.mediaUrl) mediaHtml = `<a href="${item.mediaUrl}" target="_blank" style="font-size:12.5px;color:var(--accent);">Open file</a>`;
+  if(item.kind==='link') mediaHtml = `<a href="${escapeHtml(item.title)}" target="_blank" style="font-size:12.5px;color:var(--accent);">${escapeHtml(item.title)}</a>`;
+  meta.innerHTML = `<div class="task-title">${item.scope==='private'?'🔒 ':''}${escapeHtml(item.kind==='link' ? 'Link' : item.title)}</div><div class="task-sub">${escapeHtml(item.sub||'')}${item.person?' · <span>👤 '+escapeHtml(item.person)+'</span>':''}</div>${mediaHtml}`;
   row.appendChild(meta);
 
   if(item.due){
@@ -566,12 +581,17 @@ async function toggleDone(id){
 
 function renderInbox(filter){
   filter = filter || 'all';
-  const tabs = [['all','All'],['task','Tasks'],['memory','Memory'],['file','Files'],['event','Events']];
+  const tabs = [['all','All'],['text','Text'],['voice','Voice'],['image','Images'],['file','Files'],['link','Links']];
   const tabRow = document.getElementById('inboxTabs');
   tabRow.innerHTML = tabs.map(([id,label])=>`<div class="tab ${id===filter?'active':''}" onclick="renderInbox('${id}')">${label}</div>`).join('');
   const list = document.getElementById('inboxList');
   list.innerHTML = '';
-  const items = [...state.items].sort((a,b)=>b.created-a.created).filter(i=> filter==='all' || i.kind===filter);
+  const textKinds = ['task','event','memory','waiting','openloop'];
+  const items = [...state.items].sort((a,b)=>b.created-a.created).filter(i => {
+    if(filter==='all') return true;
+    if(filter==='text') return textKinds.includes(i.kind);
+    return i.kind===filter;
+  });
   if(!items.length){ list.innerHTML = '<p class="empty">Nothing here yet.</p>'; return; }
   items.forEach(item=>list.appendChild(taskRow(item)));
 }
@@ -827,8 +847,73 @@ async function deleteCurrent(){
 /* ---------- Capture modal ---------- */
 const CAPTURE_TYPES = [
   {id:'text', label:'📝 Text'}, {id:'task', label:'✓ Task'}, {id:'event', label:'📅 Event'}, {id:'memory', label:'💭 Memory'},
-  {id:'waiting', label:'⏳ Waiting for'}, {id:'openloop', label:'🔴 Open loop'}
+  {id:'waiting', label:'⏳ Waiting for'}, {id:'openloop', label:'🔴 Open loop'},
+  {id:'voice', label:'🎙️ Voice'}, {id:'image', label:'🖼️ Image'}, {id:'file', label:'📄 File'}, {id:'link', label:'🔗 Link'}
 ];
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingSeconds = 0;
+let recordingInterval = null;
+let pendingBlob = null;
+let pendingBlobExt = null;
+
+async function toggleVoiceRecording(){
+  const btn = document.getElementById('voiceRecordBtn');
+  if(mediaRecorder && mediaRecorder.state === 'recording'){
+    mediaRecorder.stop();
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+      pendingBlob = blob; pendingBlobExt = 'webm';
+      document.getElementById('voicePreview').src = URL.createObjectURL(blob);
+      document.getElementById('voicePreview').style.display = 'block';
+      clearInterval(recordingInterval);
+      document.getElementById('voiceTimer').textContent = '';
+      btn.textContent = '🎙️ Re-record';
+      stream.getTracks().forEach(t => t.stop());
+    };
+    mediaRecorder.start();
+    recordingSeconds = 0;
+    btn.textContent = '⏹️ Stop recording';
+    recordingInterval = setInterval(() => {
+      recordingSeconds++;
+      document.getElementById('voiceTimer').textContent = `${Math.floor(recordingSeconds/60)}:${String(recordingSeconds%60).padStart(2,'0')}`;
+    }, 1000);
+  }catch(e){
+    alert('Microphone access denied or unavailable.');
+  }
+}
+
+function previewImageFile(){
+  const file = document.getElementById('imageFileInput').files[0];
+  if(!file) return;
+  pendingBlob = file; pendingBlobExt = file.name.split('.').pop();
+  const preview = document.getElementById('imagePreview');
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+}
+
+function previewGenericFile(){
+  const file = document.getElementById('genericFileInput').files[0];
+  if(!file) return;
+  pendingBlob = file; pendingBlobExt = file.name.split('.').pop();
+  document.getElementById('fileNamePreview').textContent = `Selected: ${file.name}`;
+}
+
+async function uploadPendingBlob(){
+  if(!pendingBlob || !sbUser) return null;
+  const path = `${sbUser}/${cid()}.${pendingBlobExt}`;
+  const { error } = await sb.storage.from('captures').upload(path, pendingBlob);
+  if(error){ console.error('Upload failed:', error.message); return null; }
+  const { data } = sb.storage.from('captures').getPublicUrl(path);
+  return data.publicUrl;
+}
 let captureAutoDetected = false;
 let captureScope = 'shared';
 function pickScope(scope){
@@ -851,6 +936,18 @@ if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar(
   document.getElementById('captureRecurrence').value = 'none';
   document.getElementById('capturePriority').value = '';
   document.getElementById('capturePerson').value = '';
+  document.getElementById('voiceCaptureUI').style.display = 'none';
+  document.getElementById('imageCaptureUI').style.display = 'none';
+  document.getElementById('fileCaptureUI').style.display = 'none';
+  document.getElementById('linkCaptureUI').style.display = 'none';
+  document.getElementById('captureText').style.display = 'block';
+  document.getElementById('voicePreview').style.display = 'none';
+  document.getElementById('imagePreview').style.display = 'none';
+  document.getElementById('fileNamePreview').textContent = '';
+  document.getElementById('linkUrlInput').value = '';
+  pendingBlob = null; pendingBlobExt = null;
+  if(mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+  document.getElementById('voiceRecordBtn').textContent = '🎙️ Start recording';
   setTimeout(()=>document.getElementById('captureText').focus(), 50);
 }
 function populateProjectSelect(){
@@ -861,6 +958,12 @@ function pickType(id, manual){
   captureType = id;
   if(manual) captureAutoDetected = true;
   document.querySelectorAll('.type-chip').forEach(el=>el.classList.toggle('active', el.dataset.type===id));
+
+  document.getElementById('voiceCaptureUI').style.display = id==='voice' ? 'block' : 'none';
+  document.getElementById('imageCaptureUI').style.display = id==='image' ? 'block' : 'none';
+  document.getElementById('fileCaptureUI').style.display = id==='file' ? 'block' : 'none';
+  document.getElementById('linkCaptureUI').style.display = id==='link' ? 'block' : 'none';
+  document.getElementById('captureText').style.display = (id==='voice') ? 'none' : 'block';
 }
 function detectType(text){
   const t = text.toLowerCase();
@@ -908,6 +1011,33 @@ async function extractWithAI(text){
   if(document.getElementById('captureText').value !== text) return;
   applyExtraction(result);
 }
+function applyExtraction(data){
+  if(data.kind && !captureAutoDetected) pickType(data.kind, false);
+
+  const prioEl = document.getElementById('capturePriority');
+  if(data.priority && !prioEl.value) prioEl.value = data.priority;
+
+  const dueEl = document.getElementById('captureDueDate');
+  if(data.dueDate && !dueEl.value){ dueEl.value = data.dueDate.slice(0,16); }
+
+  const personEl = document.getElementById('capturePerson');
+  if(data.person && !personEl.value) personEl.value = data.person;
+
+  const projEl = document.getElementById('captureProject');
+  if(data.project && !projEl.value){
+    const match = [...projEl.options].find(o => o.value === data.project);
+    if(match) projEl.value = data.project;
+  }
+
+  const recEl = document.getElementById('captureRecurrence');
+  if(data.recurrence && data.recurrence !== 'none' && recEl.value === 'none') recEl.value = data.recurrence;
+
+  const parts = [];
+  if(data.kind) parts.push(data.kind);
+  if(data.dueDate) parts.push('due ' + formatDueDisplay(data.dueDate));
+  if(data.person) parts.push('person: ' + data.person);
+  document.getElementById('captureHint').textContent = parts.length ? `✨ AI detected: ${parts.join(', ')} — edit any field to override.` : '';
+}
 
 function extractLocally(text){
   const result = { kind:'', priority:'', dueDate:'', person:'', project:'', recurrence:'none' };
@@ -944,23 +1074,40 @@ function extractLocally(text){
 }
 function closeCapture(){ document.getElementById('captureModal').classList.remove('open'); }
 async function saveCapture(){
-  const text = document.getElementById('captureText').value.trim();
-  if(!text) return closeCapture();
-  const kindMap = {text:'memory', task:'task', event:'event', memory:'memory', waiting:'waiting', openloop:'openloop'};
-  const kind = kindMap[captureType] || 'memory';
+  const kind = captureType;
+  const isMediaType = ['voice','image','file'].includes(kind);
+  const isLink = kind === 'link';
+  const text = isLink ? document.getElementById('linkUrlInput').value.trim() : document.getElementById('captureText').value.trim();
+
+  if(isMediaType && !pendingBlob) return closeCapture();
+  if(!isMediaType && !text) return closeCapture();
+
+  let mediaUrl = null;
+  if(isMediaType){ mediaUrl = await uploadPendingBlob(); }
+
   const project = document.getElementById('captureProject').value;
   const dueVal = document.getElementById('captureDueDate').value;
   const dueISO = dueVal ? new Date(dueVal).toISOString() : '';
   const recurrence = document.getElementById('captureRecurrence').value;
   const priority = document.getElementById('capturePriority').value || (kind==='task' ? 'medium' : '');
   const person = document.getElementById('capturePerson').value.trim();
+
+  const captionText = document.getElementById('captureText').value.trim();
+  const titles = { voice: 'Voice note', image: (captionText || 'Image'), file: pendingBlob ? pendingBlob.name : 'File', link: text };
+  const subs = { voice: 'Voice', image: (captionText ? 'Image' : ''), file: 'File', link: text };
+
+  const kindMap = {text:'memory', task:'task', event:'event', memory:'memory', waiting:'waiting', openloop:'openloop', voice:'voice', image:'image', file:'file', link:'link'};
+  const realKind = kindMap[kind] || 'memory';
+
   const newItem = {
-    id:cid(), kind, title:text, sub: kind==='task' ? 'Captured task' : (kind==='event' ? 'Captured event' : (kind==='waiting' ? 'Waiting for' : (kind==='openloop' ? 'Open loop' : 'Memory'))),
+    id:cid(), kind: realKind,
+    title: isMediaType || isLink ? titles[kind] : text,
+    sub: isMediaType || isLink ? (subs[kind] || '') : (kind==='task' ? 'Captured task' : (kind==='event' ? 'Captured event' : (kind==='waiting' ? 'Waiting for' : (kind==='openloop' ? 'Open loop' : 'Memory')))),
     priority, person,
     due: dueISO ? formatDueDisplay(dueISO) : (kind==='task' ? 'Today' : ''),
     dueDate: dueISO, recurrence,
     status: kind==='task' ? 'Today':'', project, created: Date.now(), done:false,
-    scope: captureScope
+    scope: captureScope, mediaUrl: mediaUrl || ''
   };
   state.items.unshift(newItem);
   closeCapture();
