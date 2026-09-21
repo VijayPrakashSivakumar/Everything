@@ -1,597 +1,641 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><path d=%22M12 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%234361ee%22 stroke-width=%224%22/><path d=%22M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%237b2ff7%22 stroke-width=%224%22/></svg>">
-<title>Everything</title>
-<link rel="stylesheet" href="style.css">
-<link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#4361ee">
-<link rel="apple-touch-icon" href="/icon.svg">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><path d=%22M12 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%234361ee%22 stroke-width=%224%22/><path d=%22M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%237b2ff7%22 stroke-width=%224%22/></svg>">
+  <title>Everything</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#4361ee">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
+
 <body>
-  <div id="authScreen" style="position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;align-items:center;justify-content:center;">
-  <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;width:340px;">
+  <div id="authScreen"
+    style="position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;align-items:center;justify-content:center;">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;width:340px;">
 
-    <!-- Sign in / Sign up form -->
-    <div id="authFormNormal">
-      <h2 style="margin:0 0 4px;">Everything</h2>
-      <p style="color:var(--muted);font-size:13.5px;margin:0 0 18px;">Sign in to continue</p>
-      <input class="capture-input" id="authEmail" placeholder="Email" type="email">
-      <div style="position:relative;margin-top:8px;">
-        <input class="capture-input" id="authPassword" placeholder="Password" type="password" style="padding-right:42px;">
-        <span onclick="togglePasswordVisibility('authPassword','authPasswordToggle')" id="authPasswordToggle" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:15px;">👁️</span>
+      <!-- Sign in / Sign up form -->
+      <div id="authFormNormal">
+        <h2 style="margin:0 0 4px;">Everything</h2>
+        <p style="color:var(--muted);font-size:13.5px;margin:0 0 18px;">Sign in to continue</p>
+        <input class="capture-input" id="authEmail" placeholder="Email" type="email">
+        <div style="position:relative;margin-top:8px;">
+          <input class="capture-input" id="authPassword" placeholder="Password" type="password"
+            style="padding-right:42px;">
+          <span onclick="togglePasswordVisibility('authPassword','authPasswordToggle')" id="authPasswordToggle"
+            style="position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:15px;">👁️</span>
+        </div>
+        <p style="text-align:right;margin:6px 0 0;">
+          <span onclick="showForgotPassword()" style="font-size:12.5px;color:var(--accent);cursor:pointer;">Forgot
+            password?</span>
+        </p>
+        <p id="authError" style="color:var(--red-fg);font-size:12.5px;min-height:16px;margin:6px 0;"></p>
+        <button class="btn primary" style="width:100%;" onclick="authSignIn()">Sign in</button>
+        <button class="btn" style="width:100%;margin-top:8px;" onclick="authSignUp()">Create account</button>
       </div>
-      <p style="text-align:right;margin:6px 0 0;">
-        <span onclick="showForgotPassword()" style="font-size:12.5px;color:var(--accent);cursor:pointer;">Forgot password?</span>
-      </p>
-      <p id="authError" style="color:var(--red-fg);font-size:12.5px;min-height:16px;margin:6px 0;"></p>
-      <button class="btn primary" style="width:100%;" onclick="authSignIn()">Sign in</button>
-      <button class="btn" style="width:100%;margin-top:8px;" onclick="authSignUp()">Create account</button>
-    </div>
 
-    <!-- Forgot password: request reset email -->
-    <div id="authFormForgot" style="display:none;">
-      <h2 style="margin:0 0 4px;">Reset password</h2>
-      <p style="color:var(--muted);font-size:13.5px;margin:0 0 18px;">We'll email you a reset link.</p>
-      <input class="capture-input" id="forgotEmail" placeholder="Email" type="email">
-      <p id="forgotMessage" style="color:var(--accent);font-size:12.5px;min-height:16px;margin:6px 0;"></p>
-      <button class="btn primary" style="width:100%;" onclick="authForgotPassword()">Send reset link</button>
-      <button class="btn" style="width:100%;margin-top:8px;" onclick="showNormalAuth()">Back to sign in</button>
-    </div>
-
-    <!-- After clicking the email link: set new password -->
-    <div id="authFormNewPassword" style="display:none;">
-      <h2 style="margin:0 0 4px;">Set a new password</h2>
-      <p style="color:var(--muted);font-size:13.5px;margin:0 0 18px;">Choose a new password for your account.</p>
-      <div style="position:relative;">
-        <input class="capture-input" id="newPassword" placeholder="New password" type="password" style="padding-right:42px;">
-        <span onclick="togglePasswordVisibility('newPassword','newPasswordToggle')" id="newPasswordToggle" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:15px;">👁️</span>
+      <!-- Forgot password: request reset email -->
+      <div id="authFormForgot" style="display:none;">
+        <h2 style="margin:0 0 4px;">Reset password</h2>
+        <p style="color:var(--muted);font-size:13.5px;margin:0 0 18px;">We'll email you a reset link.</p>
+        <input class="capture-input" id="forgotEmail" placeholder="Email" type="email">
+        <p id="forgotMessage" style="color:var(--accent);font-size:12.5px;min-height:16px;margin:6px 0;"></p>
+        <button class="btn primary" style="width:100%;" onclick="authForgotPassword()">Send reset link</button>
+        <button class="btn" style="width:100%;margin-top:8px;" onclick="showNormalAuth()">Back to sign in</button>
       </div>
-      <p id="newPasswordError" style="color:var(--red-fg);font-size:12.5px;min-height:16px;margin:6px 0;"></p>
-      <button class="btn primary" style="width:100%;" onclick="authUpdatePassword()">Update password</button>
-    </div>
 
+      <!-- After clicking the email link: set new password -->
+      <div id="authFormNewPassword" style="display:none;">
+        <h2 style="margin:0 0 4px;">Set a new password</h2>
+        <p style="color:var(--muted);font-size:13.5px;margin:0 0 18px;">Choose a new password for your account.</p>
+        <div style="position:relative;">
+          <input class="capture-input" id="newPassword" placeholder="New password" type="password"
+            style="padding-right:42px;">
+          <span onclick="togglePasswordVisibility('newPassword','newPasswordToggle')" id="newPasswordToggle"
+            style="position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:15px;">👁️</span>
+        </div>
+        <p id="newPasswordError" style="color:var(--red-fg);font-size:12.5px;min-height:16px;margin:6px 0;"></p>
+        <button class="btn primary" style="width:100%;" onclick="authUpdatePassword()">Update password</button>
+      </div>
+
+    </div>
   </div>
-</div>
-<div class="app">
+  <div class="app">
 
-  <div class="sidebar" id="sidebar">
-    <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#4361ee"/>
-      <stop offset="100%" stop-color="#7b2ff7"/>
-    </linearGradient>
-  </defs>
-  <path d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
-        fill="none" stroke="url(#logoGrad)" stroke-width="4.5" stroke-linecap="round"/>
-</svg>
-      <div class="brand-name">EVERYTHING</div>
-    </div>
-    <div class="nav" id="navList"></div>
-    <button class="capture-btn" onclick="openCapture()">+ Capture</button>
-  </div>
-
-  <div class="main">
-    <div class="topbar">
-      <button class="icon-btn" onclick="toggleSidebar()" style="display:none" id="hamburger">☰</button>
-      <div class="search-box" onclick="openAsk()">
-        <span>🔍</span>
-        <input readonly placeholder="Search anything or ask a question…">
+    <div class="sidebar" id="sidebar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#4361ee" />
+              <stop offset="100%" stop-color="#7b2ff7" />
+            </linearGradient>
+          </defs>
+          <path d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z" fill="none"
+            stroke="url(#logoGrad)" stroke-width="4.5" stroke-linecap="round" />
+        </svg>
+        <div class="brand-name">EVERYTHING</div>
       </div>
-      <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">🌓</div>
-      <div style="position:relative;">
-      <div class="icon-btn" onclick="toggleNotifPanel()" title="Notifications" style="cursor:pointer;">🔔<span class="theme-dot" id="notifDot" style="display:none;"></span></div>
-      <div id="notifPanel" style="display:none;position:absolute;top:42px;right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);width:280px;max-height:340px;overflow-y:auto;z-index:80;">
-        <div style="padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);">Notifications</div>
-        <div id="notifList"></div>
-        </div>
-      </div>
-      <div style="position:relative;">
-      <div class="avatar" id="avatarWrap" onclick="toggleAvatarMenu()" style="cursor:pointer;"><span id="avatarInitial">V</span></div>
-      <div id="avatarMenu" style="display:none;position:absolute;top:42px;right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);min-width:160px;z-index:80;overflow:hidden;">
-        <div id="avatarMenuEmail" style="padding:10px 14px;font-size:12.5px;color:var(--muted);border-bottom:1px solid var(--border);"></div>
-        <div onclick="confirmSignOut()" style="padding:10px 14px;font-size:13.5px;cursor:pointer;color:var(--red-fg);">Sign out</div>
-        </div>
-      </div>
+      <div class="nav" id="navList"></div>
+      <button class="capture-btn" onclick="openCapture()">+ Capture</button>
     </div>
 
-    <div class="content">
-
-      <!-- TODAY VIEW -->
-      <div class="view active" id="view-today">
-        <h1 class="page-title" id="greeting">Good morning, Vijay!</h1>
-        <p class="page-sub" id="todayDate"></p>
-
-        <div class="stat-row">
-          <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">✓</div><div><div class="stat-num" id="statTasks">0</div><div class="stat-label">Tasks</div></div></div>
-          <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📅</div><div><div class="stat-num" id="statEvents">0</div><div class="stat-label">Events</div></div></div>
-          <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);">⏳</div><div><div class="stat-num" id="statWaiting">0</div><div class="stat-label">Waiting</div></div></div>
-          <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div><div><div class="stat-num" id="statOpen">0</div><div class="stat-label">Open loops</div></div></div>
+    <div class="main">
+      <div class="topbar">
+        <button class="icon-btn" onclick="toggleSidebar()" style="display:none" id="hamburger">☰</button>
+        <div class="search-box" onclick="openAsk()">
+          <span>🔍</span>
+          <input readonly placeholder="Search anything or ask a question…">
         </div>
+        <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">🌓</div>
+        <div style="position:relative;">
+          <div class="icon-btn" onclick="toggleNotifPanel()" title="Notifications" style="cursor:pointer;">🔔<span
+              class="theme-dot" id="notifDot" style="display:none;"></span></div>
+          <div id="notifPanel"
+            style="display:none;position:absolute;top:42px;right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);width:280px;max-height:340px;overflow-y:auto;z-index:80;">
+            <div style="padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);">
+              Notifications</div>
+            <div id="notifList"></div>
+          </div>
+        </div>
+        <div style="position:relative;">
+          <div class="avatar" id="avatarWrap" onclick="toggleAvatarMenu()" style="cursor:pointer;"><span
+              id="avatarInitial">V</span></div>
+          <div id="avatarMenu"
+            style="display:none;position:absolute;top:42px;right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);min-width:160px;z-index:80;overflow:hidden;">
+            <div id="avatarMenuEmail"
+              style="padding:10px 14px;font-size:12.5px;color:var(--muted);border-bottom:1px solid var(--border);">
+            </div>
+            <div onclick="confirmSignOut()"
+              style="padding:10px 14px;font-size:13.5px;cursor:pointer;color:var(--red-fg);">Sign out</div>
+          </div>
+        </div>
+      </div>
 
-        <div class="grid-2">
-          <div>
-            <div class="card">
-              <div class="card-head"><h3>Today</h3><button class="link-btn" onclick="switchView('tasks')">View all →</button></div>
-              <div id="todayList"></div>
-              <div class="nudge">
-                <div class="nudge-text"><b>One thing to consider</b><div class="nudge-sub">You mentioned your business idea a few times. Want to spend 20 minutes on it today?</div></div>
-                <button class="btn-small" onclick="startNudge()">Start now</button>
+      <div class="content">
+
+        <!-- TODAY VIEW -->
+        <div class="view active" id="view-today">
+          <h1 class="page-title" id="greeting">Good morning, Vijay!</h1>
+          <p class="page-sub" id="todayDate"></p>
+
+          <div class="stat-row">
+            <div class="stat-card">
+              <div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">✓</div>
+              <div>
+                <div class="stat-num" id="statTasks">0</div>
+                <div class="stat-label">Tasks</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📅</div>
+              <div>
+                <div class="stat-num" id="statEvents">0</div>
+                <div class="stat-label">Events</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);">⏳</div>
+              <div>
+                <div class="stat-num" id="statWaiting">0</div>
+                <div class="stat-label">Waiting</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div>
+              <div>
+                <div class="stat-num" id="statOpen">0</div>
+                <div class="stat-label">Open loops</div>
               </div>
             </div>
           </div>
-          <div>
-            <div class="hero-card">Progress is not about being busy, it's about making things happen.</div>
-            <div class="card">
-              <div class="card-head"><h3>What do you want to remember?</h3></div>
-              <input class="capture-input" id="quickRemember" placeholder="Type a note and press Enter…" onkeydown="if(event.key==='Enter')quickCapture()">
-              <div class="card-head" style="margin-top:6px;"><h3>Recent captures</h3><button class="link-btn" onclick="switchView('inbox')">View all →</button></div>
-              <div id="recentList"></div>
+
+          <div class="grid-2">
+            <div>
+              <div class="card">
+                <div class="card-head">
+                  <h3>Today</h3><button class="link-btn" onclick="switchView('tasks')">View all →</button>
+                </div>
+                <div id="todayList"></div>
+                <div class="nudge">
+                  <div class="nudge-text"><b>One thing to consider</b>
+                    <div class="nudge-sub">You mentioned your business idea a few times. Want to spend 20 minutes on it
+                      today?</div>
+                  </div>
+                  <button class="btn-small" onclick="startNudge()">Start now</button>
+                </div>
+              </div>
             </div>
-            <div class="card">
-              <div class="card-head"><h3>Insights</h3></div>
-              <div id="insightsList"></div>
+            <div>
+              <div class="hero-card">Progress is not about being busy, it's about making things happen.</div>
+              <div class="card">
+                <div class="card-head">
+                  <h3>What do you want to remember?</h3>
+                </div>
+                <input class="capture-input" id="quickRemember" placeholder="Type a note and press Enter…"
+                  onkeydown="if(event.key==='Enter')quickCapture()">
+                <div class="card-head" style="margin-top:6px;">
+                  <h3>Recent captures</h3><button class="link-btn" onclick="switchView('inbox')">View all →</button>
+                </div>
+                <div id="recentList"></div>
+              </div>
+              <div class="card">
+                <div class="card-head">
+                  <h3>Insights</h3>
+                </div>
+                <div id="insightsList"></div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- INBOX VIEW -->
-      <div class="view" id="view-inbox">
-        <h1 class="page-title">Inbox</h1>
-        <p class="page-sub">Everything you've captured, all in one place.</p>
-        <div class="tabs" id="inboxTabs"></div>
-        <div class="card"><div class="inbox-list" id="inboxList"></div></div>
-      </div>
+        <!-- INBOX VIEW -->
+        <div class="view" id="view-inbox">
+          <h1 class="page-title">Inbox</h1>
+          <p class="page-sub">Everything you've captured, all in one place.</p>
+          <div class="tabs" id="inboxTabs"></div>
+          <div class="card">
+            <div class="inbox-list" id="inboxList"></div>
+          </div>
+        </div>
 
-      <!-- TASKS VIEW -->
-      <div class="view" id="view-tasks">
-        <h1 class="page-title">Tasks</h1>
-        <p class="page-sub">Everything on your plate.</p>
-        <div class="card"><div id="tasksList"></div></div>
-      </div>
+        <!-- TASKS VIEW -->
+        <div class="view" id="view-tasks">
+          <h1 class="page-title">Tasks</h1>
+          <p class="page-sub">Everything on your plate.</p>
+          <div class="card">
+            <div id="tasksList"></div>
+          </div>
+        </div>
 
-      <!-- CALENDAR VIEW -->
-      <div class="view" id="view-schedule">
-        <h1 class="page-title">Schedule</h1>
-        <p class="page-sub" id="calMonthLabel"></p>
-        <div class="cal-grid" id="calGrid"></div>
-      </div>
+        <!-- CALENDAR VIEW -->
+        <div class="view" id="view-schedule">
+          <h1 class="page-title">Schedule</h1>
+          <p class="page-sub" id="calMonthLabel"></p>
+          <div class="cal-grid" id="calGrid"></div>
+        </div>
 
-      <!-- MEMORY VIEW -->
-      <div class="view" id="view-memory">
-        <h1 class="page-title">Memory</h1>
-        <p class="page-sub">Notes and things worth remembering.</p>
-        <div class="card"><div id="memoryList"></div></div>
-      </div>
+        <!-- MEMORY VIEW -->
+        <div class="view" id="view-memory">
+          <h1 class="page-title">Memory</h1>
+          <p class="page-sub">Notes and things worth remembering.</p>
+          <div class="card">
+            <div id="memoryList"></div>
+          </div>
+        </div>
 
-      <!-- Simple placeholder views -->
-      <div class="view" id="view-people">
-        <h1 class="page-title">People</h1><p class="page-sub">People linked to your tasks and projects.</p>
-        <div class="card">
-          <div class="card-head"><h3>Add person</h3></div>
-          <input class="capture-input" id="newPersonInput" placeholder="Name…" onkeydown="if(event.key==='Enter')addPersonManual()">
-          <button class="btn primary" onclick="addPersonManual()">+ Add person</button>
+        <!-- Simple placeholder views -->
+        <div class="view" id="view-people">
+          <h1 class="page-title">People</h1>
+          <p class="page-sub">People linked to your tasks and projects.</p>
+          <div class="card">
+            <div class="card-head">
+              <h3>Add person</h3>
+            </div>
+            <input class="capture-input" id="newPersonInput" placeholder="Name…"
+              onkeydown="if(event.key==='Enter')addPersonManual()">
+            <button class="btn primary" onclick="addPersonManual()">+ Add person</button>
+          </div>
+          <div class="card" id="peopleList"></div>
         </div>
-        <div class="card" id="peopleList"></div>
-      </div>
-      <div class="view" id="view-projects">
-        <h1 class="page-title">Projects</h1><p class="page-sub">Group related work together.</p>
-        <div class="card">
-          <div class="card-head"><h3>New project</h3></div>
-          <input class="capture-input" id="newProjectInput" placeholder="Project name…" onkeydown="if(event.key==='Enter')addProject()">
-          <button class="btn primary" onclick="addProject()">+ Add project</button>
+        <div class="view" id="view-projects">
+          <h1 class="page-title">Projects</h1>
+          <p class="page-sub">Group related work together.</p>
+          <div class="card">
+            <div class="card-head">
+              <h3>New project</h3>
+            </div>
+            <input class="capture-input" id="newProjectInput" placeholder="Project name…"
+              onkeydown="if(event.key==='Enter')addProject()">
+            <button class="btn primary" onclick="addProject()">+ Add project</button>
+          </div>
+          <div id="projectsList"></div>
         </div>
-        <div id="projectsList"></div>
-      </div>
-      <div class="view" id="view-goals">
-        <h1 class="page-title">Goals</h1><p class="page-sub">Track what you're working toward.</p>
-        <div class="card">
-          <div class="card-head"><h3>New goal</h3></div>
-          <input class="capture-input" id="newGoalInput" placeholder="What are you working toward?…" onkeydown="if(event.key==='Enter')addGoal()">
-          <button class="btn primary" onclick="addGoal()">+ Add goal</button>
+        <div class="view" id="view-goals">
+          <h1 class="page-title">Goals</h1>
+          <p class="page-sub">Track what you're working toward.</p>
+          <div class="card">
+            <div class="card-head">
+              <h3>New goal</h3>
+            </div>
+            <input class="capture-input" id="newGoalInput" placeholder="What are you working toward?…"
+              onkeydown="if(event.key==='Enter')addGoal()">
+            <button class="btn primary" onclick="addGoal()">+ Add goal</button>
+          </div>
+          <div class="card">
+            <div id="goalsList"></div>
+          </div>
         </div>
-        <div class="card"><div id="goalsList"></div></div>
-      </div>
-      <div class="view" id="view-reports">
-        <h1 class="page-title">Reports</h1><p class="page-sub">A look back at your activity.</p>
-        <div class="stat-row" id="reportStats"></div>
-        <div class="card">
-          <div class="card-head"><h3>Completed this week</h3></div>
-          <div id="reportCompleted"></div>
+        <div class="view" id="view-reports">
+          <h1 class="page-title">Reports</h1>
+          <p class="page-sub">A look back at your activity.</p>
+          <div class="stat-row" id="reportStats"></div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Completed this week</h3>
+            </div>
+            <div id="reportCompleted"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>By type</h3>
+            </div>
+            <div id="reportByType"></div>
+          </div>
         </div>
-        <div class="card">
-          <div class="card-head"><h3>By type</h3></div>
-          <div id="reportByType"></div>
+        <div class="view" id="view-insights">
+          <h1 class="page-title">Insights</h1>
+          <p class="page-sub">Patterns Everything has noticed.</p>
+          <div class="card" id="insightsFull"></div>
         </div>
-      </div>
-      <div class="view" id="view-insights"><h1 class="page-title">Insights</h1><p class="page-sub">Patterns Everything has noticed.</p><div class="card" id="insightsFull"></div></div>
-      <div class="view" id="view-settings"><h1 class="page-title">Settings</h1><p class="page-sub"><button class="btn" id="notifBtn" onclick="enablePushNotifications()">Enable notifications</button> Prototype settings.</p>
-        <div class="field-row">
-          <span class="field-label">Your invite code</span>
-          <span id="inviteCodeDisplay" style="font-weight:700;letter-spacing:1px;">—</span>
+        <div class="view" id="view-settings">
+          <h1 class="page-title">Settings</h1>
+          <p class="page-sub"><button class="btn" id="notifBtn" onclick="enablePushNotifications()">Enable
+              notifications</button> Prototype settings.</p>
+          <div class="field-row">
+            <span class="field-label">Your invite code</span>
+            <span id="inviteCodeDisplay" style="font-weight:700;letter-spacing:1px;">—</span>
+          </div>
+          <div style="margin-top:10px;">
+            <label style="font-size:12.5px;color:var(--muted);">Join a household</label>
+            <input class="capture-input" id="joinCodeInput" placeholder="Enter invite code" style="margin-top:4px;">
+            <p id="joinMessage" style="font-size:12.5px;min-height:16px;margin:4px 0;"></p>
+            <button class="btn primary" onclick="joinHousehold()">Join</button>
+          </div>
+          <div class="field-row"> <span class="field-label">Task reminders</span> </div>
+          <div class="card">
+            <div class="field-row"><span class="field-label">Theme</span><button class="btn"
+                onclick="toggleTheme()">Toggle light / dark</button></div>
+            <div class="field-row"><span class="field-label">Account</span><button class="btn"
+                onclick="authSignOut()">Sign out</button></div>
+            <div class="field-row"><span class="field-label">Reset prototype data</span><button class="btn danger"
+                onclick="resetData()">Reset</button></div>
+          </div>
         </div>
-        <div style="margin-top:10px;">
-          <label style="font-size:12.5px;color:var(--muted);">Join a household</label>
-          <input class="capture-input" id="joinCodeInput" placeholder="Enter invite code" style="margin-top:4px;">
-          <p id="joinMessage" style="font-size:12.5px;min-height:16px;margin:4px 0;"></p>
-          <button class="btn primary" onclick="joinHousehold()">Join</button>
-        </div>
-        <div class="field-row"> <span class="field-label">Task reminders</span>  </div>
-        <div class="card">
-          <div class="field-row"><span class="field-label">Theme</span><button class="btn" onclick="toggleTheme()">Toggle light / dark</button></div>
-          <div class="field-row"><span class="field-label">Account</span><button class="btn" onclick="authSignOut()">Sign out</button></div>
-          <div class="field-row"><span class="field-label">Reset prototype data</span><button class="btn danger" onclick="resetData()">Reset</button></div>
-        </div>
-      </div>
 
+      </div>
     </div>
   </div>
-</div>
 
-<!-- Task detail slide-over -->
-<div class="overlay" id="overlay" onclick="closePanel()"></div>
-<div class="panel" id="panel">
-  <div class="panel-head">
-    <span id="panelBadge" class="badge high">High</span>
-    <button class="close-x" onclick="closePanel()">✕</button>
-  </div>
-  <div class="panel-body">
-    <h2 id="panelTitle" style="margin:0 0 6px;font-size:19px;"></h2>
-    <p id="panelDesc" style="color:var(--muted);font-size:13.5px;margin:0 0 16px;"></p>
-    <div class="field-row"><span class="field-label">Type</span><span id="panelType"></span></div>
-    <div class="field-row"><span class="field-label">Due</span><span id="panelDue"></span></div>
-    <div class="field-row"><span class="field-label">Person</span><span id="panelPerson"></span></div>
-    <div class="field-row"><span class="field-label">Project</span><span id="panelProject">—</span></div>
-    <div class="field-row"><span class="field-label">Priority</span><span id="panelPriority">—</span></div>
-    <div class="field-row"><span class="field-label">Status</span><span id="panelStatus"></span></div>
-    <div class="field-row"><span class="field-label">Visibility</span><span id="panelVisibility"></span></div>
-    <div class="field-row"><span class="field-label">Created</span><span id="panelCreated"></span></div>
-
-    <div style="margin-top:16px;">
-      <h3 style="font-size:13px;color:var(--muted);margin:0 0 8px;">Related</h3>
-      <div id="panelRelated" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+  <!-- Task detail slide-over -->
+  <div class="overlay" id="overlay" onclick="closePanel()"></div>
+  <div class="panel" id="panel">
+    <div class="panel-head">
+      <span id="panelBadge" class="badge high">High</span>
+      <button class="close-x" onclick="closePanel()">✕</button>
     </div>
-  </div>
-  <div class="panel-actions">
-    <button class="btn" onclick="openEditModal()">✏️ Edit</button>
-    <button class="btn primary" onclick="completeCurrent()">✓ Mark complete</button>
-    <button class="btn danger" onclick="deleteCurrent()">Delete</button>
-  </div>
-</div>
+    <div class="panel-body">
+      <h2 id="panelTitle" style="margin:0 0 6px;font-size:19px;"></h2>
+      <p id="panelDesc" style="color:var(--muted);font-size:13.5px;margin:0 0 16px;"></p>
+      <div class="field-row"><span class="field-label">Type</span><span id="panelType"></span></div>
+      <div class="field-row"><span class="field-label">Due</span><span id="panelDue"></span></div>
+      <div class="field-row"><span class="field-label">Person</span><span id="panelPerson"></span></div>
+      <div class="field-row"><span class="field-label">Project</span><span id="panelProject">—</span></div>
+      <div class="field-row"><span class="field-label">Priority</span><span id="panelPriority">—</span></div>
+      <div class="field-row"><span class="field-label">Status</span><span id="panelStatus"></span></div>
+      <div class="field-row"><span class="field-label">Visibility</span><span id="panelVisibility"></span></div>
+      <div class="field-row"><span class="field-label">Created</span><span id="panelCreated"></span></div>
 
-<!-- Capture modal -->
-<div class="modal-overlay" id="captureModal">
-  <div class="modal">
-
-    <h3>Capture something</h3>
-
-    <!-- Capture type -->
-    <div class="type-row" id="typeRow"></div>
-    <div id="voiceCaptureUI" style="display:none;margin:10px 0;">
-      <button class="btn" id="voiceRecordBtn" onclick="toggleVoiceRecording()">🎙️ Start recording</button>
-      <span id="voiceTimer" style="margin-left:10px;font-size:13px;color:var(--muted);"></span>
-      <audio id="voicePreview" controls style="display:none;width:100%;margin-top:8px;"></audio>
-    </div>
-
-    <div id="imageCaptureUI" style="display:none;margin:10px 0;">
-      <input type="file" id="imageFileInput" accept="image/*" onchange="previewImageFile()">
-      <img id="imagePreview" style="display:none;max-width:100%;border-radius:8px;margin-top:8px;">
-    </div>
-
-    <div id="fileCaptureUI" style="display:none;margin:10px 0;">
-      <input type="file" id="genericFileInput" onchange="previewGenericFile()">
-      <p id="fileNamePreview" style="font-size:13px;color:var(--muted);margin-top:6px;"></p>
-    </div>
-
-    <div id="linkCaptureUI" style="display:none;margin:10px 0;">
-      <input class="capture-input" id="linkUrlInput" placeholder="https://…">
-    </div>
-
-    <!-- Visibility -->
-    <div class="type-row" id="visibilityRow" style="margin-top:-6px;">
-      <div
-        class="type-chip active"
-        data-scope="shared"
-        onclick="pickScope('shared')">
-        🌐 Shared
-      </div>
-
-      <div
-        class="type-chip"
-        data-scope="private"
-        onclick="pickScope('private')">
-        🔒 Private (only me)
+      <div style="margin-top:16px;">
+        <h3 style="font-size:13px;color:var(--muted);margin:0 0 8px;">Related</h3>
+        <div id="panelRelated" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
       </div>
     </div>
+    <div class="panel-actions">
+      <button class="btn" onclick="openEditModal()">✏️ Edit</button>
+      <button class="btn primary" onclick="completeCurrent()">✓ Mark complete</button>
+      <button class="btn danger" onclick="deleteCurrent()">Delete</button>
+    </div>
+  </div>
 
-    <!-- Main text -->
-    <textarea
-      id="captureText"
-      placeholder="What's on your mind?"
-      oninput="onCaptureInput()"></textarea>
+  <!-- Capture modal -->
+  <div class="modal-overlay" id="captureModal">
+    <div class="modal">
 
-    <!-- Capture hint -->
-    <p
-      style="font-size:12px;color:var(--accent);min-height:16px;margin:6px 0 0;"
-      id="captureHint">
-    </p>
+      <h3>Capture something</h3>
 
-    <!-- Priority + Due date -->
-    <div
-      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+      <!-- Capture type -->
+      <div class="type-row" id="typeRow"></div>
+      <div id="voiceCaptureUI" style="display:none;margin:10px 0;">
+        <button class="btn" id="voiceRecordBtn" onclick="toggleVoiceRecording()">🎙️ Start recording</button>
+        <span id="voiceTimer" style="margin-left:10px;font-size:13px;color:var(--muted);"></span>
+        <audio id="voicePreview" controls style="display:none;width:100%;margin-top:8px;"></audio>
+      </div>
 
-      <!-- Priority -->
-      <div>
+      <div id="imageCaptureUI" style="display:none;margin:10px 0;">
+        <input type="file" id="imageFileInput" accept="image/*" onchange="previewImageFile()">
+        <img id="imagePreview" style="display:none;max-width:100%;border-radius:8px;margin-top:8px;">
+      </div>
+
+      <div id="fileCaptureUI" style="display:none;margin:10px 0;">
+        <input type="file" id="genericFileInput" onchange="previewGenericFile()">
+        <p id="fileNamePreview" style="font-size:13px;color:var(--muted);margin-top:6px;"></p>
+      </div>
+
+      <div id="linkCaptureUI" style="display:none;margin:10px 0;">
+        <input class="capture-input" id="linkUrlInput" placeholder="https://…">
+      </div>
+
+      <!-- Visibility -->
+      <div class="type-row" id="visibilityRow" style="margin-top:-6px;">
+        <div class="type-chip active" data-scope="shared" onclick="pickScope('shared')">
+          🌐 Shared
+        </div>
+
+        <div class="type-chip" data-scope="private" onclick="pickScope('private')">
+          🔒 Private (only me)
+        </div>
+      </div>
+
+      <!-- Main text -->
+      <textarea id="captureText" placeholder="What's on your mind?" oninput="onCaptureInput()"></textarea>
+
+      <!-- Capture hint -->
+      <p style="font-size:12px;color:var(--accent);min-height:16px;margin:6px 0 0;" id="captureHint">
+      </p>
+
+      <!-- Priority + Due date -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+        <!-- Priority -->
+        <div>
+          <label style="font-size:12.5px;color:var(--muted);">
+            Priority
+          </label>
+
+          <select id="capturePriority"
+            style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+            <option value="">None</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+
+          </select>
+        </div>
+
+        <!-- Due date & time -->
+        <div>
+          <label style="font-size:12.5px;color:var(--muted);">
+            Due date & time
+          </label>
+
+          <input type="datetime-local" id="captureDueDate" class="capture-input" style="margin:4px 0 0;">
+        </div>
+
+      </div>
+
+      <!-- Recurrence + Person -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+        <!-- Repeats -->
+        <div>
+          <label style="font-size:12.5px;color:var(--muted);">
+            Repeats
+          </label>
+
+          <select id="captureRecurrence"
+            style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+            <option value="none">Doesn't repeat</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+
+          </select>
+        </div>
+
+        <!-- Person -->
+        <div>
+          <label style="font-size:12.5px;color:var(--muted);">
+            Person
+          </label>
+
+          <input class="capture-input" id="capturePerson" placeholder="e.g. Ravi" style="margin:4px 0 0;">
+        </div>
+
+      </div>
+
+      <!-- Project -->
+      <div style="margin-top:10px;">
+
         <label style="font-size:12.5px;color:var(--muted);">
-          Priority
+          Project (optional)
         </label>
 
-        <select
-          id="capturePriority"
+        <select id="captureProject"
           style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
-
-          <option value="">None</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-
-        </select>
-      </div>
-
-      <!-- Due date & time -->
-      <div>
-        <label style="font-size:12.5px;color:var(--muted);">
-          Due date & time
-        </label>
-
-        <input
-          type="datetime-local"
-          id="captureDueDate"
-          class="capture-input"
-          style="margin:4px 0 0;">
-      </div>
-
-    </div>
-
-    <!-- Recurrence + Person -->
-    <div
-      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
-
-      <!-- Repeats -->
-      <div>
-        <label style="font-size:12.5px;color:var(--muted);">
-          Repeats
-        </label>
-
-        <select
-          id="captureRecurrence"
-          style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
-
-          <option value="none">Doesn't repeat</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-
-        </select>
-      </div>
-
-      <!-- Person -->
-      <div>
-        <label style="font-size:12.5px;color:var(--muted);">
-          Person
-        </label>
-
-        <input
-          class="capture-input"
-          id="capturePerson"
-          placeholder="e.g. Ravi"
-          style="margin:4px 0 0;">
-      </div>
-
-    </div>
-
-    <!-- Project -->
-    <div style="margin-top:10px;">
-
-      <label style="font-size:12.5px;color:var(--muted);">
-        Project (optional)
-      </label>
-
-      <select
-        id="captureProject"
-        style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
-      </select>
-
-    </div>
-
-    <!-- Capture actions -->
-    <div class="modal-actions">
-
-      <button
-        class="btn"
-        onclick="closeCapture()">
-        Cancel
-      </button>
-
-      <button
-        class="btn primary"
-        onclick="saveCapture()">
-        Save
-      </button>
-
-    </div>
-
-  </div>
-</div>
-
-
-<!-- Edit modal -->
-<div class="modal-overlay" id="editModal">
-  <div class="modal">
-
-    <h3>Edit item</h3>
-
-    <!-- Title -->
-    <input
-      class="capture-input"
-      id="editTitle"
-      placeholder="Title">
-
-    <!-- Details -->
-    <textarea
-      id="editSub"
-      placeholder="Details"
-      style="width:100%;min-height:60px;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;margin-top:10px;"></textarea>
-
-    <!-- Priority + Due date -->
-    <div
-      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
-
-      <!-- Priority -->
-      <div>
-
-        <label style="font-size:12.5px;color:var(--muted);">
-          Priority
-        </label>
-
-        <select
-          id="editPriority"
-          style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
-
-          <option value="">None</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-
         </select>
 
       </div>
 
-      <!-- Due date & time -->
-      <div>
+      <!-- Capture actions -->
+      <div class="modal-actions">
 
-        <label style="font-size:12.5px;color:var(--muted);">
-          Due date & time
-        </label>
+        <button class="btn" onclick="closeCapture()">
+          Cancel
+        </button>
 
-        <input
-          type="datetime-local"
-          id="editDueDate"
-          class="capture-input"
-          style="margin:4px 0 0;">
+        <button class="btn primary" onclick="saveCapture()">
+          Save
+        </button>
 
       </div>
 
     </div>
+  </div>
 
-    <!-- Repeats + Person -->
-    <div
-      style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
 
-      <!-- Repeats -->
-      <div>
+  <!-- Edit modal -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal">
+
+      <h3>Edit item</h3>
+
+      <!-- Title -->
+      <input class="capture-input" id="editTitle" placeholder="Title">
+
+      <!-- Details -->
+      <textarea id="editSub" placeholder="Details"
+        style="width:100%;min-height:60px;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;margin-top:10px;"></textarea>
+
+      <!-- Priority + Due date -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+        <!-- Priority -->
+        <div>
+
+          <label style="font-size:12.5px;color:var(--muted);">
+            Priority
+          </label>
+
+          <select id="editPriority"
+            style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+            <option value="">None</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+
+          </select>
+
+        </div>
+
+        <!-- Due date & time -->
+        <div>
+
+          <label style="font-size:12.5px;color:var(--muted);">
+            Due date & time
+          </label>
+
+          <input type="datetime-local" id="editDueDate" class="capture-input" style="margin:4px 0 0;">
+
+        </div>
+
+      </div>
+
+      <!-- Repeats + Person -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+
+        <!-- Repeats -->
+        <div>
+
+          <label style="font-size:12.5px;color:var(--muted);">
+            Repeats
+          </label>
+
+          <select id="editRecurrence"
+            style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
+
+            <option value="none">Doesn't repeat</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+
+          </select>
+
+        </div>
+
+        <!-- Person -->
+        <div>
+
+          <label style="font-size:12.5px;color:var(--muted);">
+            Person
+          </label>
+
+          <input class="capture-input" id="editPerson" placeholder="e.g. Ravi" style="margin:4px 0 0;">
+
+        </div>
+
+      </div>
+
+      <!-- Project -->
+      <div style="margin-top:10px;">
 
         <label style="font-size:12.5px;color:var(--muted);">
-          Repeats
+          Project
         </label>
 
-        <select
-          id="editRecurrence"
+        <select id="editProject"
           style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
-
-          <option value="none">Doesn't repeat</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-
         </select>
 
       </div>
 
-      <!-- Person -->
-      <div>
+      <!-- Edit actions -->
+      <div class="modal-actions">
 
-        <label style="font-size:12.5px;color:var(--muted);">
-          Person
-        </label>
+        <button class="btn" onclick="closeEditModal()">
+          Cancel
+        </button>
 
-        <input
-          class="capture-input"
-          id="editPerson"
-          placeholder="e.g. Ravi"
-          style="margin:4px 0 0;">
+        <button class="btn primary" onclick="saveEdit()">
+          Save changes
+        </button>
 
       </div>
 
     </div>
-
-    <!-- Project -->
-    <div style="margin-top:10px;">
-
-      <label style="font-size:12.5px;color:var(--muted);">
-        Project
-      </label>
-
-      <select
-        id="editProject"
-        style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);margin-top:4px;">
-      </select>
-
-    </div>
-
-    <!-- Edit actions -->
-    <div class="modal-actions">
-
-      <button
-        class="btn"
-        onclick="closeEditModal()">
-        Cancel
-      </button>
-
-      <button
-        class="btn primary"
-        onclick="saveEdit()">
-        Save changes
-      </button>
-
-    </div>
-
   </div>
-</div>
 
-<div class="modal-overlay" id="personModal">
-  <div class="modal">
-    <h3 id="personModalName">Person</h3>
-    <label style="font-size:12.5px;color:var(--muted);">Notes</label>
-    <textarea id="personNotes" placeholder="Anything worth remembering about them…" style="width:100%;min-height:70px;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;margin-top:4px;"></textarea>
-    <div class="card-head" style="margin-top:14px;"><h3 style="font-size:14px;">Linked items</h3></div>
-    <div id="personItemsList"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closePersonModal()">Close</button>
-      <button class="btn primary" onclick="savePersonNotes()">Save notes</button>
+  <div class="modal-overlay" id="personModal">
+    <div class="modal">
+      <h3 id="personModalName">Person</h3>
+      <label style="font-size:12.5px;color:var(--muted);">Notes</label>
+      <textarea id="personNotes" placeholder="Anything worth remembering about them…"
+        style="width:100%;min-height:70px;border:1px solid var(--border);background:var(--bg);border-radius:9px;padding:10px 12px;font-size:14px;color:var(--text);resize:vertical;font-family:inherit;margin-top:4px;"></textarea>
+      <div class="card-head" style="margin-top:14px;">
+        <h3 style="font-size:14px;">Linked items</h3>
+      </div>
+      <div id="personItemsList"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closePersonModal()">Close</button>
+        <button class="btn primary" onclick="savePersonNotes()">Save notes</button>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- Ask / Search overlay -->
-<div class="ask-overlay" id="askOverlay" onclick="if(event.target===this)closeAsk()">
-  <div class="ask-box">
-    <div class="ask-input-row">
-      <span>🔍</span>
-      <input id="askInput" placeholder="Search anything or ask a question…" oninput="runAsk(this.value)">
-      <button class="close-x" onclick="closeAsk()">✕</button>
+  <!-- Ask / Search overlay -->
+  <div class="ask-overlay" id="askOverlay" onclick="if(event.target===this)closeAsk()">
+    <div class="ask-box">
+      <div class="ask-input-row">
+        <span>🔍</span>
+        <input id="askInput" placeholder="Search anything or ask a question…" oninput="runAsk(this.value)">
+        <button class="close-x" onclick="closeAsk()">✕</button>
+      </div>
+      <div class="ask-results" id="askResults">
+        <p class="empty">Start typing to search your captures, tasks and notes.</p>
+      </div>
     </div>
-    <div class="ask-results" id="askResults"><p class="empty">Start typing to search your captures, tasks and notes.</p></div>
   </div>
-</div>
-<script src="script.js"></script>
+  <script src="script.js"></script>
 </body>
+
 </html>
