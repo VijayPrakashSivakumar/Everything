@@ -2,19 +2,20 @@
   "name": "Everything",
   "short_name": "Everything",
   "description": "Capture, understand, organize, remember, act, reflect.",
-  "start_url": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#f5f6fb",
   "theme_color": "#4361ee",
   "icons": [
     {
-      "src": "icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"

@@ -172,6 +172,19 @@ async function showInviteCode() {
   document.getElementById('inviteCodeDisplay').textContent = code || '—';
 }
 
+async function loadHouseholdName() {
+  if (!currentHouseholdId) return;
+  const { data } = await sb.from('households').select('name').eq('id', currentHouseholdId).single();
+  const input = document.getElementById('householdNameInput');
+  if (input && data) input.value = data.name || 'My Household';
+}
+
+async function saveHouseholdName() {
+  const name = document.getElementById('householdNameInput').value.trim();
+  if (!name || !currentHouseholdId) return;
+  await sb.from('households').update({ name }).eq('id', currentHouseholdId);
+}
+
 async function joinHousehold() {
   const code = document.getElementById('joinCodeInput').value.trim();
   const msg = document.getElementById('joinMessage');
@@ -220,6 +233,8 @@ sb.auth.onAuthStateChange((event, session) => {
       syncedUserId = session.user.id;
       syncReadyPromise = startSupabaseSync(session.user.id);
       showInviteCode();
+      loadHouseholdName();
+      document.getElementById('settingsEmail').textContent = session.user.email;
     }
     const name = session.user.email.split('@')[0];
     const greetEl = document.getElementById('greeting');
@@ -519,16 +534,54 @@ function renderToday() {
   const insightData = getInsights();
   insights.innerHTML = insightData.map(i => `<div class="insight-item"><span>${i.icon}</span><div><div class="insight-title">${i.title}</div><div class="insight-sub">${i.sub}</div></div></div>`).join('');
   document.getElementById('insightsFull').innerHTML = insights.innerHTML || '<p class="empty">Nothing to show yet.</p>';
+  const statsEl = document.getElementById('insightsStats');
+  if (statsEl) {
+    const totalItems = state.items.length;
+    const completedCount = state.items.filter(i => i.done).length;
+    const activeDays = new Set(state.items.map(i => new Date(i.created).toDateString())).size;
+    statsEl.innerHTML = `
+      <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">📥</div><div><div class="stat-num">${totalItems}</div><div class="stat-label">Total captured</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div><div><div class="stat-num">${completedCount}</div><div class="stat-label">Completed</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📅</div><div><div class="stat-num">${activeDays}</div><div class="stat-label">Active days</div></div></div>
+    `;
+  }
 }
 
 function getInsights() {
-  const waiting = state.items.filter(i => i.kind === 'waiting');
-  const openLoops = state.items.filter(i => i.kind === 'openloop' || i.kind === 'waiting');
   const arr = [];
-  if (openLoops.length) arr.push({ icon: '✨', title: `You have ${openLoops.length} open loop${openLoops.length > 1 ? 's' : ''}`, sub: openLoops.map(o => o.title).join(', ') });
-  arr.push({ icon: '📈', title: 'You\'re most productive', sub: 'Tue, Wed, Thu (9 AM – 12 PM)' });
-  const dueTasks = state.items.filter(i => i.kind === 'task' && !i.done);
-  if (dueTasks.length) arr.push({ icon: '⏰', title: 'Upcoming deadline', sub: 'Finish: ' + dueTasks[0].title });
+  const openLoops = state.items.filter(i => i.kind === 'openloop' || i.kind === 'waiting');
+  if (openLoops.length) arr.push({ icon: '✨', title: `You have ${openLoops.length} open loop${openLoops.length > 1 ? 's' : ''}`, sub: openLoops.map(o => o.title).slice(0, 3).join(', ') });
+
+  // Most active project
+  const projectCounts = {};
+  state.items.forEach(i => { if (i.project) projectCounts[i.project] = (projectCounts[i.project] || 0) + 1; });
+  const topProject = Object.entries(projectCounts).sort((a, b) => b[1] - a[1])[0];
+  if (topProject) arr.push({ icon: '📁', title: `Most active project: ${topProject[0]}`, sub: `${topProject[1]} item${topProject[1] > 1 ? 's' : ''} linked` });
+
+  // Most mentioned person
+  const personCounts = {};
+  state.items.forEach(i => { if (i.person) personCounts[i.person] = (personCounts[i.person] || 0) + 1; });
+  const topPerson = Object.entries(personCounts).sort((a, b) => b[1] - a[1])[0];
+  if (topPerson) arr.push({ icon: '👤', title: `You mention ${topPerson[0]} most often`, sub: `${topPerson[1]} linked item${topPerson[1] > 1 ? 's' : ''}` });
+
+  // Busiest day of week (by creation)
+  const dayCounts = [0, 0, 0, 0, 0, 0, 0];
+  state.items.forEach(i => { dayCounts[new Date(i.created).getDay()]++; });
+  const maxDay = dayCounts.indexOf(Math.max(...dayCounts));
+  if (Math.max(...dayCounts) > 0) {
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    arr.push({ icon: '📈', title: `You capture the most on ${dayNames[maxDay]}s`, sub: `${dayCounts[maxDay]} item${dayCounts[maxDay] > 1 ? 's' : ''} total` });
+  }
+
+  // Overdue warning
+  const overdue = state.items.filter(i => isOverdue(i));
+  if (overdue.length) arr.push({ icon: '⚠️', title: `${overdue.length} task${overdue.length > 1 ? 's are' : ' is'} overdue`, sub: overdue.slice(0, 3).map(o => o.title).join(', ') });
+
+  // Stale open loops (open for 7+ days)
+  const stale = openLoops.filter(i => (Date.now() - i.created) > 7 * 86400000);
+  if (stale.length) arr.push({ icon: '🕰️', title: `${stale.length} open loop${stale.length > 1 ? 's have' : ' has'} sat for a week+`, sub: stale.slice(0, 3).map(s => s.title).join(', ') });
+
+  if (!arr.length) arr.push({ icon: '🌱', title: 'Not enough activity yet', sub: 'Capture more to start seeing patterns.' });
   return arr;
 }
 
@@ -598,19 +651,79 @@ function renderInbox(filter) {
   items.forEach(item => list.appendChild(taskRow(item)));
 }
 
-function renderTasks() {
+function renderTasks(filter) {
+  filter = filter || 'all';
+  const tabs = [['all', 'All'], ['today', 'Today'], ['overdue', 'Overdue'], ['upcoming', 'Upcoming'], ['completed', 'Completed']];
+  const tabRow = document.getElementById('taskTabs');
+  if (tabRow) {
+    tabRow.innerHTML = tabs.map(([id, label]) => `<div class="tab ${id === filter ? 'active' : ''}" onclick="renderTasks('${id}')">${label}</div>`).join('');
+  }
+
   const list = document.getElementById('tasksList');
-  const tasks = state.items.filter(i => i.kind === 'task');
+  let tasks = state.items.filter(i => i.kind === 'task');
+
+  if (filter === 'today') tasks = tasks.filter(i => !i.done && isToday(i.dueDate));
+  else if (filter === 'overdue') tasks = tasks.filter(i => isOverdue(i));
+  else if (filter === 'upcoming') tasks = tasks.filter(i => !i.done && i.dueDate && !isToday(i.dueDate) && !isOverdue(i));
+  else if (filter === 'completed') tasks = tasks.filter(i => i.done);
+  else tasks = tasks.filter(i => !i.done);
+
+  tasks.sort((a, b) => {
+    if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
+    if (a.dueDate) return -1;
+    if (b.dueDate) return 1;
+    return b.created - a.created;
+  });
+
   list.innerHTML = '';
-  if (!tasks.length) { list.innerHTML = '<p class="empty">No tasks yet. Capture one!</p>'; return; }
+  if (!tasks.length) {
+    const emptyMsgs = { all: 'No open tasks — nice work.', today: 'Nothing due today.', overdue: 'Nothing overdue.', upcoming: 'No upcoming tasks scheduled.', completed: 'Nothing completed yet.' };
+    list.innerHTML = `<p class="empty">${emptyMsgs[filter] || 'No tasks yet. Capture one!'}</p>`;
+    return;
+  }
   tasks.forEach(t => list.appendChild(taskRow(t)));
 }
 
 function renderMemory() {
-  const list = document.getElementById('memoryList');
-  const mem = state.items.filter(i => i.kind === 'memory');
-  list.innerHTML = mem.length ? '' : '<p class="empty">No memories captured yet.</p>';
-  mem.forEach(m => list.appendChild(taskRow(m)));
+  const container = document.getElementById('memoryGrouped');
+  if (!container) return;
+  const searchInput = document.getElementById('memorySearchInput');
+  const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+  let mem = state.items.filter(i => i.kind === 'memory');
+  if (query) {
+    mem = mem.filter(i => (i.title + ' ' + (i.sub || '') + ' ' + (i.person || '')).toLowerCase().includes(query));
+  }
+  mem.sort((a, b) => b.created - a.created);
+
+  if (!mem.length) {
+    container.innerHTML = `<div class="card"><p class="empty">${query ? 'No memories match that search.' : 'No memories captured yet.'}</p></div>`;
+    return;
+  }
+
+  const groups = {};
+  const now = new Date();
+  mem.forEach(item => {
+    const d = new Date(item.created);
+    let label;
+    if (d.toDateString() === now.toDateString()) label = 'Today';
+    else {
+      const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+      if (d.toDateString() === yesterday.toDateString()) label = 'Yesterday';
+      else label = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    }
+    if (!groups[label]) groups[label] = [];
+    groups[label].push(item);
+  });
+
+  container.innerHTML = Object.entries(groups).map(([label, items]) => `
+    <div class="card">
+      <div class="card-head"><h3>${label}</h3></div>
+      <div>${items.map(i => `<div class="task-row" onclick="openPanel('${i.id}')">
+        <div class="task-meta"><div class="task-title">${i.scope === 'private' ? '🔒 ' : ''}${escapeHtml(i.title)}</div>
+        <div class="task-sub">${timeAgo(i.created)}${i.person ? ' · 👤 ' + escapeHtml(i.person) : ''}</div></div>
+      </div>`).join('')}</div>
+    </div>`).join('');
 }
 
 function renderPeople() {
@@ -690,9 +803,20 @@ function renderProjects() {
   if (!state.projects.length) { el.innerHTML = '<div class="card"><p class="empty">No projects yet.</p></div>'; return; }
   el.innerHTML = state.projects.map(p => {
     const items = state.items.filter(i => i.project === p.name);
-    const open = items.filter(i => !i.done).length;
+    const done = items.filter(i => i.done).length;
+    const total = items.length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
     return `<div class="card">
-      <div class="card-head"><h3>${escapeHtml(p.name)}</h3><span class="badge task">${open} open</span></div>
+      <div class="card-head">
+        <h3>${escapeHtml(p.name)}</h3>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="badge task">${total - done} open</span>
+          <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteProject('${p.id}','${escapeHtml(p.name)}')">Delete</button>
+        </div>
+      </div>
+      ${total ? `<div style="background:var(--bg);border-radius:6px;height:6px;margin-bottom:12px;overflow:hidden;">
+        <div style="background:var(--green-fg);height:100%;width:${pct}%;transition:width .3s;"></div>
+      </div><p style="font-size:12px;color:var(--muted);margin:-6px 0 12px;">${pct}% complete (${done}/${total})</p>` : ''}
       ${items.length ? items.map(i => `<div class="task-row" onclick="openPanel('${i.id}')"><div class="checkbox ${i.done ? 'checked' : ''}">${i.done ? '✓' : ''}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || '')}</div></div></div>`).join('') : '<p class="empty">No items here yet.</p>'}
     </div>`;
   }).join('');
@@ -716,7 +840,26 @@ function renderGoals() {
   const el = document.getElementById('goalsList');
   if (!el) return;
   if (!state.goals.length) { el.innerHTML = '<p class="empty">No goals set yet.</p>'; return; }
-  el.innerHTML = state.goals.map(g => `<div class="task-row"><div class="checkbox ${g.done ? 'checked' : ''}" onclick="toggleGoal('${g.id}')">${g.done ? '✓' : ''}</div><div class="task-meta"><div class="task-title">${escapeHtml(g.title)}</div></div></div>`).join('');
+
+  const active = state.goals.filter(g => !g.done);
+  const done = state.goals.filter(g => g.done);
+
+  const renderRow = g => {
+    const days = Math.floor((Date.now() - g.created) / 86400000);
+    return `<div class="task-row">
+      <div class="checkbox ${g.done ? 'checked' : ''}" onclick="toggleGoal('${g.id}')">${g.done ? '✓' : ''}</div>
+      <div class="task-meta">
+        <div class="task-title" style="${g.done ? 'text-decoration:line-through;color:var(--muted);' : ''}">${escapeHtml(g.title)}</div>
+        <div class="task-sub">${g.done ? 'Completed' : (days === 0 ? 'Started today' : `In progress · ${days} day${days !== 1 ? 's' : ''}`)}</div>
+      </div>
+      <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteGoal('${g.id}')">Delete</button>
+    </div>`;
+  };
+
+  let html = '';
+  if (active.length) html += active.map(renderRow).join('');
+  if (done.length) html += `<div class="card-head" style="margin-top:${active.length ? '16px' : '0'};"><h3 style="font-size:13px;color:var(--muted);">Completed (${done.length})</h3></div>` + done.map(renderRow).join('');
+  el.innerHTML = html;
 }
 
 /* ---------- Reports ---------- */
@@ -724,49 +867,130 @@ function renderReports() {
   const statsEl = document.getElementById('reportStats');
   if (!statsEl) return;
   const weekAgo = Date.now() - 7 * 86400000;
+  const allTasks = state.items.filter(i => i.kind === 'task');
+  const completedTasks = allTasks.filter(i => i.done);
   const completed = state.items.filter(i => i.done);
   const createdThisWeek = state.items.filter(i => i.created >= weekAgo);
+  const completionRate = allTasks.length ? Math.round((completedTasks.length / allTasks.length) * 100) : 0;
   const byType = {};
   state.items.forEach(i => { byType[i.kind] = (byType[i.kind] || 0) + 1; });
 
   statsEl.innerHTML = `
     <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div><div><div class="stat-num">${completed.length}</div><div class="stat-label">Completed</div></div></div>
     <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">📥</div><div><div class="stat-num">${createdThisWeek.length}</div><div class="stat-label">Captured this week</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📁</div><div><div class="stat-num">${state.projects.length}</div><div class="stat-label">Projects</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📈</div><div><div class="stat-num">${completionRate}%</div><div class="stat-label">Task completion rate</div></div></div>
     <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);">🎯</div><div><div class="stat-num">${state.goals.filter(g => !g.done).length}</div><div class="stat-label">Open goals</div></div></div>
   `;
 
   const completedEl = document.getElementById('reportCompleted');
-  completedEl.innerHTML = completed.length ? completed.slice(0, 10).map(i => `<div class="task-row"><div class="checkbox checked">✓</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div></div></div>`).join('') : '<p class="empty">Nothing finished yet.</p>';
+  completedEl.innerHTML = completed.length ? [...completed].sort((a, b) => b.created - a.created).slice(0, 10).map(i => `<div class="task-row"><div class="checkbox checked">✓</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${timeAgo(i.created)}</div></div></div>`).join('') : '<p class="empty">Nothing finished yet.</p>';
 
   const typeEl = document.getElementById('reportByType');
-  typeEl.innerHTML = Object.keys(byType).length ? Object.entries(byType).map(([k, v]) => `<div class="field-row"><span class="field-label">${k.charAt(0).toUpperCase() + k.slice(1)}</span><span>${v}</span></div>`).join('') : '<p class="empty">No data yet.</p>';
+  const maxCount = Math.max(...Object.values(byType), 1);
+  typeEl.innerHTML = Object.keys(byType).length
+    ? Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([k, v]) => {
+      const pct = Math.round((v / maxCount) * 100);
+      const [bg, fg] = kindColor(k);
+      return `<div style="margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;"><span>${kindIcon(k)} ${k.charAt(0).toUpperCase() + k.slice(1)}</span><span>${v}</span></div>
+          <div style="background:var(--bg);border-radius:6px;height:8px;overflow:hidden;"><div style="background:${fg};height:100%;width:${pct}%;"></div></div>
+        </div>`;
+    }).join('')
+    : '<p class="empty">No data yet.</p>';
 }
 
 /* ---------- Calendar ---------- */
-function renderCalendar() {
-  const now = new Date();
-  document.getElementById('calMonthLabel').textContent = now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+let calViewDate = new Date();
+let calMode = 'week';
+
+function getScheduledItems(){
+  return state.items.filter(i => i.dueDate && !i.done);
+}
+function getWeekStart(d){
+  const date = new Date(d);
+  date.setDate(date.getDate() - date.getDay());
+  date.setHours(0,0,0,0);
+  return date;
+}
+function setCalView(mode){
+  calMode = mode;
+  renderCalendar();
+}
+function calGoToday(){ calViewDate = new Date(); renderCalendar(); }
+function calNav(dir){
+  if(calMode==='week') calViewDate.setDate(calViewDate.getDate() + dir*7);
+  else calViewDate.setMonth(calViewDate.getMonth() + dir);
+  renderCalendar();
+}
+
+function renderCalendar(){
+  const wTab = document.getElementById('calTabWeek'), mTab = document.getElementById('calTabMonth');
+  if(wTab) wTab.classList.toggle('active', calMode==='week');
+  if(mTab) mTab.classList.toggle('active', calMode==='month');
+  document.getElementById('calWeekView').style.display = calMode==='week' ? 'block' : 'none';
+  document.getElementById('calGrid').style.display = calMode==='month' ? 'grid' : 'none';
+  if(calMode==='week') renderWeekView(); else renderMonthView();
+}
+
+function renderWeekView(){
+  const container = document.getElementById('calWeekView');
+  const start = getWeekStart(calViewDate);
+  const days = [...Array(7)].map((_,i)=>{ const d=new Date(start); d.setDate(start.getDate()+i); return d; });
+  document.getElementById('calRangeLabel').textContent = `${days[0].toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${days[6].toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+
+  const startHour = 7, endHour = 20, rowHeight = 50;
+  const hours = []; for(let h=startHour; h<=endHour; h++) hours.push(h);
+  const scheduled = getScheduledItems();
+
+  let html = `<div class="cal-week-wrap"><div class="cal-time-col"><div class="cal-week-head-spacer"></div>`;
+  hours.forEach(h=>{ html += `<div class="cal-hour-label">${h===12?'12 PM':h<12?h+' AM':(h-12)+' PM'}</div>`; });
+  html += `</div><div class="cal-week-days">`;
+
+  days.forEach(day=>{
+    const isToday = day.toDateString() === new Date().toDateString();
+    html += `<div class="cal-week-day-col">
+      <div class="cal-week-day-head ${isToday?'today':''}"><span>${day.toLocaleDateString(undefined,{weekday:'short'})}</span><span class="num">${day.getDate()}</span></div>
+      <div class="cal-week-day-body" style="height:${hours.length*rowHeight}px;">`;
+    hours.forEach(()=>{ html += `<div class="cal-hour-row"></div>`; });
+
+    scheduled.filter(i => new Date(i.dueDate).toDateString() === day.toDateString()).forEach(item=>{
+      const d = new Date(item.dueDate);
+      const hour = d.getHours() + d.getMinutes()/60;
+      if(hour < startHour || hour > endHour+1) return;
+      const top = (hour - startHour) * rowHeight;
+      const [bg,fg] = kindColor(item.kind);
+      html += `<div class="cal-week-event" style="top:${top}px;height:${rowHeight-4}px;background:${bg};color:${fg};" onclick="openPanel('${item.id}')"><b>${d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</b> ${escapeHtml(item.title)}</div>`;
+    });
+    html += `</div></div>`;
+  });
+  html += `</div></div>`;
+  container.innerHTML = html;
+}
+
+function renderMonthView(){
+  const now = calViewDate;
+  document.getElementById('calRangeLabel').textContent = now.toLocaleDateString(undefined,{month:'long', year:'numeric'});
   const grid = document.getElementById('calGrid');
   grid.innerHTML = '';
-  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(d => {
-    const h = document.createElement('div'); h.className = 'cal-day-head'; h.textContent = d; grid.appendChild(h);
+  ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{
+    const h = document.createElement('div'); h.className='cal-day-head'; h.textContent=d; grid.appendChild(h);
   });
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOffset = firstDay.getDay();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  for (let i = 0; i < startOffset; i++) {
-    const c = document.createElement('div'); c.className = 'cal-cell'; grid.appendChild(c);
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const scheduled = getScheduledItems();
+  for(let i=0;i<startOffset;i++){ const c = document.createElement('div'); c.className='cal-cell'; grid.appendChild(c); }
+  for(let d=1; d<=daysInMonth; d++){
+    const cellDate = new Date(now.getFullYear(), now.getMonth(), d);
     const c = document.createElement('div');
-    c.className = 'cal-cell' + (d === now.getDate() ? ' today' : '');
-    const num = document.createElement('div'); num.className = 'num'; num.textContent = d;
+    c.className = 'cal-cell' + (cellDate.toDateString()===new Date().toDateString() ? ' today':'');
+    const num = document.createElement('div'); num.className='num'; num.textContent=d;
     c.appendChild(num);
-    state.events.filter(e => e.day === d).forEach(e => {
+    scheduled.filter(i => new Date(i.dueDate).toDateString() === cellDate.toDateString()).forEach(item=>{
       const ev = document.createElement('div');
       ev.className = 'cal-event';
-      ev.textContent = e.time + ' ' + e.title;
+      ev.onclick = ()=>openPanel(item.id);
+      ev.textContent = new Date(item.dueDate).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}) + ' ' + item.title;
       c.appendChild(ev);
     });
     grid.appendChild(c);
@@ -879,6 +1103,41 @@ async function deleteCurrent() {
   state.items = state.items.filter(i => i.id !== id);
   closePanel();
   await dbDeleteItem(id);
+}
+async function dbDeleteProject(id) {
+  if (syncReadyPromise) await syncReadyPromise;
+  if (db) { await db.collection('projects').doc(id).delete(); }
+  else if (sbUser) {
+    const { error } = await sb.from('projects').delete().eq('id', id).eq('household_id', currentHouseholdId);
+    if (error) console.error('Supabase project delete failed:', error.message);
+  } else {
+    state.projects = state.projects.filter(p => p.id !== id);
+    save();
+  }
+  renderProjects(); renderNav();
+}
+async function dbDeleteGoal(id) {
+  if (syncReadyPromise) await syncReadyPromise;
+  if (db) { await db.collection('goals').doc(id).delete(); }
+  else if (sbUser) {
+    const { error } = await sb.from('goals').delete().eq('id', id).eq('household_id', currentHouseholdId);
+    if (error) console.error('Supabase goal delete failed:', error.message);
+  } else {
+    state.goals = state.goals.filter(g => g.id !== id);
+    save();
+  }
+  renderGoals(); renderReports();
+}
+async function deleteGoal(id) {
+  if (!confirm('Delete this goal?')) return;
+  state.goals = state.goals.filter(g => g.id !== id);
+  await dbDeleteGoal(id);
+}
+
+async function deleteProject(id, name) {
+  if (!confirm(`Delete "${name}"? Items linked to it will keep their project tag but the project itself will be removed.`)) return;
+  state.projects = state.projects.filter(p => p.id !== id);
+  await dbDeleteProject(id);
 }
 
 /* ---------- Capture modal ---------- */
@@ -1308,7 +1567,7 @@ async function enablePushNotifications() {
     return;
   }
 
-  const reg = await navigator.serviceWorker.register('/sw.js');
+  const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') return;
 
@@ -1351,7 +1610,7 @@ if (window.claude) { initMultiUser(); }
 else { state = { items: [], events: [], projects: [], goals: [], people: [], theme: localStorage.getItem('theme') || 'light' }; if (state.theme) document.documentElement.setAttribute('data-theme', state.theme); }
 updateNotifBtn();
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
+  navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(err => console.warn('Service worker registration failed:', err));
 }
 setInterval(checkDueNotifications, 30000);
 setInterval(renderToday, 60000);
