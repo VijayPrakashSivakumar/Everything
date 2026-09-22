@@ -541,32 +541,59 @@ function resetData() {
 /* ---------- Nav & routing ---------- */
 function renderNav() {
   const nav = document.getElementById('navList');
-  nav.innerHTML = '';
+    if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      if (btn) btn.textContent = 'Use HTTPS to enable';
   NAV.forEach(item => {
     const el = document.createElement('div');
     el.className = 'nav-item' + (item.id === activeView ? ' active' : '');
-    let badge = '';
-    if (item.id === 'inbox') badge = state.items.length;
-    if (item.id === 'tasks') badge = state.items.filter(i => i.kind === 'task' && !i.done).length;
+    if (Notification.permission === 'denied') {
+      if (btn) btn.textContent = 'Blocked in browser settings';
+      return;
+    }
     el.innerHTML = `<div class="left"><span class="nav-icon">${item.icon}</span>${item.label}</div>${badge ? `<span class="nav-badge">${badge}</span>` : ''}`;
-    el.onclick = () => switchView(item.id);
-    nav.appendChild(el);
-  });
-}
+    if (btn) { btn.disabled = true; btn.textContent = 'Enabling…'; }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const perm = Notification.permission === 'granted'
+        ? 'granted'
+        : await Notification.requestPermission();
+      if (perm !== 'granted') {
+        if (btn) btn.textContent = 'Notifications not allowed';
+        return;
+      }
 
-let activeView = 'today';
+      const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
 
-function switchView(id) {
+      if (!sbUser) throw new Error('Sign in before enabling notifications.');
+      const { error } = await sb.from('push_subscriptions').upsert({
+        user_id: sbUser,
+        subscription: sub.toJSON(),
+        created: Date.now()
+      });
+      if (error) throw error;
   activeView = id;
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById('view-' + id).classList.add('active');
+      if (btn) btn.textContent = '✓ Notifications enabled';
+    } catch (err) {
+      console.error('Push notification setup failed:', err);
+      if (btn) btn.textContent = 'Try again';
+      alert(err?.message || 'Could not enable notifications.');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   renderNav();
   if (document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
   if (id === 'schedule') renderCalendar();
   if (id === 'reports') renderReports();
-  if (id === 'projects') renderProjects();
+    if (!btn) return;
+    if (!window.isSecureContext || !('Notification' in window)) {
+      btn.textContent = 'Requires HTTPS';
+      return;
+    }
   if (id === 'goals') renderGoals();
-  if (id === 'tasks') renderTasks();
+    btn.textContent = perm === 'granted' ? '✓ Enabled' : (perm === 'denied' ? 'Blocked in browser settings' : 'Enable notifications');
   if (id === 'inbox') renderInbox();
   if (id === 'memory') renderMemory();
   if (id === 'people') renderPeople();
