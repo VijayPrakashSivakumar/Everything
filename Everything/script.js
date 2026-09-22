@@ -306,6 +306,62 @@ function greetingText() {
   const h = new Date().getHours();
   return h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
 }
+const MOTIVATION_QUOTES = [
+  "Progress is not about being busy, it's about making things happen.",
+  "Small steps taken daily lead to big changes eventually.",
+  "You don't need to see the whole staircase, just the next step.",
+  "Discipline is choosing between what you want now and what you want most.",
+  "Clarity comes from action, not from thinking about it more.",
+  "The best time to start was earlier. The next best time is now.",
+  "A little progress each day adds up to big results.",
+  "Done is better than perfect.",
+  "Focus on being productive instead of busy.",
+  "Every task you finish makes the next one easier.",
+  "What gets captured gets remembered. What gets remembered gets done.",
+  "You don't have to be great to start, but you have to start to be great.",
+  "Slow progress is still progress.",
+  "The secret to getting ahead is getting started.",
+  "One task at a time builds momentum.",
+  "Consistency beats intensity over time.",
+  "A clear list makes for a clear mind.",
+  "Your future is built by what you do today, not what you plan for tomorrow.",
+  "Action is the antidote to overwhelm.",
+  "Organize your intentions and your days will organize themselves.",
+];
+
+function getDailyQuoteIndex(){
+  const start = new Date(new Date().getFullYear(), 0, 0);
+  const diff = Date.now() - start.getTime();
+  const dayOfYear = Math.floor(diff / 86400000);
+  return dayOfYear % MOTIVATION_QUOTES.length;
+}
+
+let currentQuoteIndex = null;
+
+function renderQuote(){
+  const el = document.getElementById('heroQuoteText');
+  if(!el) return;
+  if(currentQuoteIndex === null) currentQuoteIndex = getDailyQuoteIndex();
+  el.textContent = MOTIVATION_QUOTES[currentQuoteIndex];
+}
+
+function shuffleQuote(){
+  let next;
+  do { next = Math.floor(Math.random() * MOTIVATION_QUOTES.length); } while(next === currentQuoteIndex && MOTIVATION_QUOTES.length > 1);
+  currentQuoteIndex = next;
+  renderQuote();
+}
+
+async function saveQuoteToMemory(){
+  const text = MOTIVATION_QUOTES[currentQuoteIndex];
+  const newItem = {id:cid(), kind:'memory', title:text, sub:'Saved quote', priority:'', person:'', due:'', status:'', project:'', created:Date.now(), done:false, scope:'private'};
+  state.items.unshift(newItem);
+  await dbSaveItem(newItem);
+  const btn = event.target;
+  const original = btn.textContent;
+  btn.textContent = '✓ Saved';
+  setTimeout(()=>{ btn.textContent = original; }, 1500);
+}
 
 /* ============================================================
    MULTI-USER DATA LAYER
@@ -1620,6 +1676,7 @@ window.addEventListener('resize', () => { document.getElementById('hamburger').s
 if (window.claude) { initMultiUser(); }
 else { state = { items: [], events: [], projects: [], goals: [], people: [], theme: localStorage.getItem('theme') || 'light' }; if (state.theme) document.documentElement.setAttribute('data-theme', state.theme); }
 updateNotifBtn();
+renderQuote();
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(err => console.warn('Service worker registration failed:', err));
 }

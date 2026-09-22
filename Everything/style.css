@@ -226,7 +226,9 @@ body {
   justify-content: center;
   cursor: pointer;
   color: var(--muted);
+  font-size: 16px;
   position: relative;
+  flex-shrink: 0;
 }
 
 .icon-btn:hover {
@@ -1032,5 +1034,40 @@ h1.page-title {
 
   .cal-cell {
     min-height: 60px;
+  }
+}
+
+@media (max-width:900px) {
+  .cal-week-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cal-week-days {
+    min-width: 560px;
+  }
+
+  .cal-time-col {
+    position: sticky;
+    left: 0;
+    background: var(--card);
+    z-index: 2;
+  }
+}
+
+@media (max-width:480px) {
+  .task-row {
+    flex-wrap: wrap;
+  }
+
+  .task-meta {
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .task-time,
+  .task-row>.badge {
+    order: 2;
+    margin-top: 4px;
   }
 }
