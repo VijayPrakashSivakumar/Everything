@@ -455,15 +455,15 @@ function shuffleQuote() {
   renderQuote();
 }
 
-async function saveQuoteToMemory() {
+async function saveQuoteToMemory(btnEl) {
   const text = MOTIVATION_QUOTES[currentQuoteIndex];
   const newItem = { id: cid(), kind: 'memory', title: text, sub: 'Saved quote', priority: '', person: '', due: '', status: '', project: '', created: Date.now(), done: false, scope: 'private' };
   state.items.unshift(newItem);
   await dbSaveItem(newItem);
-  const btn = event.target;
-  const original = btn.textContent;
-  btn.textContent = '✓ Saved';
-  setTimeout(() => { btn.textContent = original; }, 1500);
+  if (!btnEl) return;
+  const original = btnEl.textContent;
+  btnEl.textContent = '✓ Saved';
+  setTimeout(() => { btnEl.textContent = original; }, 1500);
 }
 
 /* ============================================================
@@ -784,6 +784,7 @@ async function toggleDone(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
   item.done = !item.done;
+  logCompletion(item.id, item.done);
   await dbSaveItem(item);
   if (item.done && item.recurrence && item.recurrence !== 'none' && item.dueDate) {
     const nextDue = nextOccurrence(item.dueDate, item.recurrence);
@@ -798,15 +799,23 @@ function renderInbox(filter) {
   const tabs = [['all', 'All'], ['text', 'Text'], ['voice', 'Voice'], ['image', 'Images'], ['file', 'Files'], ['link', 'Links']];
   const tabRow = document.getElementById('inboxTabs');
   tabRow.innerHTML = tabs.map(([id, label]) => `<div class="tab ${id === filter ? 'active' : ''}" onclick="renderInbox('${id}')">${label}</div>`).join('');
+  const searchInput = document.getElementById('inboxSearchInput');
+  const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
   const list = document.getElementById('inboxList');
   list.innerHTML = '';
   const textKinds = ['task', 'event', 'memory', 'waiting', 'openloop'];
   const items = [...state.items].sort((a, b) => b.created - a.created).filter(i => {
-    if (filter === 'all') return true;
-    if (filter === 'text') return textKinds.includes(i.kind);
-    return i.kind === filter;
+    if (filter === 'text') { if (!textKinds.includes(i.kind)) return false; }
+    else if (filter !== 'all' && i.kind !== filter) return false;
+    if (!query) return true;
+    return (i.title + ' ' + (i.sub || '') + ' ' + (i.person || '') + ' ' + (i.project || '')).toLowerCase().includes(query);
   });
-  if (!items.length) { list.innerHTML = '<p class="empty">Nothing here yet.</p>'; return; }
+  if (!items.length) {
+    list.innerHTML = query
+      ? '<p class="empty">Nothing matches that filter.</p>'
+      : '<p class="empty">Nothing here yet.</p>';
+    return;
+  }
   items.forEach(item => list.appendChild(taskRow(item)));
 }
 
@@ -1021,6 +1030,18 @@ function renderGoals() {
   el.innerHTML = html;
 }
 
+/* Items only store a `done` flag, so we keep a small local log of *when* something
+   was completed. Used by the Reports activity chart. */
+let doneLog = {};
+try { doneLog = JSON.parse(localStorage.getItem('everything_done_log_v1') || '{}'); }
+catch (e) { doneLog = {}; }
+
+function logCompletion(id, done) {
+  if (done) doneLog[id] = Date.now();
+  else delete doneLog[id];
+  try { localStorage.setItem('everything_done_log_v1', JSON.stringify(doneLog)); } catch (e) { }
+}
+
 /* ---------- Reports ---------- */
 function renderReports() {
   const statsEl = document.getElementById('reportStats');
@@ -1056,6 +1077,50 @@ function renderReports() {
         </div>`;
     }).join('')
     : '<p class="empty">No data yet.</p>';
+
+  const chartEl = document.getElementById('reportChart');
+  if (chartEl) chartEl.innerHTML = renderActivityChart(14);
+}
+
+/* Captured vs completed per day for the last `days` days. */
+function renderActivityChart(days) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const buckets = [];
+  const indexByDay = {};
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    indexByDay[d.toDateString()] = buckets.length;
+    buckets.push({ date: d, captured: 0, completed: 0 });
+  }
+
+  state.items.forEach(item => {
+    const capturedAt = indexByDay[new Date(item.created).toDateString()];
+    if (capturedAt !== undefined) buckets[capturedAt].captured++;
+
+    if (item.done && doneLog[item.id]) {
+      const completedAt = indexByDay[new Date(doneLog[item.id]).toDateString()];
+      if (completedAt !== undefined) buckets[completedAt].completed++;
+    }
+  });
+
+  const max = Math.max(...buckets.map(b => Math.max(b.captured, b.completed)), 1);
+
+  return buckets.map(b => {
+    const capturedH = Math.round((b.captured / max) * 100);
+    const completedH = Math.round((b.completed / max) * 100);
+    const label = b.date.toLocaleDateString(undefined, { day: 'numeric' });
+    const tip = `${b.date.toLocaleDateString()} — ${b.captured} captured, ${b.completed} completed`;
+    return `<div class="chart-col" title="${tip}">
+      <div class="chart-bars">
+        <div class="chart-bar" style="height:${capturedH}%;background:var(--accent);"></div>
+        <div class="chart-bar" style="height:${completedH}%;background:var(--green-fg);"></div>
+      </div>
+      <div class="chart-label">${label}</div>
+    </div>`;
+  }).join('');
 }
 
 /* ---------- Calendar ---------- */
@@ -1262,6 +1327,34 @@ async function deleteCurrent() {
   state.items = state.items.filter(i => i.id !== id);
   closePanel();
   await dbDeleteItem(id);
+}
+
+/* ---------- Quick reschedule ("snooze") ---------- */
+function applyDueToItem(item, date) {
+  item.dueDate = date ? date.toISOString() : '';
+  item.due = date ? formatDueDisplay(item.dueDate) : '';
+  item.notified = false;
+  return item;
+}
+
+function nextNineAm(daysAhead) {
+  const d = new Date();
+  d.setDate(d.getDate() + daysAhead);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+async function snoozeCurrent(mode) {
+  const item = state.items.find(i => i.id === currentItemId);
+  if (!item) return;
+
+  if (mode === 'tomorrow9') applyDueToItem(item, nextNineAm(1));
+  else if (mode === 'day') applyDueToItem(item, new Date(Date.now() + 86400000));
+  else if (mode === 'week') applyDueToItem(item, new Date(Date.now() + 7 * 86400000));
+  else if (mode === 'clear') applyDueToItem(item, null);
+
+  await dbSaveItem(item);
+  openPanel(item.id);
 }
 async function dbDeleteProject(id) {
   if (syncReadyPromise) await syncReadyPromise;
@@ -1494,14 +1587,81 @@ function applyExtraction(data) {
   document.getElementById('captureHint').textContent = parts.length ? `✨ AI detected: ${parts.join(', ')} — edit any field to override.` : '';
 }
 
+const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const DAY_WORD_RE = /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/;
+
+/* Compact fallback date parser for notes like "tomorrow at 5pm", "in 2 hours" or
+   "friday 14:30". Only used when chrono-node isn't available (offline / CDN blocked). */
+function parseLocalDate(text, now) {
+  const ref = now ? new Date(now) : new Date();
+  const t = ' ' + text.toLowerCase() + ' ';
+
+  const relative = t.match(/\bin\s+(\d+)\s*(min|minute|hour|hr|day|week)s?\b/);
+  if (relative) {
+    const n = parseInt(relative[1], 10);
+    const d = new Date(ref);
+    if (relative[2].startsWith('min')) d.setMinutes(d.getMinutes() + n);
+    else if (relative[2] === 'day') d.setDate(d.getDate() + n);
+    else if (relative[2] === 'week') d.setDate(d.getDate() + n * 7);
+    else d.setHours(d.getHours() + n);
+    return d;
+  }
+
+  const timeMatch = t.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/) ||
+    t.match(/\bat\s+(\d{1,2})[:.](\d{2})\b/) ||
+    t.match(/\b(\d{1,2}):(\d{2})\b/);
+
+  const d = new Date(ref);
+
+  if (/\btomorrow\b/.test(t)) {
+    d.setDate(d.getDate() + 1);
+  } else if (DAY_WORD_RE.test(t)) {
+    const target = DAY_NAMES.indexOf(t.match(DAY_WORD_RE)[1]);
+    let delta = (target - d.getDay() + 7) % 7;
+    if (delta === 0) delta = 7; // "friday" said on a Friday means the coming one
+    d.setDate(d.getDate() + delta);
+  } else if (!/\b(today|tonight|this morning|this afternoon|this evening)\b/.test(t)) {
+    return null;
+  }
+
+  if (timeMatch) {
+    let h = parseInt(timeMatch[1], 10);
+    if (timeMatch[3] === 'pm' && h < 12) h += 12;
+    if (timeMatch[3] === 'am' && h === 12) h = 0;
+    d.setHours(h, timeMatch[2] ? parseInt(timeMatch[2], 10) : 0, 0, 0);
+  } else if (/\btonight\b/.test(t)) d.setHours(21, 0, 0, 0);
+  else if (/\bevening\b/.test(t)) d.setHours(19, 0, 0, 0);
+  else if (/\bafternoon\b/.test(t)) d.setHours(14, 0, 0, 0);
+  else d.setHours(9, 0, 0, 0);
+
+  // No explicit time given and the guess is already behind us — park it an hour out.
+  if (!timeMatch && d.getTime() <= ref.getTime()) {
+    d.setTime(ref.getTime() + 3600000);
+    d.setMinutes(0, 0, 0);
+  }
+
+  return d;
+}
+
 function extractLocally(text) {
   const result = { kind: '', priority: '', dueDate: '', person: '', project: '', recurrence: 'none' };
 
-  // Date/time via chrono-node
+  // Date/time via chrono-node (loaded from a CDN in index.html)
   if (window.chrono) {
-    const parsed = window.chrono.parseDate(text, new Date());
-    if (parsed) result.dueDate = parsed.toISOString();
+    try {
+      const parsed = window.chrono.parseDate(text, new Date());
+      if (parsed) result.dueDate = parsed.toISOString();
+    } catch (e) { /* fall through to the built-in parser below */ }
   }
+
+  // Built-in fallback so dates still work offline or if the CDN is blocked
+  if (!result.dueDate) {
+    const local = parseLocalDate(text);
+    if (local) result.dueDate = local.toISOString();
+  }
+
+  // Never suggest a due date that has already passed (e.g. "yesterday")
+  if (result.dueDate && new Date(result.dueDate).getTime() < Date.now() - 60000) result.dueDate = '';
 
   // Person: "call/meet/with/for <Capitalized Name>"
   const personMatch = text.match(/\b(?:call|meet|with|for|from)\s+([A-Z][a-z]+)\b/);
@@ -1653,6 +1813,182 @@ async function askAI(q) {
   }
 }
 
+/* ---------- Keyboard shortcuts ---------- */
+function isTypingTarget(el) {
+  if (!el || !el.tagName) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
+    el.tagName === 'SELECT' || el.isContentEditable === true;
+}
+
+/* Modals and the Ask overlay block the single-letter shortcuts; the item slide-over
+   does not — a quick capture from there just closes it first. */
+function isBlockingOverlayOpen() {
+  return !!document.querySelector('.modal-overlay.open') ||
+    document.getElementById('askOverlay').classList.contains('open');
+}
+
+/* Closes the top-most thing that is open. Returns true if it closed something. */
+function closeTopmostOverlay() {
+  const notif = document.getElementById('notifPanel');
+  if (notif && notif.style.display === 'block') { notif.style.display = 'none'; return true; }
+
+  const avatar = document.getElementById('avatarMenu');
+  if (avatar && avatar.style.display === 'block') { avatar.style.display = 'none'; return true; }
+
+  if (document.getElementById('askOverlay').classList.contains('open')) { closeAsk(); return true; }
+  if (document.getElementById('editModal').classList.contains('open')) { closeEditModal(); return true; }
+  if (document.getElementById('personModal').classList.contains('open')) { closePersonModal(); return true; }
+  if (document.getElementById('captureModal').classList.contains('open')) { closeCapture(); return true; }
+  if (document.getElementById('panel').classList.contains('open')) { closePanel(); return true; }
+
+  return false;
+}
+
+function shortcutsModifierLabel() {
+  const isApple = /mac|iphone|ipad|ipod/i.test(navigator.platform || '') ||
+    /mac os x/i.test(navigator.userAgent || '');
+  return isApple ? '⌘ K' : 'Ctrl K';
+}
+
+function initShortcuts() {
+  const hint = document.getElementById('searchKbdHint');
+  if (hint) hint.textContent = shortcutsModifierLabel();
+
+  document.addEventListener('keydown', e => {
+    const key = e.key;
+
+    if (key === 'Escape') {
+      if (closeTopmostOverlay()) e.preventDefault();
+      return;
+    }
+
+    const modifier = e.metaKey || e.ctrlKey;
+
+    if (modifier && (key === 'k' || key === 'K')) {
+      e.preventDefault();
+      openAsk();
+      return;
+    }
+
+    if (isTypingTarget(e.target) || modifier || e.altKey) return;
+
+    if (key === '/') { e.preventDefault(); openAsk(); return; }
+
+    if (key === 'c' || key === 'C') {
+      e.preventDefault();
+      if (isBlockingOverlayOpen()) return;
+      if (document.getElementById('panel').classList.contains('open')) closePanel();
+      openCapture();
+    }
+  });
+}
+
+/* ---------- Backup: export / import ---------- */
+function exportData() {
+  const payload = {
+    app: 'everything',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    items: state.items || [],
+    projects: state.projects || [],
+    goals: state.goals || [],
+    people: state.people || []
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `everything-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function readFileAsText(file) {
+  if (file.text) return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+async function importData(input) {
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(await readFileAsText(file));
+  } catch (e) {
+    alert('That file is not valid JSON.');
+    input.value = '';
+    return;
+  }
+
+  const incomingItems = Array.isArray(payload.items) ? payload.items : [];
+  const incomingProjects = Array.isArray(payload.projects) ? payload.projects : [];
+  const incomingGoals = Array.isArray(payload.goals) ? payload.goals : [];
+  const incomingPeople = Array.isArray(payload.people) ? payload.people : [];
+
+  if (!incomingItems.length && !incomingProjects.length && !incomingGoals.length && !incomingPeople.length) {
+    alert('No Everything data found in that file.');
+    input.value = '';
+    return;
+  }
+
+  if (!confirm(`Import ${incomingItems.length} item(s)? Existing records with the same id will be replaced.`)) {
+    input.value = '';
+    return;
+  }
+
+  state.items = state.items || [];
+  state.projects = state.projects || [];
+  state.goals = state.goals || [];
+  state.people = state.people || [];
+
+  for (const item of incomingItems) {
+    if (!item || !item.id) continue;
+    const existing = state.items.find(i => i.id === item.id);
+    if (existing) Object.assign(existing, item); else state.items.unshift(item);
+    await dbSaveItem(item);
+  }
+  for (const p of incomingProjects) {
+    if (!p || !p.id) continue;
+    if (!state.projects.some(x => x.id === p.id)) state.projects.unshift(p);
+    await dbSaveProject(p);
+  }
+  for (const g of incomingGoals) {
+    if (!g || !g.id) continue;
+    if (!state.goals.some(x => x.id === g.id)) state.goals.unshift(g);
+    await dbSaveGoal(g);
+  }
+  for (const p of incomingPeople) {
+    if (!p || !p.id) continue;
+    if (!state.people.some(x => x.id === p.id)) state.people.unshift(p);
+    await dbSavePerson(p);
+  }
+
+  input.value = '';
+  renderAll();
+  alert(`Imported ${incomingItems.length} item(s).`);
+}
+
+/* PWA manifest shortcuts / deep links: ./?capture=1 and ./?view=tasks */
+function applyLaunchShortcut() {
+  if (!state || !location.search) return;
+
+  const params = new URLSearchParams(location.search);
+  const view = params.get('view');
+
+  if (view && document.getElementById('view-' + view)) switchView(view);
+
+  if (params.get('capture') === '1') openCapture();
+}
+
 /* ---------- Theme ---------- */
 function toggleTheme() {
   const root = document.documentElement;
@@ -1782,6 +2118,8 @@ if (window.claude) { initMultiUser(); }
 else { state = { items: [], events: [], projects: [], goals: [], people: [], theme: localStorage.getItem('theme') || 'light' }; if (state.theme) document.documentElement.setAttribute('data-theme', state.theme); }
 updateNotifBtn();
 renderQuote();
+initShortcuts();
+applyLaunchShortcut();
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(err => console.warn('Service worker registration failed:', err));
 }

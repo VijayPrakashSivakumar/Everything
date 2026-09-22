@@ -3,6 +3,9 @@
 
 <head>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Natural-language date parsing ("tomorrow at 5pm", "in 2 hours"). If it fails to
+       load, script.js falls back to its own built-in date regexes. -->
+  <script src="https://cdn.jsdelivr.net/npm/chrono-node@1/dist/chrono.min.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon"
@@ -93,6 +96,7 @@
         <div class="search-box" onclick="openAsk()">
           <span>🔍</span>
           <input readonly placeholder="Search anything or ask a question…">
+          <span class="kbd" id="searchKbdHint">Ctrl K</span>
         </div>
         <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">🌓</div>
         <div style="position:relative;">
@@ -183,7 +187,7 @@
                   <button onclick="shuffleQuote()"
                     style="background:rgba(255,255,255,0.2);border:none;color:#fff;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer;">🔄
                     New quote</button>
-                  <button onclick="saveQuoteToMemory()"
+                  <button onclick="saveQuoteToMemory(this)"
                     style="background:rgba(255,255,255,0.2);border:none;color:#fff;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer;">💾
                     Save</button>
                 </div>
@@ -213,6 +217,8 @@
         <div class="view" id="view-inbox">
           <h1 class="page-title">Inbox</h1>
           <p class="page-sub">Everything you've captured, all in one place.</p>
+          <input class="capture-input" id="inboxSearchInput" placeholder="Filter by title, note, person or project…"
+            oninput="renderInbox()" style="margin-bottom:12px;">
           <div class="tabs" id="inboxTabs"></div>
           <div class="card">
             <div class="inbox-list" id="inboxList"></div>
@@ -316,6 +322,17 @@
             </div>
             <div id="reportByType"></div>
           </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Activity — last 14 days</h3><span style="font-size:12px;color:var(--muted);">captured vs
+                completed</span>
+            </div>
+            <div class="chart-legend">
+              <span><i style="background:var(--accent);"></i>Captured</span>
+              <span><i style="background:var(--green-fg);"></i>Completed</span>
+            </div>
+            <div class="chart-wrap" id="reportChart"></div>
+          </div>
         </div>
         <div class="view" id="view-insights">
           <h1 class="page-title">Insights</h1>
@@ -404,6 +421,15 @@
                     </select>
                   </div>
                 </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h3>Keyboard shortcuts</h3>
+                  </div>
+                  <div class="shortcut-row"><span>Search &amp; Ask</span><span class="kbd">Ctrl / ⌘ + K</span></div>
+                  <div class="shortcut-row"><span>Quick capture</span><span class="kbd">C</span></div>
+                  <div class="shortcut-row"><span>Focus search</span><span class="kbd">/</span></div>
+                  <div class="shortcut-row"><span>Close dialog</span><span class="kbd">Esc</span></div>
+                </div>
               </div>
 
               <div class="settings-panel" id="settingsTab-household" style="display:none;">
@@ -433,6 +459,20 @@
                   </div>
                   <div class="field-row"><span class="field-label">Sign out</span><button class="btn"
                       onclick="authSignOut()">Sign out</button></div>
+                </div>
+                <div class="card">
+                  <div class="card-head">
+                    <h3>Your data</h3>
+                  </div>
+                  <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;">Download a JSON backup of your
+                    captures, tasks, projects, goals and people — or restore one.</p>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn" onclick="exportData()">⬇️ Export backup</button>
+                    <button class="btn"
+                      onclick="document.getElementById('importDataInput').click()">⬆️ Import backup</button>
+                  </div>
+                  <input type="file" id="importDataInput" accept="application/json,.json" style="display:none;"
+                    onchange="importData(this)">
                 </div>
                 <div class="card">
                   <div class="card-head">
@@ -486,6 +526,15 @@
       <div style="margin-top:16px;">
         <h3 style="font-size:13px;color:var(--muted);margin:0 0 8px;">Related</h3>
         <div id="panelRelated" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      </div>
+    </div>
+    <div class="panel-snooze">
+      <span style="font-size:12.5px;color:var(--muted);font-weight:600;">Reschedule</span>
+      <div class="snooze-row">
+        <button class="btn" onclick="snoozeCurrent('tomorrow9')">Tomorrow 9 AM</button>
+        <button class="btn" onclick="snoozeCurrent('day')">+1 day</button>
+        <button class="btn" onclick="snoozeCurrent('week')">+1 week</button>
+        <button class="btn" onclick="snoozeCurrent('clear')">Clear due date</button>
       </div>
     </div>
     <div class="panel-actions">

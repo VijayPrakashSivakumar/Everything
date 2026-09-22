@@ -7,6 +7,24 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - `index.html` — page structure
 - `style.css` — all styling
 - `script.js` — app logic (local state + optional multi-user sync)
+- `sw.js` — service worker (offline shell + push notifications)
+- `api/ask.js` — AI search endpoint (`/api/ask`)
+- `api/send-due-notifications.js` — Vercel cron that pushes due reminders
+
+## Features
+- **Capture** — text, voice, image, file and link captures, with type detection and
+  natural-language extraction ("call Ravi tomorrow at 5pm" fills person, due date and type).
+- **Views** — Today, Inbox, Tasks, Schedule (week/month), Memory, People, Projects,
+  Goals, Reports and Insights.
+- **Ask / Search** — `Ctrl/⌘ + K` or `/` opens search, which answers questions via
+  `/api/ask` (Claude) and falls back to keyword matching offline.
+- **Quick reschedule** — open any item and use *Reschedule* (Tomorrow 9 AM, +1 day,
+  +1 week, clear) instead of editing the date by hand.
+- **Reports** — 14-day chart of captures vs completions (completions are logged locally).
+- **Backup** — Settings → Account → *Export backup* / *Import backup* (JSON round-trip).
+- **Keyboard shortcuts** — `Ctrl/⌘ + K` search, `C` quick capture, `/` focus search,
+  `Esc` close the top-most dialog.
+- **Installable PWA** — offline shell via `sw.js`, plus web-push reminders.
 
 ## Running it locally
 This is a static site — no build step needed.
@@ -19,6 +37,9 @@ open index.html
 python3 -m http.server 8000
 # then visit http://localhost:8000
 ```
+
+The AI endpoint (`/api/ask`) only works when served with Vercel functions
+(`vercel dev`) or on a deployed Vercel project, and needs an `ANTHROPIC_API_KEY`.
 
 ## Note on multi-user / private items / AI search
 The live multi-user sync, private-per-person data, and AI-powered search
