@@ -6,9 +6,7 @@ const SHELL_FILES = [
   './style.css',
   './script.js',
   './manifest.json',
-  './icon.svg',
-  './icon-192.png',
-  './icon-512.png'
+  './icon.svg'
 ];
 
 self.addEventListener('install', event => {
