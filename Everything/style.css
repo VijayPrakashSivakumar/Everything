@@ -64,6 +64,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  overflow-x: hidden;
 }
 
 .app {
@@ -179,6 +180,7 @@ body {
 /* Main */
 .main {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -261,6 +263,7 @@ body {
 
 .content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 24px;
 }
@@ -814,8 +817,45 @@ h1.page-title {
 }
 
 @media (max-width:900px) {
+  .topbar {
+    padding: 10px 14px;
+    gap: 8px;
+  }
+
+  .content {
+    padding: 18px 14px;
+  }
+
+  .search-box {
+    min-width: 0;
+    padding: 8px 10px;
+  }
+
+  .search-box input {
+    min-width: 0;
+  }
+
+  .search-box .kbd {
+    display: none;
+  }
+
   #view-settings>div {
     grid-template-columns: 1fr !important;
+  }
+
+  #view-settings>div>div:last-child {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  #view-settings>div>div:last-child .hero-card {
+    margin-bottom: 0;
+  }
+
+  .card,
+  .capture-panel {
+    min-width: 0;
   }
 }
 
@@ -1078,9 +1118,89 @@ h1.page-title {
     background: var(--card);
     z-index: 2;
   }
+
+  #authScreen>div {
+    width: min(340px, calc(100vw - 28px)) !important;
+    padding: 22px !important;
+  }
+
+  .modal,
+  .panel {
+    max-width: 100vw;
+  }
+
+  .panel {
+    width: min(420px, 100vw);
+  }
 }
 
 @media (max-width:480px) {
+  .topbar .icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  .topbar .avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  h1.page-title {
+    font-size: 20px;
+  }
+
+  .stat-row {
+    gap: 8px;
+  }
+
+  .stat-card {
+    padding: 11px 10px;
+    gap: 8px;
+  }
+
+  .stat-label {
+    font-size: 11.5px;
+  }
+
+  .nudge {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .nudge .btn-small {
+    align-self: flex-end;
+  }
+
+  #view-settings>div>div:last-child {
+    grid-template-columns: 1fr;
+  }
+
+  #settingsTab-account .card>div[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  .modal>div[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  .modal-actions {
+    justify-content: stretch;
+  }
+
+  .modal-actions .btn {
+    flex: 1;
+  }
+
+  .field-row {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .field-row>*:last-child {
+    min-width: 0;
+    text-align: right;
+  }
+
   .task-row {
     flex-wrap: wrap;
   }
