@@ -121,27 +121,46 @@ async function authSignOut() {
 let sbUser = null;
 let sbChannel = null;
 let syncReadyPromise = null;
+let hasCompletedAt = false;
 
 function itemToRow(item) {
-  return {
+  const row = {
     id: item.id, owner_id: sbUser, scope: item.scope || 'shared', kind: item.kind,
     title: item.title, sub: item.sub || '', priority: item.priority || '', person: item.person || '',
     due: item.due || '', due_date: item.dueDate || null, recurrence: item.recurrence || 'none',
     status: item.status || '', project: item.project || '', created: item.created, done: !!item.done, notified: !!item.notified,
     household_id: currentHouseholdId, media_url: item.mediaUrl || ''
   };
+  // Only sent once the completed_at migration has been applied — see supabase/migrations.
+  if (hasCompletedAt) row.completed_at = item.completedAt ? new Date(item.completedAt).toISOString() : null;
+  return row;
 }
 function rowToItem(row) {
   return {
     id: row.id, scope: row.scope, kind: row.kind, title: row.title, sub: row.sub,
     priority: row.priority, person: row.person, due: row.due, dueDate: row.due_date,
     recurrence: row.recurrence, status: row.status, project: row.project,
-    created: Number(row.created), done: row.done, notified: row.notified, mediaUrl: row.media_url
+    created: Number(row.created), done: row.done, notified: row.notified, mediaUrl: row.media_url,
+    completedAt: row.completed_at ? new Date(row.completed_at).getTime() : ''
   };
 }
+
+/* items.completed_at arrives with supabase/migrations/001. Probe once at sync time so a
+   database that hasn't been migrated yet keeps saving normally (the chart then falls back
+   to the local completion log). */
+async function detectCompletedAtColumn() {
+  try {
+    const { error } = await sb.from('items').select('completed_at').limit(1);
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function startSupabaseSync(userId) {
   await ensureHousehold(userId);
   sbUser = userId;
+  hasCompletedAt = await detectCompletedAtColumn();
   const { data, error } = await sb.from('items').select('*').eq('household_id', currentHouseholdId).order('created', { ascending: false });
   if (!error && data) {
     state.items = data.map(rowToItem);
@@ -784,11 +803,12 @@ async function toggleDone(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
   item.done = !item.done;
+  item.completedAt = item.done ? Date.now() : '';
   logCompletion(item.id, item.done);
   await dbSaveItem(item);
   if (item.done && item.recurrence && item.recurrence !== 'none' && item.dueDate) {
     const nextDue = nextOccurrence(item.dueDate, item.recurrence);
-    const next = { ...item, id: cid(), done: false, dueDate: nextDue, due: formatDueDisplay(nextDue), created: Date.now() };
+    const next = { ...item, id: cid(), done: false, completedAt: '', dueDate: nextDue, due: formatDueDisplay(nextDue), created: Date.now() };
     state.items.unshift(next);
     await dbSaveItem(next);
   }
@@ -1042,6 +1062,13 @@ function logCompletion(id, done) {
   try { localStorage.setItem('everything_done_log_v1', JSON.stringify(doneLog)); } catch (e) { }
 }
 
+/* When an item was completed: the stored timestamp when we have one (items.completed_at,
+   or this device's log on an un-migrated database), otherwise fall back to when it was
+   captured. */
+function completedWhen(item) {
+  return item.completedAt || doneLog[item.id] || item.created;
+}
+
 /* ---------- Reports ---------- */
 function renderReports() {
   const statsEl = document.getElementById('reportStats');
@@ -1063,7 +1090,7 @@ function renderReports() {
   `;
 
   const completedEl = document.getElementById('reportCompleted');
-  completedEl.innerHTML = completed.length ? [...completed].sort((a, b) => b.created - a.created).slice(0, 10).map(i => `<div class="task-row"><div class="checkbox checked">✓</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${timeAgo(i.created)}</div></div></div>`).join('') : '<p class="empty">Nothing finished yet.</p>';
+  completedEl.innerHTML = completed.length ? [...completed].sort((a, b) => completedWhen(b) - completedWhen(a)).slice(0, 10).map(i => `<div class="task-row"><div class="checkbox checked">✓</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">Completed ${timeAgo(completedWhen(i))}</div></div></div>`).join('') : '<p class="empty">Nothing finished yet.</p>';
 
   const typeEl = document.getElementById('reportByType');
   const maxCount = Math.max(...Object.values(byType), 1);
@@ -1100,8 +1127,9 @@ function renderActivityChart(days) {
     const capturedAt = indexByDay[new Date(item.created).toDateString()];
     if (capturedAt !== undefined) buckets[capturedAt].captured++;
 
-    if (item.done && doneLog[item.id]) {
-      const completedAt = indexByDay[new Date(doneLog[item.id]).toDateString()];
+    const completedStamp = item.completedAt || doneLog[item.id];
+    if (item.done && completedStamp) {
+      const completedAt = indexByDay[new Date(completedStamp).toDateString()];
       if (completedAt !== undefined) buckets[completedAt].completed++;
     }
   });
@@ -1233,7 +1261,9 @@ function openPanel(id) {
   document.getElementById('panelPerson').textContent = item.person || '—';
   document.getElementById('panelProject').textContent = item.project || '—';
   document.getElementById('panelPriority').textContent = item.priority ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1) : '—';
-  document.getElementById('panelStatus').textContent = item.done ? 'Complete' : (item.status || 'Open');
+  document.getElementById('panelStatus').textContent = item.done
+    ? 'Complete' + (completedWhen(item) ? ' · ' + timeAgo(completedWhen(item)) : '')
+    : (item.status || 'Open');
   document.getElementById('panelVisibility').textContent = item.scope === 'private' ? '🔒 Private (only you)' : '🌐 Shared';
   document.getElementById('panelCreated').textContent = new Date(item.created).toLocaleString();
   const badge = document.getElementById('panelBadge');

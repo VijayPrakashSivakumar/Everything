@@ -38,6 +38,18 @@ python3 -m http.server 8000
 # then visit http://localhost:8000
 ```
 
+## Database
+Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, or
+`supabase db push`) before deploying:
+
+| Migration | What it adds |
+| --- | --- |
+| `001_add_items_completed_at.sql` | `items.completed_at` — a real completion timestamp |
+
+The client probes for `items.completed_at` at sign-in and only sends it when the column
+exists, so the app keeps working on a database that hasn't been migrated yet (Reports
+then falls back to a per-device completion log in `localStorage`).
+
 The AI endpoint (`/api/ask`) only works when served with Vercel functions
 (`vercel dev`) or on a deployed Vercel project, and needs an `ANTHROPIC_API_KEY`.
 
