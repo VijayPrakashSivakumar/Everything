@@ -794,6 +794,31 @@ h1.page-title {
   display: flex;
 }
 
+.tab-vert {
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.tab-vert:hover {
+  background: var(--bg);
+}
+
+.tab-vert.active {
+  background: var(--blue-bg);
+  color: var(--blue-fg);
+  font-weight: 600;
+}
+
+@media (max-width:900px) {
+  #view-settings>div {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 .ask-box {
   background: var(--card);
   border-radius: 14px;

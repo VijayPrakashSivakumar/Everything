@@ -274,6 +274,7 @@ sb.auth.onAuthStateChange((event, session) => {
       syncReadyPromise = startSupabaseSync(session.user.id);
       showInviteCode();
       loadHouseholdName();
+      loadProfile();
       document.getElementById('settingsEmail').textContent = session.user.email;
     }
     const name = session.user.email.split('@')[0];
@@ -287,6 +288,68 @@ sb.auth.onAuthStateChange((event, session) => {
     authScreen.style.display = 'flex';
   }
 });
+function showSettingsTab(tab) {
+  document.querySelectorAll('.settings-panel').forEach(p => p.style.display = 'none');
+  document.getElementById('settingsTab-' + tab).style.display = 'block';
+  document.querySelectorAll('.tab-vert').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+}
+
+async function loadProfile() {
+  if (!sbUser) return;
+  const { data } = await sb.from('profiles').select('*').eq('user_id', sbUser).single();
+  const profile = data || { full_name: '', phone: '', avatar_url: '', date_format: 'MM/DD/YYYY', time_format: '12h' };
+  document.getElementById('profileFullName').value = profile.full_name || '';
+  document.getElementById('profilePhone').value = profile.phone || '';
+  document.getElementById('dateFormatSelect').value = profile.date_format || 'MM/DD/YYYY';
+  document.getElementById('timeFormatSelect').value = profile.time_format || '12h';
+  document.getElementById('themeSelect').value = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  const { data: authData } = await sb.auth.getUser();
+  if (authData?.user) document.getElementById('profileEmail').value = authData.user.email;
+  updateAvatarDisplay(profile.full_name, profile.avatar_url);
+}
+
+function updateAvatarDisplay(name, url) {
+  const el = document.getElementById('settingsAvatar');
+  const initial = document.getElementById('settingsAvatarInitial');
+  if (url) { el.style.backgroundImage = `url(${url})`; el.style.backgroundSize = 'cover'; initial.style.display = 'none'; }
+  else { initial.textContent = (name || document.getElementById('avatarInitial').textContent || '?').charAt(0).toUpperCase(); }
+}
+
+async function saveProfile() {
+  if (!sbUser) return;
+  const profile = {
+    user_id: sbUser,
+    full_name: document.getElementById('profileFullName').value.trim(),
+    phone: document.getElementById('profilePhone').value.trim(),
+    date_format: document.getElementById('dateFormatSelect').value,
+    time_format: document.getElementById('timeFormatSelect').value,
+    created: Date.now()
+  };
+  const { error } = await sb.from('profiles').upsert(profile);
+  if (error) { console.error('Profile save failed:', error.message); return; }
+  const av = document.getElementById('avatarInitial');
+  if (av && profile.full_name) av.textContent = profile.full_name.charAt(0).toUpperCase();
+  const greetEl = document.getElementById('greeting');
+  if (greetEl && profile.full_name) greetEl.textContent = `${greetingText()}, ${profile.full_name.split(' ')[0]}!`;
+}
+
+async function uploadAvatar() {
+  const file = document.getElementById('avatarUploadInput').files[0];
+  if (!file || !sbUser) return;
+  const path = `${sbUser}/avatar_${Date.now()}.${file.name.split('.').pop()}`;
+  const { error } = await sb.storage.from('captures').upload(path, file);
+  if (error) { console.error('Avatar upload failed:', error.message); return; }
+  const { data } = sb.storage.from('captures').getPublicUrl(path);
+  await sb.from('profiles').upsert({ user_id: sbUser, avatar_url: data.publicUrl, created: Date.now() });
+  updateAvatarDisplay(null, data.publicUrl);
+}
+
+function setThemeFromSelect() {
+  const val = document.getElementById('themeSelect').value;
+  document.documentElement.setAttribute('data-theme', val);
+  state.theme = val;
+  save();
+}
 
 /* ---------- Data model ---------- */
 const NAV = [
@@ -369,7 +432,7 @@ const MOTIVATION_QUOTES = [
   "Organize your intentions and your days will organize themselves.",
 ];
 
-function getDailyQuoteIndex(){
+function getDailyQuoteIndex() {
   const start = new Date(new Date().getFullYear(), 0, 0);
   const diff = Date.now() - start.getTime();
   const dayOfYear = Math.floor(diff / 86400000);
@@ -378,29 +441,29 @@ function getDailyQuoteIndex(){
 
 let currentQuoteIndex = null;
 
-function renderQuote(){
+function renderQuote() {
   const el = document.getElementById('heroQuoteText');
-  if(!el) return;
-  if(currentQuoteIndex === null) currentQuoteIndex = getDailyQuoteIndex();
+  if (!el) return;
+  if (currentQuoteIndex === null) currentQuoteIndex = getDailyQuoteIndex();
   el.textContent = MOTIVATION_QUOTES[currentQuoteIndex];
 }
 
-function shuffleQuote(){
+function shuffleQuote() {
   let next;
-  do { next = Math.floor(Math.random() * MOTIVATION_QUOTES.length); } while(next === currentQuoteIndex && MOTIVATION_QUOTES.length > 1);
+  do { next = Math.floor(Math.random() * MOTIVATION_QUOTES.length); } while (next === currentQuoteIndex && MOTIVATION_QUOTES.length > 1);
   currentQuoteIndex = next;
   renderQuote();
 }
 
-async function saveQuoteToMemory(){
+async function saveQuoteToMemory() {
   const text = MOTIVATION_QUOTES[currentQuoteIndex];
-  const newItem = {id:cid(), kind:'memory', title:text, sub:'Saved quote', priority:'', person:'', due:'', status:'', project:'', created:Date.now(), done:false, scope:'private'};
+  const newItem = { id: cid(), kind: 'memory', title: text, sub: 'Saved quote', priority: '', person: '', due: '', status: '', project: '', created: Date.now(), done: false, scope: 'private' };
   state.items.unshift(newItem);
   await dbSaveItem(newItem);
   const btn = event.target;
   const original = btn.textContent;
   btn.textContent = '✓ Saved';
-  setTimeout(()=>{ btn.textContent = original; }, 1500);
+  setTimeout(() => { btn.textContent = original; }, 1500);
 }
 
 /* ============================================================
@@ -999,63 +1062,63 @@ function renderReports() {
 let calViewDate = new Date();
 let calMode = 'week';
 
-function getScheduledItems(){
+function getScheduledItems() {
   return state.items.filter(i => i.dueDate && !i.done);
 }
-function getWeekStart(d){
+function getWeekStart(d) {
   const date = new Date(d);
   date.setDate(date.getDate() - date.getDay());
-  date.setHours(0,0,0,0);
+  date.setHours(0, 0, 0, 0);
   return date;
 }
-function setCalView(mode){
+function setCalView(mode) {
   calMode = mode;
   renderCalendar();
 }
-function calGoToday(){ calViewDate = new Date(); renderCalendar(); }
-function calNav(dir){
-  if(calMode==='week') calViewDate.setDate(calViewDate.getDate() + dir*7);
+function calGoToday() { calViewDate = new Date(); renderCalendar(); }
+function calNav(dir) {
+  if (calMode === 'week') calViewDate.setDate(calViewDate.getDate() + dir * 7);
   else calViewDate.setMonth(calViewDate.getMonth() + dir);
   renderCalendar();
 }
 
-function renderCalendar(){
+function renderCalendar() {
   const wTab = document.getElementById('calTabWeek'), mTab = document.getElementById('calTabMonth');
-  if(wTab) wTab.classList.toggle('active', calMode==='week');
-  if(mTab) mTab.classList.toggle('active', calMode==='month');
-  document.getElementById('calWeekView').style.display = calMode==='week' ? 'block' : 'none';
-  document.getElementById('calGrid').style.display = calMode==='month' ? 'grid' : 'none';
-  if(calMode==='week') renderWeekView(); else renderMonthView();
+  if (wTab) wTab.classList.toggle('active', calMode === 'week');
+  if (mTab) mTab.classList.toggle('active', calMode === 'month');
+  document.getElementById('calWeekView').style.display = calMode === 'week' ? 'block' : 'none';
+  document.getElementById('calGrid').style.display = calMode === 'month' ? 'grid' : 'none';
+  if (calMode === 'week') renderWeekView(); else renderMonthView();
 }
 
-function renderWeekView(){
+function renderWeekView() {
   const container = document.getElementById('calWeekView');
   const start = getWeekStart(calViewDate);
-  const days = [...Array(7)].map((_,i)=>{ const d=new Date(start); d.setDate(start.getDate()+i); return d; });
-  document.getElementById('calRangeLabel').textContent = `${days[0].toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${days[6].toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  const days = [...Array(7)].map((_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+  document.getElementById('calRangeLabel').textContent = `${days[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${days[6].toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
   const startHour = 7, endHour = 20, rowHeight = 50;
-  const hours = []; for(let h=startHour; h<=endHour; h++) hours.push(h);
+  const hours = []; for (let h = startHour; h <= endHour; h++) hours.push(h);
   const scheduled = getScheduledItems();
 
   let html = `<div class="cal-week-wrap"><div class="cal-time-col"><div class="cal-week-head-spacer"></div>`;
-  hours.forEach(h=>{ html += `<div class="cal-hour-label">${h===12?'12 PM':h<12?h+' AM':(h-12)+' PM'}</div>`; });
+  hours.forEach(h => { html += `<div class="cal-hour-label">${h === 12 ? '12 PM' : h < 12 ? h + ' AM' : (h - 12) + ' PM'}</div>`; });
   html += `</div><div class="cal-week-days">`;
 
-  days.forEach(day=>{
+  days.forEach(day => {
     const isToday = day.toDateString() === new Date().toDateString();
     html += `<div class="cal-week-day-col">
-      <div class="cal-week-day-head ${isToday?'today':''}"><span>${day.toLocaleDateString(undefined,{weekday:'short'})}</span><span class="num">${day.getDate()}</span></div>
-      <div class="cal-week-day-body" style="height:${hours.length*rowHeight}px;">`;
-    hours.forEach(()=>{ html += `<div class="cal-hour-row"></div>`; });
+      <div class="cal-week-day-head ${isToday ? 'today' : ''}"><span>${day.toLocaleDateString(undefined, { weekday: 'short' })}</span><span class="num">${day.getDate()}</span></div>
+      <div class="cal-week-day-body" style="height:${hours.length * rowHeight}px;">`;
+    hours.forEach(() => { html += `<div class="cal-hour-row"></div>`; });
 
-    scheduled.filter(i => new Date(i.dueDate).toDateString() === day.toDateString()).forEach(item=>{
+    scheduled.filter(i => new Date(i.dueDate).toDateString() === day.toDateString()).forEach(item => {
       const d = new Date(item.dueDate);
-      const hour = d.getHours() + d.getMinutes()/60;
-      if(hour < startHour || hour > endHour+1) return;
+      const hour = d.getHours() + d.getMinutes() / 60;
+      if (hour < startHour || hour > endHour + 1) return;
       const top = (hour - startHour) * rowHeight;
-      const [bg,fg] = kindColor(item.kind);
-      html += `<div class="cal-week-event" style="top:${top}px;height:${rowHeight-4}px;background:${bg};color:${fg};" onclick="openPanel('${item.id}')"><b>${d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</b> ${escapeHtml(item.title)}</div>`;
+      const [bg, fg] = kindColor(item.kind);
+      html += `<div class="cal-week-event" style="top:${top}px;height:${rowHeight - 4}px;background:${bg};color:${fg};" onclick="openPanel('${item.id}')"><b>${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</b> ${escapeHtml(item.title)}</div>`;
     });
     html += `</div></div>`;
   });
@@ -1063,30 +1126,30 @@ function renderWeekView(){
   container.innerHTML = html;
 }
 
-function renderMonthView(){
+function renderMonthView() {
   const now = calViewDate;
-  document.getElementById('calRangeLabel').textContent = now.toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  document.getElementById('calRangeLabel').textContent = now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const grid = document.getElementById('calGrid');
   grid.innerHTML = '';
-  ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{
-    const h = document.createElement('div'); h.className='cal-day-head'; h.textContent=d; grid.appendChild(h);
+  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(d => {
+    const h = document.createElement('div'); h.className = 'cal-day-head'; h.textContent = d; grid.appendChild(h);
   });
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOffset = firstDay.getDay();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const scheduled = getScheduledItems();
-  for(let i=0;i<startOffset;i++){ const c = document.createElement('div'); c.className='cal-cell'; grid.appendChild(c); }
-  for(let d=1; d<=daysInMonth; d++){
+  for (let i = 0; i < startOffset; i++) { const c = document.createElement('div'); c.className = 'cal-cell'; grid.appendChild(c); }
+  for (let d = 1; d <= daysInMonth; d++) {
     const cellDate = new Date(now.getFullYear(), now.getMonth(), d);
     const c = document.createElement('div');
-    c.className = 'cal-cell' + (cellDate.toDateString()===new Date().toDateString() ? ' today':'');
-    const num = document.createElement('div'); num.className='num'; num.textContent=d;
+    c.className = 'cal-cell' + (cellDate.toDateString() === new Date().toDateString() ? ' today' : '');
+    const num = document.createElement('div'); num.className = 'num'; num.textContent = d;
     c.appendChild(num);
-    scheduled.filter(i => new Date(i.dueDate).toDateString() === cellDate.toDateString()).forEach(item=>{
+    scheduled.filter(i => new Date(i.dueDate).toDateString() === cellDate.toDateString()).forEach(item => {
       const ev = document.createElement('div');
       ev.className = 'cal-event';
-      ev.onclick = ()=>openPanel(item.id);
-      ev.textContent = new Date(item.dueDate).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}) + ' ' + item.title;
+      ev.onclick = () => openPanel(item.id);
+      ev.textContent = new Date(item.dueDate).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) + ' ' + item.title;
       c.appendChild(ev);
     });
     grid.appendChild(c);
@@ -1545,37 +1608,37 @@ function runAsk(q) {
   askDebounce = setTimeout(() => { if (lastAskQuery === q) askAI(q); }, 550);
 }
 
-async function askAI(q){
+async function askAI(q) {
   const slot = document.getElementById('aiAnswerSlot');
-  if(!slot) return;
+  if (!slot) return;
   slot.innerHTML = `<div class="ask-answer">Thinking…</div>`;
 
   const ql = q.toLowerCase();
-  const contextItems = state.items.filter(i => (i.title+' '+(i.sub||'')+' '+(i.person||'')).toLowerCase().includes(ql));
+  const contextItems = state.items.filter(i => (i.title + ' ' + (i.sub || '') + ' ' + (i.person || '')).toLowerCase().includes(ql));
   const contextPool = contextItems.length ? contextItems : state.items.slice(0, 20);
 
   let sample;
-  try{ sample = await window.claude?.use('sample'); }catch(e){ sample = null; }
+  try { sample = await window.claude?.use('sample'); } catch (e) { sample = null; }
 
   const buildSourcesHtml = () => contextPool.length ? `
     <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
       <div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:6px;">SOURCES</div>
-      ${contextPool.slice(0,5).map(i => `<div onclick="closeAsk();openPanel('${i.id}')" style="display:flex;align-items:center;gap:6px;padding:5px 0;cursor:pointer;font-size:12.5px;">
+      ${contextPool.slice(0, 5).map(i => `<div onclick="closeAsk();openPanel('${i.id}')" style="display:flex;align-items:center;gap:6px;padding:5px 0;cursor:pointer;font-size:12.5px;">
         <span>${kindIcon(i.kind)}</span><span style="color:var(--accent);">${escapeHtml(i.title)}</span>
       </div>`).join('')}
     </div>` : '';
 
-  if(sample){
-    const context = contextPool.slice(0,60).map(i=>`- [${i.kind}${i.priority?'/'+i.priority:''}] ${i.title}${i.sub?': '+i.sub:''}${i.person?' (person: '+i.person+')':''}${i.due?' (due: '+i.due+')':''}`).join('\n');
+  if (sample) {
+    const context = contextPool.slice(0, 60).map(i => `- [${i.kind}${i.priority ? '/' + i.priority : ''}] ${i.title}${i.sub ? ': ' + i.sub : ''}${i.person ? ' (person: ' + i.person + ')' : ''}${i.due ? ' (due: ' + i.due + ')' : ''}`).join('\n');
     const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${q}`;
-    try{
-      const result = await sample(prompt, { modelTier:'quick', onText: ({text}) => { slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`; } });
+    try {
+      const result = await sample(prompt, { modelTier: 'quick', onText: ({ text }) => { slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`; } });
       slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}${buildSourcesHtml()}</div>`;
       return;
-    }catch(err){ /* fall through to API below */ }
+    } catch (err) { /* fall through to API below */ }
   }
 
-  try{
+  try {
     const res = await fetch('/api/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1583,9 +1646,9 @@ async function askAI(q){
     });
     const data = await res.json();
     slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer || data.error || 'No answer.')}${buildSourcesHtml()}</div>`;
-  }catch(err){
+  } catch (err) {
     slot.innerHTML = contextItems.length
-      ? `<div class="ask-answer"><b>Answer:</b> Based on what you've captured — ${escapeHtml(contextItems.slice(0,3).map(m=>m.title).join('; '))}.${buildSourcesHtml()}</div>`
+      ? `<div class="ask-answer"><b>Answer:</b> Based on what you've captured — ${escapeHtml(contextItems.slice(0, 3).map(m => m.title).join('; '))}.${buildSourcesHtml()}</div>`
       : `<div class="ask-answer">Couldn't reach the AI right now.</div>`;
   }
 }
@@ -1617,6 +1680,8 @@ function renderAll() {
   renderReports();
   renderNotifDot();
   if (activeView === 'schedule') renderCalendar();
+  const sq = document.getElementById('settingsQuote');
+  if (sq && typeof MOTIVATION_QUOTES !== 'undefined' && currentQuoteIndex !== null) sq.textContent = '"' + MOTIVATION_QUOTES[currentQuoteIndex] + '"';
 }
 let notifiedIds = new Set(JSON.parse(localStorage.getItem('notified_ids') || '[]'));
 
