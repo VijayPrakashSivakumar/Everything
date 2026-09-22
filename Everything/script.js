@@ -1449,36 +1449,47 @@ function runAsk(q) {
   askDebounce = setTimeout(() => { if (lastAskQuery === q) askAI(q); }, 550);
 }
 
-async function askAI(q) {
+async function askAI(q){
   const slot = document.getElementById('aiAnswerSlot');
-  if (!slot) return;
+  if(!slot) return;
   slot.innerHTML = `<div class="ask-answer">Thinking…</div>`;
 
-  let sample;
-  try { sample = await window.claude?.use('sample'); } catch (e) { sample = null; }
+  const ql = q.toLowerCase();
+  const contextItems = state.items.filter(i => (i.title+' '+(i.sub||'')+' '+(i.person||'')).toLowerCase().includes(ql));
+  const contextPool = contextItems.length ? contextItems : state.items.slice(0, 20);
 
-  if (sample) {
-    const context = state.items.slice(0, 60).map(i => `- [${i.kind}${i.priority ? '/' + i.priority : ''}] ${i.title}${i.sub ? ': ' + i.sub : ''}${i.person ? ' (person: ' + i.person + ')' : ''}${i.due ? ' (due: ' + i.due + ')' : ''}`).join('\n');
+  let sample;
+  try{ sample = await window.claude?.use('sample'); }catch(e){ sample = null; }
+
+  const buildSourcesHtml = () => contextPool.length ? `
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+      <div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:6px;">SOURCES</div>
+      ${contextPool.slice(0,5).map(i => `<div onclick="closeAsk();openPanel('${i.id}')" style="display:flex;align-items:center;gap:6px;padding:5px 0;cursor:pointer;font-size:12.5px;">
+        <span>${kindIcon(i.kind)}</span><span style="color:var(--accent);">${escapeHtml(i.title)}</span>
+      </div>`).join('')}
+    </div>` : '';
+
+  if(sample){
+    const context = contextPool.slice(0,60).map(i=>`- [${i.kind}${i.priority?'/'+i.priority:''}] ${i.title}${i.sub?': '+i.sub:''}${i.person?' (person: '+i.person+')':''}${i.due?' (due: '+i.due+')':''}`).join('\n');
     const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${q}`;
-    try {
-      const result = await sample(prompt, { modelTier: 'quick', onText: ({ text }) => { slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`; } });
-      slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}</div>`;
+    try{
+      const result = await sample(prompt, { modelTier:'quick', onText: ({text}) => { slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`; } });
+      slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}${buildSourcesHtml()}</div>`;
       return;
-    } catch (err) { /* fall through to API below */ }
+    }catch(err){ /* fall through to API below */ }
   }
 
-  try {
+  try{
     const res = await fetch('/api/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: q, items: state.items })
+      body: JSON.stringify({ query: q, items: contextPool })
     });
     const data = await res.json();
-    slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer || data.error || 'No answer.')}</div>`;
-  } catch (err) {
-    const matches = state.items.filter(i => (i.title + ' ' + (i.sub || '') + ' ' + (i.person || '')).toLowerCase().includes(q.toLowerCase()));
-    slot.innerHTML = matches.length
-      ? `<div class="ask-answer"><b>Answer:</b> Based on what you've captured — ${escapeHtml(matches.slice(0, 3).map(m => m.title).join('; '))}.</div>`
+    slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer || data.error || 'No answer.')}${buildSourcesHtml()}</div>`;
+  }catch(err){
+    slot.innerHTML = contextItems.length
+      ? `<div class="ask-answer"><b>Answer:</b> Based on what you've captured — ${escapeHtml(contextItems.slice(0,3).map(m=>m.title).join('; '))}.${buildSourcesHtml()}</div>`
       : `<div class="ask-answer">Couldn't reach the AI right now.</div>`;
   }
 }
