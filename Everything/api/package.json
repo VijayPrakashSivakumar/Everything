@@ -1,4 +1,10 @@
 {
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "vercel",
+    "check:health": "node --input-type=module -e \"import('./health.js').then(() => console.log('health-ok')).catch((err) => { console.error(err); process.exit(1); })\""
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
     "web-push": "^3.6.7"

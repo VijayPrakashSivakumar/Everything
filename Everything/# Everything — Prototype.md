@@ -45,10 +45,16 @@ Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, 
 | Migration | What it adds |
 | --- | --- |
 | `001_add_items_completed_at.sql` | `items.completed_at` — a real completion timestamp |
+| `002_foundation_entry_model.sql` | Entries, tasks, people, projects, and goals |
+| `003_household_workspace.sql` | Households and household memberships |
 
 The client probes for `items.completed_at` at sign-in and only sends it when the column
 exists, so the app keeps working on a database that hasn't been migrated yet (Reports
 then falls back to a per-device completion log in `localStorage`).
+
+The household API is used first during sign-in to find or create the current workspace.
+The browser still falls back to direct Supabase household access when the API is not
+available, so the prototype remains usable before deployment.
 
 The AI endpoint (`/api/ask`) only works when served with Vercel functions
 (`vercel dev`) or on a deployed Vercel project, and needs an `ANTHROPIC_API_KEY`.

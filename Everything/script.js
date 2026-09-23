@@ -412,6 +412,38 @@ async function startSupabaseSync(userId) {
 let currentHouseholdId = null;
 
 async function ensureHousehold(userId) {
+  if (typeof fetch === "function" && userId) {
+    try {
+      const listRes = await fetch(`/api/households?user_id=${encodeURIComponent(userId)}`);
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        const households = Array.isArray(listData?.households)
+          ? listData.households
+          : [];
+
+        if (households.length) {
+          currentHouseholdId = households[0].id;
+          return;
+        }
+
+        const createRes = await fetch("/api/households", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId }),
+        });
+        if (createRes.ok) {
+          const createData = await createRes.json();
+          if (createData?.household?.id) {
+            currentHouseholdId = createData.household.id;
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Household API initialization skipped:", err.message || err);
+    }
+  }
+
   const { data: membership } = await sb
     .from("household_members")
     .select("household_id")
@@ -461,10 +493,57 @@ async function loadHouseholdName() {
   if (input && data) input.value = data.name || "My Household";
 }
 
+async function persistHouseholdToBackend(name) {
+  if (!name || typeof fetch !== "function") return null;
+  try {
+    const payload = {
+      user_id: sbUser || currentUserId || null,
+      name,
+    };
+    const res = await fetch("/api/households", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.household || null;
+  } catch (err) {
+    console.warn("Household backend sync skipped:", err.message || err);
+    return null;
+  }
+}
+
+async function persistMembershipToBackend(householdId, userId, role = "member") {
+  if (!householdId || !userId || typeof fetch !== "function") return false;
+  try {
+    const res = await fetch("/api/household-members", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ household_id: householdId, user_id: userId, role }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn("Membership backend sync skipped:", err.message || err);
+    return false;
+  }
+}
+
 async function saveHouseholdName() {
   const name = document.getElementById("householdNameInput").value.trim();
   if (!name || !currentHouseholdId) return;
   await sb.from("households").update({ name }).eq("id", currentHouseholdId);
+  if (typeof fetch === "function") {
+    try {
+      await fetch("/api/households", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: currentHouseholdId, name }),
+      });
+    } catch (err) {
+      console.warn("Household name backend sync skipped:", err.message || err);
+    }
+  }
 }
 
 async function joinHousehold() {
@@ -474,6 +553,34 @@ async function joinHousehold() {
     msg.textContent = "Enter a code.";
     return;
   }
+
+  if (typeof fetch === "function") {
+    try {
+      const res = await fetch("/api/households", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: sbUser || currentUserId,
+          invite_code: code,
+          role: "member",
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        currentHouseholdId = data?.household?.id || currentHouseholdId;
+        msg.style.color = "var(--accent)";
+        msg.textContent = "Joined! Reloading your data…";
+        await persistMembershipToBackend(currentHouseholdId, sbUser || currentUserId, "member");
+        await startSupabaseSync(sbUser || currentUserId);
+        showInviteCode();
+        return;
+      }
+    } catch (err) {
+      console.warn("Household join via backend failed, falling back to Supabase:", err.message || err);
+    }
+  }
+
   const { data: house } = await sb
     .from("households")
     .select("id")
@@ -491,6 +598,7 @@ async function joinHousehold() {
   currentHouseholdId = house.id;
   msg.style.color = "var(--accent)";
   msg.textContent = "Joined! Reloading your data…";
+  await persistMembershipToBackend(house.id, sbUser || currentUserId, "member");
   await startSupabaseSync(sbUser);
   showInviteCode();
 }
@@ -921,6 +1029,139 @@ function itemCollectionFor(item) {
     return db.doc(`data/users/${currentUserId}/profile`).collection("items");
   return db.collection("items");
 }
+
+function taskStatusFromItem(item) {
+  if (!item || item.kind !== "task") return "inbox";
+  if (item.done) return "completed";
+
+  const raw = (item.status || "").toLowerCase().trim();
+  if (!raw) return "inbox";
+  if (raw === "today") return "today";
+  if (raw === "in progress") return "in_progress";
+  if (raw === "in_progress") return "in_progress";
+  if (raw === "waiting") return "waiting";
+  if (raw === "completed") return "completed";
+  if (raw === "cancelled") return "cancelled";
+  if (raw === "someday") return "someday";
+  if (raw === "planned") return "planned";
+  return raw.replace(/\s+/g, "_");
+}
+
+function buildEntryDraftFromItem(item) {
+  const status = item.done ? "completed" : item.status || "inbox";
+  return {
+    household_id: currentHouseholdId || null,
+    user_id: currentUserId || null,
+    kind: item.kind || "text",
+    source_type: "manual",
+    title: item.title || "",
+    description: item.sub || "",
+    raw_text: item.title || "",
+    status,
+    visibility: item.scope === "private" ? "private" : "shared",
+    due_at: item.dueDate || null,
+    completed_at: item.completedAt || null,
+    metadata: {
+      source: "prototype-sync",
+      project: item.project || null,
+      person: item.person || null,
+      recurrence: item.recurrence || null,
+      priority: item.priority || null,
+      scope: item.scope || "shared",
+      originalKind: item.kind || "text",
+      backendEntryId: item.backendEntryId || null,
+      backendTaskId: item.backendTaskId || null,
+    },
+  };
+}
+
+function buildTaskDraftFromItem(item, entryId) {
+  if (!entryId || item.kind !== "task") return null;
+  return {
+    entry_id: entryId,
+    household_id: currentHouseholdId || null,
+    user_id: currentUserId || null,
+    title: item.title || "",
+    description: item.sub || "",
+    status: taskStatusFromItem(item),
+    priority: item.priority || "normal",
+    due_at: item.dueDate || null,
+    start_at: null,
+    duration_minutes: null,
+    recurrence_rule: item.recurrence || null,
+    project_id: null,
+    person_id: null,
+    goal_id: null,
+    metadata: {
+      source: "prototype-sync",
+      scope: item.scope || "shared",
+    },
+  };
+}
+
+async function persistEntryToBackend(item) {
+  if (!item || typeof fetch !== "function") return false;
+
+  try {
+    const entryPayload = buildEntryDraftFromItem(item);
+    const entryRes = await fetch("/api/entries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entryPayload),
+    });
+
+    if (!entryRes.ok) return false;
+
+    const entryData = await entryRes.json();
+    const entryId = entryData?.entry?.id;
+    item.backendEntryId = entryId || item.backendEntryId || null;
+
+    const taskPayload = buildTaskDraftFromItem(item, entryId);
+
+    if (taskPayload) {
+      const taskRes = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(taskPayload),
+      });
+
+      if (taskRes.ok) {
+        const taskData = await taskRes.json();
+        item.backendTaskId = taskData?.task?.id || item.backendTaskId || null;
+      } else {
+        console.warn("Task sync fallback failed:", await taskRes.text().catch(() => ""));
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.warn("Backend sync skipped:", err.message || err);
+    return false;
+  }
+}
+
+async function syncTaskStatusToBackend(item) {
+  if (!item || item.kind !== "task" || !item.backendTaskId || typeof fetch !== "function") return false;
+
+  try {
+    const res = await fetch("/api/tasks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: item.backendTaskId,
+        status: taskStatusFromItem(item),
+        completed_at: item.done ? new Date().toISOString() : null,
+        due_at: item.dueDate || null,
+      }),
+    });
+
+    return res.ok;
+  } catch (err) {
+    console.warn("Task status sync skipped:", err.message || err);
+    return false;
+  }
+}
+
 async function dbSaveItem(item) {
   if (syncReadyPromise) await syncReadyPromise;
   if (!item.scope) item.scope = "shared";
@@ -932,6 +1173,7 @@ async function dbSaveItem(item) {
     if (error) console.error("Supabase save failed:", error.message);
   } else {
     save();
+    await persistEntryToBackend(item);
   }
   renderAll();
 }
@@ -958,6 +1200,84 @@ async function dbDeleteItem(id) {
   }
   renderAll();
 }
+async function persistProjectToBackend(project) {
+  if (!project || typeof fetch !== "function") return false;
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        household_id: currentHouseholdId || null,
+        user_id: currentUserId || null,
+        name: project.name || "",
+        description: project.description || "",
+        status: project.status || "active",
+        metadata: {
+          source: "prototype-sync",
+          scope: project.scope || "shared",
+          originalId: project.id || null,
+        },
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn("Project backend sync skipped:", err.message || err);
+    return false;
+  }
+}
+
+async function persistGoalToBackend(goal) {
+  if (!goal || typeof fetch !== "function") return false;
+  try {
+    const res = await fetch("/api/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        household_id: currentHouseholdId || null,
+        user_id: currentUserId || null,
+        title: goal.title || "",
+        description: goal.description || "",
+        status: goal.done ? "completed" : goal.status || "active",
+        metadata: {
+          source: "prototype-sync",
+          scope: goal.scope || "shared",
+          originalId: goal.id || null,
+          done: Boolean(goal.done),
+        },
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn("Goal backend sync skipped:", err.message || err);
+    return false;
+  }
+}
+
+async function persistPersonToBackend(person) {
+  if (!person || typeof fetch !== "function") return false;
+  try {
+    const res = await fetch("/api/people", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        household_id: currentHouseholdId || null,
+        user_id: currentUserId || null,
+        name: person.name || "",
+        notes: person.notes || "",
+        metadata: {
+          source: "prototype-sync",
+          scope: person.scope || "shared",
+          originalId: person.id || null,
+        },
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn("Person backend sync skipped:", err.message || err);
+    return false;
+  }
+}
+
 async function dbSaveProject(p) {
   if (syncReadyPromise) await syncReadyPromise;
   if (db) {
@@ -968,6 +1288,7 @@ async function dbSaveProject(p) {
       .upsert({ ...p, household_id: currentHouseholdId });
   } else {
     save();
+    await persistProjectToBackend(p);
     renderProjects();
     renderNav();
   }
@@ -980,6 +1301,7 @@ async function dbSaveGoal(g) {
     await sb.from("goals").upsert({ ...g, household_id: currentHouseholdId });
   } else {
     save();
+    await persistGoalToBackend(g);
     renderGoals();
     renderReports();
   }
@@ -992,6 +1314,7 @@ async function dbSavePerson(p) {
     await sb.from("people").upsert({ ...p, household_id: currentHouseholdId });
   } else {
     save();
+    await persistPersonToBackend(p);
     renderPeople();
   }
 }
@@ -1338,8 +1661,10 @@ async function toggleDone(id) {
   if (!item) return;
   item.done = !item.done;
   item.completedAt = item.done ? Date.now() : "";
+  item.status = item.done ? "completed" : item.status || "inbox";
   logCompletion(item.id, item.done);
   await dbSaveItem(item);
+  await syncTaskStatusToBackend(item);
   if (
     item.done &&
     item.recurrence &&
@@ -1355,6 +1680,7 @@ async function toggleDone(id) {
       dueDate: nextDue,
       due: formatDueDisplay(nextDue),
       created: Date.now(),
+      status: "inbox",
     };
     state.items.unshift(next);
     await dbSaveItem(next);
@@ -2683,6 +3009,10 @@ async function saveCapture() {
     scope: captureScope,
     mediaUrl: mediaUrl || "",
   };
+
+  if (realKind === "task" && !newItem.status) newItem.status = "Today";
+  if (realKind !== "task" && !newItem.status) newItem.status = "inbox";
+
   state.items.unshift(newItem);
   closeCapture();
   await dbSaveItem(newItem);
@@ -2699,10 +3029,11 @@ async function quickCapture() {
     priority: "",
     person: "",
     due: "",
-    status: "",
+    status: "inbox",
     project: "",
     created: Date.now(),
     done: false,
+    scope: "shared",
   };
   state.items.unshift(newItem);
   input.value = "";
@@ -2811,6 +3142,15 @@ async function askAI(q) {
     </div>`
       : "";
 
+  const fallbackAnswer = contextItems.length
+    ? `Based on what you've captured — ${escapeHtml(
+        contextItems
+          .slice(0, 3)
+          .map((m) => m.title)
+          .join("; "),
+      )}.`
+    : "Couldn't reach the AI right now.";
+
   if (sample) {
     const context = contextPool
       .slice(0, 60)
@@ -2841,16 +3181,9 @@ async function askAI(q) {
       body: JSON.stringify({ query: q, items: contextPool }),
     });
     const data = await res.json();
-    slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer || data.error || "No answer.")}${buildSourcesHtml()}</div>`;
+    slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer || data.error || fallbackAnswer)}${buildSourcesHtml()}</div>`;
   } catch (err) {
-    slot.innerHTML = contextItems.length
-      ? `<div class="ask-answer"><b>Answer:</b> Based on what you've captured — ${escapeHtml(
-          contextItems
-            .slice(0, 3)
-            .map((m) => m.title)
-            .join("; "),
-        )}.${buildSourcesHtml()}</div>`
-      : `<div class="ask-answer">Couldn't reach the AI right now.</div>`;
+    slot.innerHTML = `<div class="ask-answer">${fallbackAnswer}${buildSourcesHtml()}</div>`;
   }
 }
 
