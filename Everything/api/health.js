@@ -1,3 +1,5 @@
+import { getSupabaseServerClient } from './lib/supabase.js';
+
 export default async function handler(req, res) {
   if (req.method && req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -11,7 +13,21 @@ export default async function handler(req, res) {
     NODE_ENV: process.env.NODE_ENV || 'development',
   };
 
-  const ready = envStatus.SUPABASE_URL && envStatus.SUPABASE_SERVICE_ROLE_KEY;
+  let databaseReady = false;
+  const supabase = getSupabaseServerClient();
+  if (supabase) {
+    try {
+      const { error } = await supabase.from('households').select('id').limit(1);
+      databaseReady = !error;
+    } catch (error) {
+      databaseReady = false;
+    }
+  }
+
+  const ready =
+    envStatus.SUPABASE_URL &&
+    envStatus.SUPABASE_SERVICE_ROLE_KEY &&
+    databaseReady;
 
   return res.status(200).json({
     ok: true,
@@ -22,6 +38,7 @@ export default async function handler(req, res) {
       : 'Supabase backend configuration is incomplete.',
     envStatus,
     ready,
+    databaseReady,
     aiAvailable: envStatus.ANTHROPIC_API_KEY,
     timestamp: new Date().toISOString(),
   });
