@@ -1441,15 +1441,21 @@ function renderToday() {
       month: "long",
       day: "numeric",
     });
-  const todays = state.items.filter(
-    (i) =>
-      !i.done &&
-      (((i.kind === "task" || i.kind === "event") &&
-        (isToday(i.dueDate) ||
-          isOverdue(i) ||
-          (!i.dueDate && i.due === "Today"))) ||
-        i.kind === "waiting"),
-  );
+  const todays = state.items
+    .filter(
+      (i) =>
+        !i.done &&
+        ((i.kind === "task" || i.kind === "event" || i.kind === "waiting") &&
+          (i.dueDate || i.due === "Today" || i.kind === "waiting")),
+    )
+    .sort((a, b) => {
+      if (a.dueDate && b.dueDate)
+        return new Date(a.dueDate) - new Date(b.dueDate);
+      if (a.dueDate) return -1;
+      if (b.dueDate) return 1;
+      return b.created - a.created;
+    })
+    .slice(0, 8);
   document.getElementById("statTasks").textContent = state.items.filter(
     (i) => i.kind === "task" && !i.done,
   ).length;
@@ -1696,6 +1702,8 @@ function renderInbox(filter) {
     ["image", "Images"],
     ["file", "Files"],
     ["link", "Links"],
+    ["waiting", "Waiting"],
+    ["openloop", "Open loops"],
   ];
   const tabRow = document.getElementById("inboxTabs");
   tabRow.innerHTML = tabs
@@ -2700,10 +2708,10 @@ function pickType(id, manual) {
 function detectType(text) {
   const t = text.toLowerCase();
   if (
-    /\b(tomorrow|today|at \d|am|pm|meeting|call|deadline|due|schedule)\b/.test(
+    /\b(tomorrow|today|at \d|am|pm|meeting|deadline|due|schedule)\b/.test(
       t,
     ) &&
-    /\b(meeting|call|event|appointment|sync|demo)\b/.test(t)
+    /\b(meeting|event|appointment|sync|demo)\b/.test(t)
   )
     return "event";
   if (
@@ -2826,6 +2834,7 @@ function parseLocalDate(text, now) {
   }
 
   const timeMatch =
+    t.match(/\b(?:at\s+)?(\d{1,2})(?::|\.)(\d{2})\s*(am|pm)\b/) ||
     t.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/) ||
     t.match(/\bat\s+(\d{1,2})[:.](\d{2})\b/) ||
     t.match(/\b(\d{1,2}):(\d{2})\b/);

@@ -371,7 +371,12 @@
             <p class="page-sub" id="todayDate"></p>
 
             <div class="stat-row">
-              <div class="stat-card">
+              <div
+                class="stat-card"
+                onclick="switchView('tasks')"
+                style="cursor: pointer"
+                title="Open tasks"
+              >
                 <div
                   class="stat-icon"
                   style="background: var(--blue-bg); color: var(--blue-fg)"
@@ -383,7 +388,12 @@
                   <div class="stat-label">Tasks</div>
                 </div>
               </div>
-              <div class="stat-card">
+              <div
+                class="stat-card"
+                onclick="switchView('schedule')"
+                style="cursor: pointer"
+                title="Open schedule"
+              >
                 <div
                   class="stat-icon"
                   style="background: var(--purple-bg); color: var(--purple-fg)"
@@ -395,7 +405,12 @@
                   <div class="stat-label">Events</div>
                 </div>
               </div>
-              <div class="stat-card">
+              <div
+                class="stat-card"
+                onclick="switchView('inbox'); renderInbox('waiting')"
+                style="cursor: pointer"
+                title="Open waiting items"
+              >
                 <div
                   class="stat-icon"
                   style="background: var(--amber-bg); color: var(--amber-fg)"
@@ -407,7 +422,12 @@
                   <div class="stat-label">Waiting</div>
                 </div>
               </div>
-              <div class="stat-card">
+              <div
+                class="stat-card"
+                onclick="switchView('inbox'); renderInbox('openloop')"
+                style="cursor: pointer"
+                title="Open open loops"
+              >
                 <div
                   class="stat-icon"
                   style="background: var(--green-bg); color: var(--green-fg)"
@@ -425,24 +445,24 @@
               <div>
                 <div class="card">
                   <div class="card-head">
-                    <h3>Today</h3>
+                    <h3>Today &amp; upcoming</h3>
                     <button class="link-btn" onclick="switchView('tasks')">
                       View all →
                     </button>
                   </div>
-                  <div id="todayList"></div>
-                  <div class="nudge">
-                    <div class="nudge-text">
-                      <b>One thing to consider</b>
-                      <div class="nudge-sub">
-                        You mentioned your business idea a few times. Want to
-                        spend 20 minutes on it today?
-                      </div>
+                  <div id="todayList" class="today-agenda"></div>
+                </div>
+                <div class="nudge">
+                  <div class="nudge-text">
+                    <b>One thing to consider</b>
+                    <div class="nudge-sub">
+                      You mentioned your business idea a few times. Want to
+                      spend 20 minutes on it today?
                     </div>
-                    <button class="btn-small" onclick="startNudge()">
-                      Start now
-                    </button>
                   </div>
+                  <button class="btn-small" onclick="startNudge()">
+                    Start now
+                  </button>
                 </div>
               </div>
               <div>
