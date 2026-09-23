@@ -71,6 +71,10 @@ alter table if exists public.goals
   add column if not exists household_id uuid,
   add column if not exists user_id uuid;
 
+alter table if exists public.items
+  add column if not exists household_id uuid,
+  add column if not exists owner_id uuid;
+
 -- Keep browser access limited to the signed-in user's household. Supabase's
 -- service-role client used by the API bypasses these policies.
 create or replace function public.is_household_member(h_id uuid)
@@ -95,6 +99,7 @@ alter table public.tasks enable row level security;
 alter table public.people enable row level security;
 alter table public.projects enable row level security;
 alter table public.goals enable row level security;
+alter table if exists public.items enable row level security;
 
 drop policy if exists households_access on public.households;
 create policy households_access on public.households
@@ -137,3 +142,9 @@ create policy goals_access on public.goals
 for all
 using (user_id = auth.uid() or public.is_household_member(household_id))
 with check (user_id = auth.uid() or public.is_household_member(household_id));
+
+drop policy if exists items_household_access on public.items;
+create policy items_household_access on public.items
+for all
+using (owner_id = auth.uid() or public.is_household_member(household_id))
+with check (owner_id = auth.uid() or public.is_household_member(household_id));
