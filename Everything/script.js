@@ -5,6 +5,15 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const VAPID_PUBLIC_KEY =
   "BHWGWugtw2V9RIk_4mItF_ef3sx0ZJBTPuKZVjTEDfOY-o80jJcXXurZlYBhTJAyhqNQzmtBIjDdEguHwyb0hoU";
 let deferredInstallPrompt = null;
+const REMEMBERED_EMAIL_KEY = "everything_remembered_email";
+
+function restoreRememberedEmail() {
+  const emailInput = document.getElementById("authEmail");
+  const rememberMe = document.getElementById("rememberMe");
+  const rememberedEmail = localStorage.getItem(REMEMBERED_EMAIL_KEY);
+  if (emailInput && rememberedEmail) emailInput.value = rememberedEmail;
+  if (rememberMe) rememberMe.checked = Boolean(rememberedEmail);
+}
 
 function isAppInstalled() {
   return (
@@ -76,6 +85,7 @@ async function authSignIn() {
   const email = document.getElementById("authEmail").value.trim();
   const password = document.getElementById("authPassword").value;
   const authError = document.getElementById("authError");
+  const rememberMe = document.getElementById("rememberMe");
 
   if (!email || !password) {
     authError.textContent = "Enter both email and password.";
@@ -84,7 +94,16 @@ async function authSignIn() {
 
   try {
     const { error } = await sb.auth.signInWithPassword({ email, password });
-    authError.textContent = error ? error.message : "";
+    if (error) {
+      authError.textContent = error.message;
+      return;
+    }
+    if (rememberMe?.checked) {
+      localStorage.setItem(REMEMBERED_EMAIL_KEY, email);
+    } else {
+      localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+    }
+    authError.textContent = "";
   } catch (err) {
     authError.textContent = err?.message || "Could not sign in.";
   }
@@ -152,6 +171,10 @@ async function authSignOut() {
     const { error } = await sb.auth.signOut();
     if (error) throw error;
     await sb.removeAllChannels();
+    const passwordInput = document.getElementById("authPassword");
+    const newPasswordInput = document.getElementById("newPassword");
+    if (passwordInput) passwordInput.value = "";
+    if (newPasswordInput) newPasswordInput.value = "";
   } catch (err) {
     const message = err?.message || "Could not sign out. Please try again.";
     if (logoutMessage) {
@@ -508,6 +531,7 @@ sb.auth.onAuthStateChange((event, session) => {
   }
   if (session) {
     authScreen.style.display = "none";
+    switchView("today");
     if (syncedUserId !== session.user.id) {
       syncedUserId = session.user.id;
       syncReadyPromise = startSupabaseSync(session.user.id);
@@ -566,8 +590,17 @@ async function loadProfile() {
       ? "dark"
       : "light";
   const { data: authData } = await sb.auth.getUser();
-  if (authData?.user)
+  if (authData?.user) {
     document.getElementById("profileEmail").value = authData.user.email;
+    const fallbackName = authData.user.email.split("@")[0];
+    const displayName = profile.full_name?.trim() || fallbackName;
+    const greetEl = document.getElementById("greeting");
+    if (greetEl)
+      greetEl.textContent = `${greetingText()}, ${displayName.split(" ")[0]}!`;
+    const avatarInitial = document.getElementById("avatarInitial");
+    if (avatarInitial)
+      avatarInitial.textContent = displayName.charAt(0).toUpperCase();
+  }
   updateAvatarDisplay(profile.full_name, profile.avatar_url);
 }
 
@@ -3214,6 +3247,7 @@ function checkDueNotifications() {
   });
 }
 /* ---------- Init ---------- */
+restoreRememberedEmail();
 document.getElementById("hamburger").style.display =
   window.innerWidth < 900 ? "flex" : "none";
 window.addEventListener("resize", () => {
