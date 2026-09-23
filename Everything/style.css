@@ -276,6 +276,29 @@ body {
   display: block;
 }
 
+.logout-illustration {
+  width: min(240px, 70%);
+  margin: 0 auto 16px;
+}
+
+.logout-illustration svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.logout-button-icon {
+  width: 17px;
+  height: 17px;
+  vertical-align: -4px;
+  margin-right: 5px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 h1.page-title {
   font-size: 22px;
   margin: 0 0 2px;
@@ -1135,6 +1158,24 @@ h1.page-title {
 }
 
 @media (max-width:480px) {
+  .logout-card {
+    margin: 20px auto !important;
+    padding: 30px 20px !important;
+  }
+
+  .logout-card .page-sub {
+    line-height: 1.45;
+  }
+
+  .logout-card .btn {
+    min-height: 44px;
+    width: 100%;
+  }
+
+  .logout-illustration {
+    width: min(220px, 78vw);
+  }
+
   .topbar .icon-btn {
     width: 34px;
     height: 34px;
