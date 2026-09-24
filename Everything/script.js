@@ -1,11 +1,409 @@
 const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
 const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
+
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (typeof sb?.auth?.getSession === "function") {
+    const { data } = await sb.auth.getSession();
+    const token = data?.session?.access_token;
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
+  return fetch(url, { ...options, headers });
+}
+
+
+const STRUCTURED_SYNC_QUEUE_PREFIX = "everything_structured_sync_v1:";
+const STRUCTURED_SYNC_MAX_ATTEMPTS = 12;
+let structuredSyncTimer = null;
+let structuredSyncRunning = false;
+let structuredSyncQueuedAgain = false;
+
+function structuredQueueStorageKey() {
+  return `${STRUCTURED_SYNC_QUEUE_PREFIX}${sbUser || "anonymous"}`;
+}
+
+function readStructuredSyncQueue() {
+  try {
+    const raw = localStorage.getItem(structuredQueueStorageKey());
+    const value = JSON.parse(raw || "[]");
+    return Array.isArray(value) ? value.filter((item) => item && item.key && item.kind) : [];
+  } catch (err) {
+    console.warn("Structured sync queue could not be read:", err.message || err);
+    return [];
+  }
+}
+
+function writeStructuredSyncQueue(queue) {
+  try {
+    localStorage.setItem(structuredQueueStorageKey(), JSON.stringify(queue));
+  } catch (err) {
+    console.warn("Structured sync queue could not be saved:", err.message || err);
+  }
+}
+
+function structuredOperationKey(kind, action, householdId, clientId) {
+  return `${kind}:${action}:${householdId || "none"}:${clientId || "none"}`;
+}
+
+function replaceStructuredSyncOperation(operation) {
+  const queue = readStructuredSyncQueue();
+  const identity = (item) =>
+    item.kind === operation.kind &&
+    item.clientId === operation.clientId &&
+    item.householdId === operation.householdId;
+  const next = {
+    ...operation,
+    id: operation.id || `${operation.key}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    attempts: operation.attempts || 0,
+    queuedAt: operation.queuedAt || Date.now(),
+  };
+  const filtered = queue.filter((item) => !identity(item) || item.key === operation.key);
+  const existing = filtered.findIndex((item) => item.key === operation.key);
+  if (existing >= 0) filtered[existing] = next;
+  else filtered.push(next);
+  writeStructuredSyncQueue(filtered);
+  structuredSyncQueuedAgain = true;
+  return next;
+}
+
+function updateStructuredSyncOperation(id, patch) {
+  const queue = readStructuredSyncQueue();
+  const index = queue.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  queue[index] = { ...queue[index], ...patch };
+  writeStructuredSyncQueue(queue);
+}
+
+function removeStructuredSyncOperation(id) {
+  const queue = readStructuredSyncQueue();
+  const next = queue.filter((item) => item.id !== id);
+  if (next.length !== queue.length) writeStructuredSyncQueue(next);
+}
+
+function structuredResponseNeedsRetry(result) {
+  if (!result || result.ok) return false;
+  if (result.status === 0) return true;
+  return result.status === 401 || result.status === 408 || result.status === 409 || result.status === 425 || result.status === 429 || result.status >= 500;
+}
+
+async function structuredRequest(path, options = {}) {
+  try {
+    const response = await apiFetch(path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+    });
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (err) {
+      data = {};
+    }
+    return { ok: response.ok, status: response.status, data };
+  } catch (err) {
+    console.warn("Structured sync request failed:", err.message || err);
+    return { ok: false, status: 0, data: {} };
+  }
+}
+
+
+function structuredSyncAvailable() {
+  return Boolean(sbUser && currentHouseholdId && typeof fetch === "function");
+}
+
+function queueStructuredOperation(operation) {
+  if (!structuredSyncAvailable() || !operation?.clientId) return false;
+  const key = operation.key || structuredOperationKey(operation.kind, operation.action, currentHouseholdId, operation.clientId);
+  const queued = replaceStructuredSyncOperation({
+    ...operation,
+    key,
+    userId: operation.userId || sbUser,
+    householdId: currentHouseholdId,
+  });
+  void flushStructuredSyncQueue();
+  return queued;
+}
+
+function itemSnapshot(item) {
+  return {
+    id: item.id,
+    ownerId: item.ownerId || null,
+    scope: item.scope || "shared",
+    kind: item.kind || "text",
+    title: item.title || "",
+    sub: item.sub || "",
+    priority: item.priority || "",
+    person: item.person || "",
+    due: item.due || "",
+    dueDate: item.dueDate || null,
+    recurrence: item.recurrence || "none",
+    status: item.status || "inbox",
+    project: item.project || "",
+    created: item.created || Date.now(),
+    done: Boolean(item.done),
+    notified: Boolean(item.notified),
+    notifiedAt: item.notifiedAt || null,
+    snoozedUntil: item.snoozedUntil || null,
+    mediaUrl: item.mediaUrl || "",
+    completedAt: item.completedAt || null,
+  };
+}
+
+function queueStructuredItemSync(item, action = "upsert") {
+  if (!item?.id) return false;
+  return queueStructuredOperation({
+    kind: "item",
+    action,
+    clientId: item.id,
+    item: itemSnapshot(item),
+  });
+}
+
+function queueStructuredRecordSync(kind, record, action = "upsert") {
+  if (!record?.id) return false;
+  return queueStructuredOperation({
+    kind,
+    action,
+    clientId: record.id,
+    record: { ...record },
+  });
+}
+
+function normaliseStructuredRecord(kind, row) {
+  if (!row) return row;
+  const clientId = row.client_id || row.clientId || row.metadata?.originalId || row.metadata?.original_id || row.id;
+  const normalized = {
+    ...row,
+    id: clientId || row.id,
+    clientId,
+    backendId: row.id,
+    scope: row.scope || row.visibility || row.metadata?.scope || "shared",
+    ownerId: row.user_id || row.owner_id || null,
+    created: row.created ?? (row.created_at ? Date.parse(row.created_at) : Date.now()),
+  };
+  if (kind === "goal") normalized.done = row.done ?? row.status === "completed";
+  return normalized;
+}
+
+function mergeStructuredStateRecord(kind, row) {
+  if (!row || !canReadStructuredRow(row)) return;
+  const normalized = normaliseStructuredRecord(kind, row);
+  const list = kind === "project" ? state.projects : kind === "goal" ? state.goals : state.people;
+  if (!Array.isArray(list)) return;
+  const index = list.findIndex(
+    (entry) => entry.id === normalized.id || (normalized.backendId && entry.backendId === normalized.backendId),
+  );
+  if (index >= 0) list[index] = { ...list[index], ...normalized };
+  else list.unshift(normalized);
+}
+
+function removeStructuredStateRecord(kind, row) {
+  const list = kind === "project" ? state.projects : kind === "goal" ? state.goals : state.people;
+  if (!Array.isArray(list) || !row) return;
+  const id = row.id;
+  const clientId = row.client_id || row.clientId || row.metadata?.originalId || row.metadata?.original_id;
+  list.splice(0, list.length, ...list.filter((entry) => entry.id !== id && entry.id !== clientId && entry.backendId !== id));
+}
+
+function buildStructuredRecordPayload(kind, record) {
+  const metadata = {
+    source: "prototype-sync",
+    scope: record.scope || "shared",
+    originalId: record.id || null,
+  };
+  if (kind === "project") {
+    return {
+      household_id: currentHouseholdId,
+      user_id: sbUser,
+      name: record.name || "",
+      description: record.description || "",
+      status: record.status || "active",
+      client_id: record.id,
+      metadata,
+    };
+  }
+  if (kind === "goal") {
+    return {
+      household_id: currentHouseholdId,
+      user_id: sbUser,
+      title: record.title || "",
+      description: record.description || "",
+      status: record.done === true
+      ? "completed"
+      : record.done === false
+        ? "active"
+        : record.status || "active",
+      client_id: record.id,
+      metadata: { ...metadata, done: Boolean(record.done) },
+    };
+  }
+  return {
+    household_id: currentHouseholdId,
+    user_id: sbUser,
+    name: record.name || "",
+    notes: record.notes || "",
+    client_id: record.id,
+    metadata,
+  };
+}
+
 const VAPID_PUBLIC_KEY =
   "BHWGWugtw2V9RIk_4mItF_ef3sx0ZJBTPuKZVjTEDfOY-o80jJcXXurZlYBhTJAyhqNQzmtBIjDdEguHwyb0hoU";
 let deferredInstallPrompt = null;
 const REMEMBERED_EMAIL_KEY = "everything_remembered_email";
+
+async function deleteStructuredRecord(kind, record) {
+  if (!structuredSyncAvailable() || !record?.id) return false;
+  const result = await structuredRequest(
+    `/api/${kind}?household_id=${encodeURIComponent(currentHouseholdId)}&client_id=${encodeURIComponent(record.id)}`,
+    { method: "DELETE" },
+  );
+  if (result.ok) return true;
+  if (structuredResponseNeedsRetry(result)) queueStructuredRecordSync(kind, record, "delete");
+  else console.warn(`${kind} structured delete rejected:`, result.data?.error || result.status);
+  return false;
+}
+
+async function persistStructuredRecord(kind, record) {
+  if (!structuredSyncAvailable() || !record?.id) return false;
+  const payload = buildStructuredRecordPayload(kind, record);
+  const result = await structuredRequest(
+    `/api/${kind}?household_id=${encodeURIComponent(currentHouseholdId)}`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+  if (result.ok) {
+    const row = result.data?.[kind === "project" ? "project" : kind === "goal" ? "goal" : "person"];
+    if (row?.id) {
+      const list = kind === "project" ? state.projects : kind === "goal" ? state.goals : state.people;
+      const current = list?.find((entry) => entry.id === record.id);
+      if (current) current.backendId = row.id;
+    }
+    return true;
+  }
+  if (structuredResponseNeedsRetry(result)) queueStructuredRecordSync(kind, record);
+  else console.warn(`${kind} structured sync rejected:`, result.data?.error || result.status);
+  return false;
+}
+
+async function processStructuredOperation(operation) {
+  if (operation.userId && operation.userId !== sbUser) return { ok: true, status: 0, data: {} };
+  if (operation.kind === "item") {
+    const item = operation.item || {};
+    if (operation.action === "delete") {
+      if (item.kind === "task") {
+        const taskResult = await structuredRequest(
+          `/api/tasks?household_id=${encodeURIComponent(operation.householdId)}&client_id=${encodeURIComponent(operation.clientId)}`,
+          { method: "DELETE" },
+        );
+        if (!taskResult.ok) return taskResult;
+      }
+      return structuredRequest(
+        `/api/entries?household_id=${encodeURIComponent(operation.householdId)}&client_id=${encodeURIComponent(operation.clientId)}`,
+        { method: "DELETE" },
+      );
+    }
+    const entryPayload = {
+      ...buildEntryDraftFromItem(item),
+      household_id: operation.householdId,
+      user_id: operation.userId,
+      client_id: operation.clientId,
+    };
+    const entryResult = await structuredRequest(`/api/entries?household_id=${encodeURIComponent(operation.householdId)}`, {
+      method: "POST",
+      body: JSON.stringify(entryPayload),
+    });
+    if (!entryResult.ok) return entryResult;
+    if (item.kind !== "task") return { ok: true, status: entryResult.status, data: entryResult.data };
+    if (!entryResult.data?.entry?.id) return { ok: false, status: 502, data: { error: "Entry response did not include an id." } };
+    const taskPayload = {
+      ...buildTaskDraftFromItem(item, entryResult.data.entry.id),
+      household_id: operation.householdId,
+      user_id: operation.userId,
+      client_id: operation.clientId,
+    };
+    return structuredRequest(`/api/tasks?household_id=${encodeURIComponent(operation.householdId)}`, {
+      method: "POST",
+      body: JSON.stringify(taskPayload),
+    });
+  }
+  if (["project", "goal", "person"].includes(operation.kind)) {
+    if (operation.action === "delete") {
+      return structuredRequest(
+        `/api/${operation.kind}?household_id=${encodeURIComponent(operation.householdId)}&client_id=${encodeURIComponent(operation.clientId)}`,
+        { method: "DELETE" },
+      );
+    }
+    const payload = {
+      ...buildStructuredRecordPayload(operation.kind, operation.record || {}),
+      household_id: operation.householdId,
+      user_id: operation.userId,
+    };
+    return structuredRequest(
+      `/api/${operation.kind}?household_id=${encodeURIComponent(operation.householdId)}`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  }
+  return { ok: true, status: 0, data: {} };
+}
+
+function scheduleStructuredSyncRetry() {
+  if (structuredSyncTimer) {
+    clearTimeout(structuredSyncTimer);
+    structuredSyncTimer = null;
+  }
+  const next = readStructuredSyncQueue()
+    .map((operation) => operation.nextAttemptAt)
+    .filter((value) => Number.isFinite(value) && value > Date.now())
+    .sort((a, b) => a - b)[0];
+  if (!next || !structuredSyncAvailable()) return;
+  structuredSyncTimer = setTimeout(() => {
+    structuredSyncTimer = null;
+    void flushStructuredSyncQueue();
+  }, Math.min(60000, Math.max(1000, next - Date.now() + 250)));
+}
+
+async function flushStructuredSyncQueue() {
+  if (structuredSyncRunning || !structuredSyncAvailable()) return;
+  structuredSyncRunning = true;
+  try {
+    do {
+      structuredSyncQueuedAgain = false;
+      const queue = readStructuredSyncQueue();
+      for (const operation of queue) {
+        if (operation.userId && operation.userId !== sbUser) continue;
+        if (operation.nextAttemptAt && operation.nextAttemptAt > Date.now()) continue;
+        const result = await processStructuredOperation(operation);
+        if (result.ok) {
+          removeStructuredSyncOperation(operation.id);
+          continue;
+        }
+        if (structuredResponseNeedsRetry(result) && (operation.attempts || 0) < STRUCTURED_SYNC_MAX_ATTEMPTS) {
+          updateStructuredSyncOperation(operation.id, {
+            attempts: (operation.attempts || 0) + 1,
+            nextAttemptAt: Date.now() + Math.min(60000, 1000 * 2 ** (operation.attempts || 0)),
+          });
+          scheduleStructuredSyncRetry();
+        } else {
+          console.warn("Structured sync permanently failed:", operation.kind, result.data?.error || result.status);
+          removeStructuredSyncOperation(operation.id);
+        }
+      }
+    } while (structuredSyncQueuedAgain);
+  } finally {
+    structuredSyncRunning = false;
+    scheduleStructuredSyncRetry();
+  }
+}
+
+window.addEventListener("online", () => {
+  void flushStructuredSyncQueue();
+});
+
 
 function restoreRememberedEmail() {
   const emailInput = document.getElementById("authEmail");
@@ -211,6 +609,7 @@ async function confirmLogoutPage() {
 }
 let sbUser = null;
 let sbChannel = null;
+let structuredChannels = [];
 let syncReadyPromise = null;
 let hasCompletedAt = false;
 let hasReminderColumns = false;
@@ -218,7 +617,7 @@ let hasReminderColumns = false;
 function itemToRow(item) {
   const row = {
     id: item.id,
-    owner_id: sbUser,
+    owner_id: item.ownerId || sbUser,
     scope: item.scope || "shared",
     kind: item.kind,
     title: item.title,
@@ -258,6 +657,7 @@ function itemToRow(item) {
 function rowToItem(row) {
   return {
     id: row.id,
+    ownerId: row.owner_id || null,
     scope: row.scope,
     kind: row.kind,
     title: row.title,
@@ -303,6 +703,32 @@ async function detectReminderColumns() {
   }
 }
 
+function isPrivateStructuredRow(row) {
+  return row?.visibility === "private" || row?.scope === "private" || row?.metadata?.scope === "private";
+}
+
+function canReadStructuredRow(row) {
+  return !isPrivateStructuredRow(row) || row?.user_id === sbUser;
+}
+
+async function loadStructuredCollection(kind, responseKey) {
+  if (structuredSyncAvailable()) {
+    const result = await structuredRequest(
+      `/api/${kind}?household_id=${encodeURIComponent(currentHouseholdId)}`,
+    );
+    if (result.ok && Array.isArray(result.data?.[responseKey])) {
+      return result.data[responseKey].filter(canReadStructuredRow);
+    }
+  }
+  const fallback = await sb
+    .from(kind)
+    .select("*")
+    .eq("household_id", currentHouseholdId)
+    .order("created_at", { ascending: false });
+  if (fallback.error) return null;
+  return (fallback.data || []).filter(canReadStructuredRow);
+}
+
 async function startSupabaseSync(userId) {
   await ensureHousehold(userId);
   sbUser = userId;
@@ -317,6 +743,7 @@ async function startSupabaseSync(userId) {
     state.items = data.map(rowToItem);
     if (!state.projects) state.projects = [];
     if (!state.goals) state.goals = [];
+    if (!state.people) state.people = [];
     state.items.forEach((item) => {
       if (item.notified) rememberNotified(item.id);
     });
@@ -330,6 +757,10 @@ async function startSupabaseSync(userId) {
     ensurePushSubscription({ requestPermission: false }).then(() =>
       renderNotificationStatus(),
     );
+  }
+  if (structuredChannels.length) {
+    structuredChannels.forEach((channel) => sb.removeChannel(channel));
+    structuredChannels = [];
   }
   if (sbChannel) sb.removeChannel(sbChannel);
   sbChannel = sb
@@ -360,30 +791,19 @@ async function startSupabaseSync(userId) {
     )
     .subscribe();
 
-  const { data: projData } = await sb
-    .from("projects")
-    .select("*")
-    .eq("household_id", currentHouseholdId)
-    .order("created", { ascending: false });
-  if (projData) state.projects = projData;
-  const { data: goalData } = await sb
-    .from("goals")
-    .select("*")
-    .eq("household_id", currentHouseholdId)
-    .order("created", { ascending: false });
-  if (goalData) state.goals = goalData;
-  const { data: peopleData } = await sb
-    .from("people")
-    .select("*")
-    .eq("household_id", currentHouseholdId)
-    .order("created", { ascending: false });
-  if (peopleData) state.people = peopleData;
+  const projectRows = await loadStructuredCollection("projects", "projects");
+  if (projectRows) state.projects = projectRows.map((row) => normaliseStructuredRecord("project", row));
+  const goalRows = await loadStructuredCollection("goals", "goals");
+  if (goalRows) state.goals = goalRows.map((row) => normaliseStructuredRecord("goal", row));
+  const peopleRows = await loadStructuredCollection("people", "people");
+  if (peopleRows) state.people = peopleRows.map((row) => normaliseStructuredRecord("person", row));
   renderProjects();
   renderGoals();
   renderNav();
   renderReports();
 
-  sb.channel("projects-sync")
+  structuredChannels.push(
+    sb.channel("projects-sync")
     .on(
       "postgres_changes",
       {
@@ -393,22 +813,19 @@ async function startSupabaseSync(userId) {
         filter: `household_id=eq.${currentHouseholdId}`,
       },
       (payload) => {
-        if (payload.eventType === "DELETE")
-          state.projects = state.projects.filter(
-            (p) => p.id !== payload.old.id,
-          );
+        if (payload.eventType === "DELETE") removeStructuredStateRecord("project", payload.old);
         else {
-          const idx = state.projects.findIndex((p) => p.id === payload.new.id);
-          if (idx >= 0) state.projects[idx] = payload.new;
-          else state.projects.unshift(payload.new);
+          mergeStructuredStateRecord("project", payload.new);
+          renderProjects();
+          renderNav();
         }
-        renderProjects();
-        renderNav();
       },
     )
-    .subscribe();
+    .subscribe(),
+  );
 
-  sb.channel("goals-sync")
+  structuredChannels.push(
+    sb.channel("goals-sync")
     .on(
       "postgres_changes",
       {
@@ -418,20 +835,19 @@ async function startSupabaseSync(userId) {
         filter: `household_id=eq.${currentHouseholdId}`,
       },
       (payload) => {
-        if (payload.eventType === "DELETE")
-          state.goals = state.goals.filter((g) => g.id !== payload.old.id);
+        if (payload.eventType === "DELETE") removeStructuredStateRecord("goal", payload.old);
         else {
-          const idx = state.goals.findIndex((g) => g.id === payload.new.id);
-          if (idx >= 0) state.goals[idx] = payload.new;
-          else state.goals.unshift(payload.new);
+          mergeStructuredStateRecord("goal", payload.new);
+          renderGoals();
+          renderReports();
         }
-        renderGoals();
-        renderReports();
       },
     )
-    .subscribe();
+    .subscribe(),
+  );
 
-  sb.channel("people-sync")
+  structuredChannels.push(
+    sb.channel("people-sync")
     .on(
       "postgres_changes",
       {
@@ -441,24 +857,23 @@ async function startSupabaseSync(userId) {
         filter: `household_id=eq.${currentHouseholdId}`,
       },
       (payload) => {
-        if (payload.eventType === "DELETE")
-          state.people = state.people.filter((p) => p.id !== payload.old.id);
+        if (payload.eventType === "DELETE") removeStructuredStateRecord("person", payload.old);
         else {
-          const idx = state.people.findIndex((p) => p.id === payload.new.id);
-          if (idx >= 0) state.people[idx] = payload.new;
-          else state.people.unshift(payload.new);
+          mergeStructuredStateRecord("person", payload.new);
+          renderPeople();
         }
-        renderPeople();
       },
     )
-    .subscribe();
+    .subscribe(),
+  );
+  void flushStructuredSyncQueue();
 }
 let currentHouseholdId = null;
 
 async function ensureHousehold(userId) {
   if (typeof fetch === "function" && userId) {
     try {
-      const listRes = await fetch(`/api/households?user_id=${encodeURIComponent(userId)}`);
+      const listRes = await apiFetch(`/api/households?user_id=${encodeURIComponent(userId)}`);
       if (listRes.ok) {
         const listData = await listRes.json();
         const households = Array.isArray(listData?.households)
@@ -470,7 +885,7 @@ async function ensureHousehold(userId) {
           return;
         }
 
-        const createRes = await fetch("/api/households", {
+        const createRes = await apiFetch("/api/households", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ user_id: userId }),
@@ -538,31 +953,10 @@ async function loadHouseholdName() {
   if (input && data) input.value = data.name || "My Household";
 }
 
-async function persistHouseholdToBackend(name) {
-  if (!name || typeof fetch !== "function") return null;
-  try {
-    const payload = {
-      user_id: sbUser || currentUserId || null,
-      name,
-    };
-    const res = await fetch("/api/households", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.household || null;
-  } catch (err) {
-    console.warn("Household backend sync skipped:", err.message || err);
-    return null;
-  }
-}
-
 async function persistMembershipToBackend(householdId, userId, role = "member") {
   if (!householdId || !userId || typeof fetch !== "function") return false;
   try {
-    const res = await fetch("/api/household-members", {
+    const res = await apiFetch("/api/household-members", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ household_id: householdId, user_id: userId, role }),
@@ -577,26 +971,22 @@ async function persistMembershipToBackend(householdId, userId, role = "member") 
 async function saveHouseholdName() {
   const input = document.getElementById("householdNameInput");
   const name = input ? input.value.trim() : "";
-  if (!name || !currentHouseholdId) return;
-  const { error } = await sb
-    .from("households")
-    .update({ name })
-    .eq("id", currentHouseholdId);
-  if (error) {
-    flashSaveHint("householdSaveHint", "Could not save", true);
-    return;
-  }
-  flashSaveHint("householdSaveHint", "Saved");
-  if (typeof fetch === "function") {
-    try {
-      await fetch("/api/households", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: currentHouseholdId, name }),
-      });
-    } catch (err) {
-      console.warn("Household name backend sync skipped:", err.message || err);
+  if (!name || !currentHouseholdId || typeof fetch !== "function") return;
+  try {
+    const res = await apiFetch("/api/households", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: currentHouseholdId, name }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      flashSaveHint("householdSaveHint", data.error || "Could not save", true);
+      return;
     }
+    flashSaveHint("householdSaveHint", "Saved");
+  } catch (err) {
+    console.warn("Household name sync failed:", err.message || err);
+    flashSaveHint("householdSaveHint", "Could not save", true);
   }
 }
 
@@ -612,7 +1002,7 @@ async function joinHousehold() {
 
   if (typeof fetch === "function") {
     try {
-      const res = await fetch("/api/households", {
+      const res = await apiFetch("/api/households", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1278,7 +1668,7 @@ function buildEntryDraftFromItem(item) {
   const status = item.done ? "completed" : item.status || "inbox";
   return {
     household_id: currentHouseholdId || null,
-    user_id: currentUserId || null,
+    user_id: sbUser || currentUserId || null,
     kind: item.kind || "text",
     source_type: "manual",
     title: item.title || "",
@@ -1287,15 +1677,18 @@ function buildEntryDraftFromItem(item) {
     status,
     visibility: item.scope === "private" ? "private" : "shared",
     due_at: item.dueDate || null,
-    completed_at: item.completedAt || null,
+    completed_at: item.completedAt ? new Date(item.completedAt).toISOString() : null,
+    client_id: item.id,
     metadata: {
       source: "prototype-sync",
+      client_id: item.id,
       project: item.project || null,
       person: item.person || null,
       recurrence: item.recurrence || null,
       priority: item.priority || null,
       scope: item.scope || "shared",
       originalKind: item.kind || "text",
+      originalId: item.id,
       backendEntryId: item.backendEntryId || null,
       backendTaskId: item.backendTaskId || null,
     },
@@ -1307,7 +1700,7 @@ function buildTaskDraftFromItem(item, entryId) {
   return {
     entry_id: entryId,
     household_id: currentHouseholdId || null,
-    user_id: currentUserId || null,
+    user_id: sbUser || currentUserId || null,
     title: item.title || "",
     description: item.sub || "",
     status: taskStatusFromItem(item),
@@ -1319,74 +1712,15 @@ function buildTaskDraftFromItem(item, entryId) {
     project_id: null,
     person_id: null,
     goal_id: null,
+    completed_at: item.completedAt ? new Date(item.completedAt).toISOString() : null,
     metadata: {
       source: "prototype-sync",
+      client_id: item.id,
+      originalId: item.id,
       scope: item.scope || "shared",
     },
+    client_id: item.id,
   };
-}
-
-async function persistEntryToBackend(item) {
-  if (!item || typeof fetch !== "function") return false;
-
-  try {
-    const entryPayload = buildEntryDraftFromItem(item);
-    const entryRes = await fetch("/api/entries", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(entryPayload),
-    });
-
-    if (!entryRes.ok) return false;
-
-    const entryData = await entryRes.json();
-    const entryId = entryData?.entry?.id;
-    item.backendEntryId = entryId || item.backendEntryId || null;
-
-    const taskPayload = buildTaskDraftFromItem(item, entryId);
-
-    if (taskPayload) {
-      const taskRes = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(taskPayload),
-      });
-
-      if (taskRes.ok) {
-        const taskData = await taskRes.json();
-        item.backendTaskId = taskData?.task?.id || item.backendTaskId || null;
-      } else {
-        console.warn("Task sync fallback failed:", await taskRes.text().catch(() => ""));
-      }
-    }
-
-    return true;
-  } catch (err) {
-    console.warn("Backend sync skipped:", err.message || err);
-    return false;
-  }
-}
-
-async function syncTaskStatusToBackend(item) {
-  if (!item || item.kind !== "task" || !item.backendTaskId || typeof fetch !== "function") return false;
-
-  try {
-    const res = await fetch("/api/tasks", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: item.backendTaskId,
-        status: taskStatusFromItem(item),
-        completed_at: item.done ? new Date().toISOString() : null,
-        due_at: item.dueDate || null,
-      }),
-    });
-
-    return res.ok;
-  } catch (err) {
-    console.warn("Task status sync skipped:", err.message || err);
-    return false;
-  }
 }
 
 async function dbSaveItem(item) {
@@ -1398,18 +1732,18 @@ async function dbSaveItem(item) {
   } else if (sbUser) {
     const { error } = await sb.from("items").upsert(itemToRow(item));
     if (error) console.error("Supabase save failed:", error.message);
+    queueStructuredItemSync(item);
   } else {
     save();
-    await persistEntryToBackend(item);
   }
   // Every mutation funnels through here (create, edit, complete, snooze, recurrence), so
   // this is the single place that keeps the reminder schedule in step with the data.
   refreshReminderSchedule();
   renderAll();
 }
-async function dbDeleteItem(id) {
+async function dbDeleteItem(id, deletedItem = null) {
   if (syncReadyPromise) await syncReadyPromise;
-  const item = state.items.find((i) => i.id === id);
+  const item = deletedItem || state.items.find((i) => i.id === id);
   const col = item
     ? itemCollectionFor(item)
     : db
@@ -1423,102 +1757,31 @@ async function dbDeleteItem(id) {
       .delete()
       .eq("id", id)
       .eq("household_id", currentHouseholdId);
-    if (error) console.error("Supabase delete failed:", error.message);
+    if (error) {
+      console.error("Supabase delete failed:", error.message);
+      return;
+    }
+    if (item) queueStructuredItemSync(item, "delete");
   } else {
+    save();
+  }
+  if (!col) {
     state.items = state.items.filter((i) => i.id !== id);
     save();
   }
   renderAll();
 }
-async function persistProjectToBackend(project) {
-  if (!project || typeof fetch !== "function") return false;
-  try {
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        household_id: currentHouseholdId || null,
-        user_id: currentUserId || null,
-        name: project.name || "",
-        description: project.description || "",
-        status: project.status || "active",
-        metadata: {
-          source: "prototype-sync",
-          scope: project.scope || "shared",
-          originalId: project.id || null,
-        },
-      }),
-    });
-    return res.ok;
-  } catch (err) {
-    console.warn("Project backend sync skipped:", err.message || err);
-    return false;
-  }
-}
-
-async function persistGoalToBackend(goal) {
-  if (!goal || typeof fetch !== "function") return false;
-  try {
-    const res = await fetch("/api/goals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        household_id: currentHouseholdId || null,
-        user_id: currentUserId || null,
-        title: goal.title || "",
-        description: goal.description || "",
-        status: goal.done ? "completed" : goal.status || "active",
-        metadata: {
-          source: "prototype-sync",
-          scope: goal.scope || "shared",
-          originalId: goal.id || null,
-          done: Boolean(goal.done),
-        },
-      }),
-    });
-    return res.ok;
-  } catch (err) {
-    console.warn("Goal backend sync skipped:", err.message || err);
-    return false;
-  }
-}
-
-async function persistPersonToBackend(person) {
-  if (!person || typeof fetch !== "function") return false;
-  try {
-    const res = await fetch("/api/people", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        household_id: currentHouseholdId || null,
-        user_id: currentUserId || null,
-        name: person.name || "",
-        notes: person.notes || "",
-        metadata: {
-          source: "prototype-sync",
-          scope: person.scope || "shared",
-          originalId: person.id || null,
-        },
-      }),
-    });
-    return res.ok;
-  } catch (err) {
-    console.warn("Person backend sync skipped:", err.message || err);
-    return false;
-  }
-}
-
 async function dbSaveProject(p) {
   if (syncReadyPromise) await syncReadyPromise;
   if (db) {
     await db.collection("projects").doc(p.id).set(p);
   } else if (sbUser) {
-    await sb
-      .from("projects")
-      .upsert({ ...p, household_id: currentHouseholdId });
+    await persistStructuredRecord("project", p);
+    save();
+    renderProjects();
+    renderNav();
   } else {
     save();
-    await persistProjectToBackend(p);
     renderProjects();
     renderNav();
   }
@@ -1528,10 +1791,12 @@ async function dbSaveGoal(g) {
   if (db) {
     await db.collection("goals").doc(g.id).set(g);
   } else if (sbUser) {
-    await sb.from("goals").upsert({ ...g, household_id: currentHouseholdId });
+    await persistStructuredRecord("goal", g);
+    save();
+    renderGoals();
+    renderReports();
   } else {
     save();
-    await persistGoalToBackend(g);
     renderGoals();
     renderReports();
   }
@@ -1541,10 +1806,11 @@ async function dbSavePerson(p) {
   if (db) {
     await db.collection("people").doc(p.id).set(p);
   } else if (sbUser) {
-    await sb.from("people").upsert({ ...p, household_id: currentHouseholdId });
+    await persistStructuredRecord("person", p);
+    save();
+    renderPeople();
   } else {
     save();
-    await persistPersonToBackend(p);
     renderPeople();
   }
 }
@@ -1993,12 +2259,12 @@ function taskRow(item) {
 async function toggleDone(id) {
   const item = state.items.find((i) => i.id === id);
   if (!item) return;
+  const reopenStatus = item.status && item.status !== "completed" ? item.status : "inbox";
   item.done = !item.done;
   item.completedAt = item.done ? Date.now() : "";
-  item.status = item.done ? "completed" : item.status || "inbox";
+  item.status = item.done ? "completed" : reopenStatus;
   logCompletion(item.id, item.done);
   await dbSaveItem(item);
-  await syncTaskStatusToBackend(item);
   if (
     item.done &&
     item.recurrence &&
@@ -2009,8 +2275,13 @@ async function toggleDone(id) {
     const next = {
       ...item,
       id: cid(),
+      backendEntryId: null,
+      backendTaskId: null,
       done: false,
       completedAt: "",
+      notified: false,
+      notifiedAt: "",
+      snoozedUntil: "",
       dueDate: nextDue,
       due: formatDueDisplay(nextDue),
       created: Date.now(),
@@ -2825,9 +3096,9 @@ async function completeCurrent() {
 async function deleteCurrent() {
   if (!currentItemId) return;
   const id = currentItemId;
-  state.items = state.items.filter((i) => i.id !== id);
+  const item = state.items.find((i) => i.id === id);
   closePanel();
-  await dbDeleteItem(id);
+  await dbDeleteItem(id, item);
 }
 
 /* ---------- Quick reschedule ("snooze") ---------- */
@@ -2863,43 +3134,38 @@ async function snoozeCurrent(mode) {
 }
 async function dbDeleteProject(id) {
   if (syncReadyPromise) await syncReadyPromise;
+  const project = state.projects.find((p) => p.id === id);
   if (db) {
     await db.collection("projects").doc(id).delete();
   } else if (sbUser) {
-    const { error } = await sb
-      .from("projects")
-      .delete()
-      .eq("id", id)
-      .eq("household_id", currentHouseholdId);
-    if (error) console.error("Supabase project delete failed:", error.message);
+    await deleteStructuredRecord("project", project);
   } else {
     state.projects = state.projects.filter((p) => p.id !== id);
     save();
   }
+  state.projects = state.projects.filter((p) => p.id !== id);
+  save();
   renderProjects();
   renderNav();
 }
 async function dbDeleteGoal(id) {
   if (syncReadyPromise) await syncReadyPromise;
+  const goal = state.goals.find((g) => g.id === id);
   if (db) {
     await db.collection("goals").doc(id).delete();
   } else if (sbUser) {
-    const { error } = await sb
-      .from("goals")
-      .delete()
-      .eq("id", id)
-      .eq("household_id", currentHouseholdId);
-    if (error) console.error("Supabase goal delete failed:", error.message);
+    await deleteStructuredRecord("goal", goal);
   } else {
     state.goals = state.goals.filter((g) => g.id !== id);
     save();
   }
+  state.goals = state.goals.filter((g) => g.id !== id);
+  save();
   renderGoals();
   renderReports();
 }
 async function deleteGoal(id) {
   if (!confirm("Delete this goal?")) return;
-  state.goals = state.goals.filter((g) => g.id !== id);
   await dbDeleteGoal(id);
 }
 
@@ -2910,7 +3176,6 @@ async function deleteProject(id, name) {
     )
   )
     return;
-  state.projects = state.projects.filter((p) => p.id !== id);
   await dbDeleteProject(id);
 }
 
@@ -3673,7 +3938,7 @@ async function askAI(q) {
   }
 
   try {
-    const res = await fetch("/api/ask", {
+    const res = await apiFetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: q, items: contextPool }),
@@ -4329,16 +4594,9 @@ async function runNotificationTest() {
   if (!sbUser || !navigator.onLine) return;
 
   try {
-    // The endpoint requires either CRON_SECRET (cron) or a signed-in user's token (this).
-    const { data: sessionData } = await sb.auth.getSession();
-    const token = sessionData && sessionData.session && sessionData.session.access_token;
-
-    const res = await fetch("/api/send-due-notifications", {
+    const res = await apiFetch("/api/send-due-notifications", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: "Bearer " + token } : {}),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ test: true, user_id: sbUser }),
     });
     const data = await res.json().catch(() => ({}));

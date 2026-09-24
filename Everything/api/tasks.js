@@ -1,127 +1,98 @@
-import { getSupabaseServerClient } from './lib/supabase.js';
+import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
 
-function normaliseStatus(value) {
-  const allowed = [
-    'inbox',
-    'planned',
-    'today',
-    'in_progress',
-    'waiting',
-    'completed',
-    'cancelled',
-    'someday',
-  ];
-  return allowed.includes(value) ? value : 'inbox';
-}
+const STATUS = ['inbox', 'planned', 'today', 'in_progress', 'waiting', 'completed', 'cancelled', 'someday'];
+const PRIORITY = ['low', 'normal', 'high', 'urgent'];
+const pick = (v, a, f) => a.includes(v) ? v : f;
+const status = (v, f = 'inbox') => pick(String(v || '').trim().toLowerCase().replace(/\s+/g, '_'), STATUS, f);
+const priority = (v, f = 'normal') => {
+  const raw = String(v || '').trim().toLowerCase();
+  if (raw === 'medium') return 'normal';
+  return pick(raw, PRIORITY, f);
+};
+const isPrivate = (row) => row?.visibility === 'private' || row?.metadata?.scope === 'private';
+const fail = (res, code, error) => res.status(code).json({ error: error || 'Request failed.' });
 
-function normalisePriority(value) {
-  const allowed = ['low', 'normal', 'high', 'urgent'];
-  return allowed.includes(value) ? value : 'normal';
+async function saveTask(supabase, householdId, userId, body, existing) {
+  const clientId = existing?.client_id || bodyClientId(body) || null;
+  const supportsClientId = clientId ? await hasClientIdColumn(supabase, 'tasks') : false;
+  const metadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : (existing?.metadata || {});
+  const payload = {
+    entry_id: body.entry_id !== undefined ? (body.entry_id || body.entryId || null) : (existing?.entry_id || null),
+    household_id: householdId,
+    user_id: existing?.user_id || userId,
+    title: body.title !== undefined ? String(body.title || '').trim() : (existing?.title || ''),
+    description: body.description !== undefined ? body.description : (existing?.description || ''),
+    status: status(body.status, existing?.status || 'inbox'),
+    priority: priority(body.priority, existing?.priority || 'normal'),
+    due_at: body.due_at !== undefined ? (body.due_at || body.dueAt || null) : (existing?.due_at || null),
+    start_at: body.start_at !== undefined ? (body.start_at || body.startAt || null) : (existing?.start_at || null),
+    duration_minutes: body.duration_minutes !== undefined ? (body.duration_minutes ?? body.durationMinutes ?? null) : (existing?.duration_minutes ?? null),
+    recurrence_rule: body.recurrence_rule !== undefined ? (body.recurrence_rule || body.recurrenceRule || null) : (existing?.recurrence_rule || null),
+    project_id: body.project_id !== undefined ? (body.project_id || body.projectId || null) : (existing?.project_id || null),
+    person_id: body.person_id !== undefined ? (body.person_id || body.personId || null) : (existing?.person_id || null),
+    goal_id: body.goal_id !== undefined ? (body.goal_id || body.goalId || null) : (existing?.goal_id || null),
+    completed_at: body.completed_at !== undefined ? (body.completed_at || body.completedAt || null) : (existing?.completed_at || null),
+    metadata,
+  };
+  applyClientIdentity(payload, body, clientId, supportsClientId);
+  if (!payload.title) return { error: 'Task title is required.' };
+  if (existing) {
+    const result = await supabase.from('tasks').update(payload).eq('id', existing.id).select().single();
+    return { data: result.data, error: result.error };
+  }
+  const result = await upsertByClientId(supabase, 'tasks', householdId, clientId, payload);
+  return { data: result.data, error: result.error };
 }
 
 export default async function handler(req, res) {
-  const supabase = getSupabaseServerClient();
-
-  if (!supabase) {
-    return res.status(503).json({
-      error: 'Supabase server configuration is missing.',
-    });
-  }
-
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { supabase, user } = auth;
+  const q = req.query || {};
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const householdId = q.household_id || q.householdId || body.household_id || body.householdId;
+  const access = await requireHouseholdMembership(supabase, user.id, householdId);
+  if (access.error) return fail(res, access.status, access.error);
   if (req.method === 'GET') {
-    const { household_id, user_id, status } = req.query || {};
-
-    let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
-
-    if (household_id) query = query.eq('household_id', household_id);
-    if (user_id) query = query.eq('user_id', user_id);
-    if (status) query = query.eq('status', status);
-
-    const { data, error } = await query;
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    return res.status(200).json({ tasks: data || [] });
+    let request = supabase.from('tasks').select('*').eq('household_id', householdId).order('created_at', { ascending: false });
+    if (q.status) request = request.eq('status', status(q.status));
+    const result = await request;
+    if (result.error) return fail(res, 500, result.error.message);
+    return res.status(200).json({ tasks: (result.data || []).filter((row) => !isPrivate(row) || row.user_id === user.id) });
   }
-
-  if (req.method === 'POST') {
-    const body = req.body || {};
-    const title = String(body.title || '').trim();
-
-    if (!title) {
-      return res.status(400).json({ error: 'Task title is required.' });
+  if (req.method === 'POST' || req.method === 'PUT') {
+    let existing = null;
+    if (req.method === 'PUT') {
+      if (!body.id) return fail(res, 400, 'Task id is required.');
+      const found = await findRecordForMutation(supabase, 'tasks', householdId, {
+        id: body.id,
+        clientId: body.client_id || body.clientId,
+      });
+      if (found.error) return fail(res, 500, found.error.message);
+      if (!found.data) return fail(res, 404, 'Task not found.');
+      if (isPrivate(found.data) && found.data.user_id !== user.id) return fail(res, 403, 'You do not have access to this task.');
+      existing = found.data;
+    } else {
+      const found = await findByClientId(supabase, 'tasks', householdId, bodyClientId(body));
+      if (found.error) return fail(res, 500, found.error.message);
+      if (found.data && isPrivate(found.data) && found.data.user_id !== user.id) return fail(res, 403, 'You do not have access to this task.');
+      existing = found.data;
     }
-
-    const payload = {
-      entry_id: body.entry_id || null,
-      household_id: body.household_id || null,
-      user_id: body.user_id || null,
-      title,
-      description: body.description || '',
-      status: normaliseStatus(body.status),
-      priority: normalisePriority(body.priority),
-      due_at: body.due_at || body.dueAt || null,
-      start_at: body.start_at || body.startAt || null,
-      duration_minutes: body.duration_minutes ?? body.durationMinutes ?? null,
-      recurrence_rule: body.recurrence_rule || body.recurrenceRule || null,
-      project_id: body.project_id || body.projectId || null,
-      person_id: body.person_id || body.personId || null,
-      goal_id: body.goal_id || body.goalId || null,
-      metadata: body.metadata || {},
-    };
-
-    const { data, error } = await supabase
-      .from('tasks')
-      .insert([payload])
-      .select()
-      .single();
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    return res.status(201).json({ task: data });
+    const result = await saveTask(supabase, householdId, user.id, body, existing);
+    if (result.error) return fail(res, existing ? 500 : 400, result.error.message || result.error);
+    return res.status(existing ? 200 : 201).json({ task: result.data });
   }
-
-  if (req.method === 'PUT') {
-    const body = req.body || {};
-    const id = body.id;
-
-    if (!id) {
-      return res.status(400).json({ error: 'Task id is required.' });
-    }
-
-    const payload = {
-      title: body.title ? String(body.title).trim() : undefined,
-      description: body.description !== undefined ? body.description : undefined,
-      status: body.status ? normaliseStatus(body.status) : undefined,
-      priority: body.priority ? normalisePriority(body.priority) : undefined,
-      due_at: body.due_at !== undefined ? (body.due_at || null) : undefined,
-      start_at: body.start_at !== undefined ? (body.start_at || null) : undefined,
-      duration_minutes: body.duration_minutes !== undefined ? (body.duration_minutes ?? null) : undefined,
-      recurrence_rule: body.recurrence_rule !== undefined ? (body.recurrence_rule || null) : undefined,
-      project_id: body.project_id !== undefined ? (body.project_id || null) : undefined,
-      person_id: body.person_id !== undefined ? (body.person_id || null) : undefined,
-      goal_id: body.goal_id !== undefined ? (body.goal_id || null) : undefined,
-      completed_at: body.completed_at !== undefined ? (body.completed_at || null) : undefined,
-      metadata: body.metadata !== undefined ? body.metadata : undefined,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await supabase
-      .from('tasks')
-      .update(payload)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    return res.status(200).json({ task: data });
+  if (req.method === 'DELETE') {
+    const id = q.id || body.id;
+    const clientId = q.client_id || q.clientId || body.client_id || body.clientId;
+    if (!id && !clientId) return fail(res, 400, 'Task id or client_id is required.');
+    const found = await findRecordForMutation(supabase, 'tasks', householdId, { id, clientId });
+    if (found.error) return fail(res, 500, found.error.message);
+    if (!found.data) return res.status(200).json({ ok: true, missing: true });
+    if (isPrivate(found.data) && found.data.user_id !== user.id) return fail(res, 403, 'You do not have access to this task.');
+    const deleted = await supabase.from('tasks').delete().eq('id', found.data.id).eq('household_id', householdId);
+    if (deleted.error) return fail(res, 500, deleted.error.message);
+    return res.status(200).json({ ok: true });
   }
-
   return res.status(405).json({ error: 'Method not allowed' });
 }

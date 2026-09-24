@@ -1,6 +1,10 @@
+import { requireUser } from './lib/auth.js';
+
 export default async function handler(req, res) {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const { query, items } = req.body;
+  const { query, items } = req.body || {};
   if (!query || !query.trim()) return res.status(400).json({ error: 'Missing query' });
 
   const context = (items || []).slice(0, 60)

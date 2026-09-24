@@ -1,46 +1,41 @@
-import { getSupabaseServerClient } from './lib/supabase.js';
+import { requireHouseholdMembership, requireUser } from './lib/auth.js';
+
+const fail = (res, code, error) => res.status(code).json({ error: error || 'Request failed.' });
 
 export default async function handler(req, res) {
-  const supabase = getSupabaseServerClient();
-
-  if (!supabase) {
-    return res.status(503).json({ error: 'Supabase server configuration is missing.' });
-  }
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { supabase, user } = auth;
+  const query = req.query || {};
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const householdId = query.household_id || query.householdId || body.household_id || body.householdId;
+  const access = await requireHouseholdMembership(supabase, user.id, householdId);
+  if (access.error) return fail(res, access.status, access.error);
 
   if (req.method === 'GET') {
-    const { household_id, user_id } = req.query || {};
-    let query = supabase.from('household_members').select('*').order('created_at', { ascending: false });
-
-    if (household_id) query = query.eq('household_id', household_id);
-    if (user_id) query = query.eq('user_id', user_id);
-
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(200).json({ members: data || [] });
+    const result = await supabase.from('household_members').select('*').eq('household_id', householdId).order('created_at', { ascending: false });
+    if (result.error) return fail(res, 500, result.error.message);
+    return res.status(200).json({ members: result.data || [] });
   }
 
   if (req.method === 'POST') {
-    const body = req.body || {};
-    const householdId = body.household_id || body.householdId;
-    const userId = body.user_id || body.userId;
-    const role = body.role || 'member';
-
-    if (!householdId || !userId) {
-      return res.status(400).json({ error: 'household_id and user_id are required.' });
+    const targetUser = body.user_id || body.userId || user.id;
+    const requestedRole = body.role || 'member';
+    if (!['member', 'admin', 'owner'].includes(requestedRole)) return fail(res, 400, 'Invalid member role.');
+    if (targetUser === user.id) {
+      if (requestedRole !== access.membership.role) return fail(res, 403, 'You cannot change your own role.');
+    } else if (!['owner', 'admin'].includes(access.membership.role)) {
+      return fail(res, 403, 'Only an owner or admin can add another member.');
     }
-
-    const { data, error } = await supabase
-      .from('household_members')
-      .upsert(
-        { household_id: householdId, user_id: userId, role },
-        { onConflict: 'household_id,user_id' },
-      )
-      .select()
-      .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(201).json({ membership: data });
+    if (requestedRole === 'owner' && access.membership.role !== 'owner') {
+      return fail(res, 403, 'Only an owner can assign the owner role.');
+    }
+    const membership = await supabase.from('household_members').upsert(
+      { household_id: householdId, user_id: targetUser, role: requestedRole },
+      { onConflict: 'household_id,user_id' },
+    ).select().single();
+    if (membership.error) return fail(res, 500, membership.error.message);
+    return res.status(201).json({ membership: membership.data });
   }
-
   return res.status(405).json({ error: 'Method not allowed' });
 }

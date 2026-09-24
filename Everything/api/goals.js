@@ -1,45 +1,86 @@
-import { getSupabaseServerClient } from './lib/supabase.js';
+import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
+
+const fail = (res, code, error) => res.status(code).json({ error: error || 'Request failed.' });
+const isPrivate = (row) => row?.visibility === 'private' || row?.metadata?.scope === 'private';
+const allowedStatus = new Set(['active', 'paused', 'completed', 'archived']);
+
+async function saveGoal(supabase, householdId, userId, body, existing) {
+  const clientId = existing?.client_id || bodyClientId(body) || null;
+  const supportsClientId = clientId ? await hasClientIdColumn(supabase, 'goals') : false;
+  const metadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : (existing?.metadata || {});
+  const done = body.done !== undefined ? Boolean(body.done) : existing?.status === 'completed';
+  const statusValue = done
+    ? 'completed'
+    : body.done === false
+      ? 'active'
+      : allowedStatus.has(body.status)
+        ? body.status
+        : (existing?.status || 'active');
+  const payload = {
+    household_id: householdId,
+    user_id: existing?.user_id || userId,
+    title: body.title !== undefined ? String(body.title || '').trim() : (existing?.title || ''),
+    description: body.description !== undefined ? body.description : (existing?.description || ''),
+    status: statusValue,
+    metadata,
+  };
+  applyClientIdentity(payload, body, clientId, supportsClientId);
+  if (!payload.title) return { error: 'Goal title is required.' };
+  if (existing) {
+    const result = await supabase.from('goals').update(payload).eq('id', existing.id).select().single();
+    return { data: result.data, error: result.error };
+  }
+  const result = await upsertByClientId(supabase, 'goals', householdId, clientId, payload);
+  return { data: result.data, error: result.error };
+}
 
 export default async function handler(req, res) {
-  const supabase = getSupabaseServerClient();
-
-  if (!supabase) {
-    return res.status(503).json({ error: 'Supabase server configuration is missing.' });
-  }
-
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { supabase, user } = auth;
+  const q = req.query || {};
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const householdId = q.household_id || q.householdId || body.household_id || body.householdId;
+  const access = await requireHouseholdMembership(supabase, user.id, householdId);
+  if (access.error) return fail(res, access.status, access.error);
   if (req.method === 'GET') {
-    const { household_id, user_id } = req.query || {};
-    let query = supabase.from('goals').select('*').order('created_at', { ascending: false });
-    if (household_id) query = query.eq('household_id', household_id);
-    if (user_id) query = query.eq('user_id', user_id);
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(200).json({ goals: data || [] });
+    const result = await supabase.from('goals').select('*').eq('household_id', householdId).order('created_at', { ascending: false });
+    if (result.error) return fail(res, 500, result.error.message);
+    return res.status(200).json({ goals: (result.data || []).filter((row) => !isPrivate(row) || row.user_id === user.id) });
   }
-
-  if (req.method === 'POST') {
-    const body = req.body || {};
-    const title = String(body.title || '').trim();
-    if (!title) return res.status(400).json({ error: 'Goal title is required.' });
-
-    const payload = {
-      household_id: body.household_id || null,
-      user_id: body.user_id || null,
-      title,
-      description: body.description || '',
-      status: body.status || 'active',
-      metadata: body.metadata || {},
-    };
-
-    const { data, error } = await supabase
-      .from('goals')
-      .insert([payload])
-      .select()
-      .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(201).json({ goal: data });
+  if (req.method === 'POST' || req.method === 'PUT') {
+    let existing = null;
+    if (req.method === 'PUT') {
+      if (!body.id) return fail(res, 400, 'Goal id is required.');
+      const found = await findRecordForMutation(supabase, 'goals', householdId, {
+        id: body.id,
+        clientId: body.client_id || body.clientId,
+      });
+      if (found.error) return fail(res, 500, found.error.message);
+      if (!found.data) return fail(res, 404, 'Goal not found.');
+      if (isPrivate(found.data) && found.data.user_id !== user.id) return fail(res, 403, 'You do not have access to this goal.');
+      existing = found.data;
+    } else {
+      const found = await findByClientId(supabase, 'goals', householdId, bodyClientId(body));
+      if (found.error) return fail(res, 500, found.error.message);
+      if (found.data && isPrivate(found.data) && found.data.user_id !== user.id) return fail(res, 403, 'You do not have access to this goal.');
+      existing = found.data;
+    }
+    const result = await saveGoal(supabase, householdId, user.id, body, existing);
+    if (result.error) return fail(res, existing ? 500 : 400, result.error.message || result.error);
+    return res.status(existing ? 200 : 201).json({ goal: result.data });
   }
-
+  if (req.method === 'DELETE') {
+    const id = q.id || body.id;
+    const clientId = q.client_id || q.clientId || body.client_id || body.clientId;
+    if (!id && !clientId) return fail(res, 400, 'Goal id or client_id is required.');
+    const found = await findRecordForMutation(supabase, 'goals', householdId, { id, clientId });
+    if (found.error) return fail(res, 500, found.error.message);
+    if (!found.data) return res.status(200).json({ ok: true, missing: true });
+    if (isPrivate(found.data) && found.data.user_id !== user.id) return fail(res, 403, 'You do not have access to this goal.');
+    const deleted = await supabase.from('goals').delete().eq('id', found.data.id).eq('household_id', householdId);
+    if (deleted.error) return fail(res, 500, deleted.error.message);
+    return res.status(200).json({ ok: true });
+  }
   return res.status(405).json({ error: 'Method not allowed' });
 }
