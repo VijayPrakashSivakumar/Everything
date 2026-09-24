@@ -8,8 +8,8 @@
 -- How to use it
 --   1. Enable the extensions: Supabase → Database → Extensions → pg_cron and pg_net
 --      (or just run the create extension lines below).
---   2. Replace YOUR-PROJECT and YOUR_CRON_SECRET below with your values.
---      If you have not set CRON_SECRET in Vercel, delete the Authorization header.
+--   2. This project uses https://everything-app-zeta.vercel.app and does not currently
+--      use CRON_SECRET, so the request below intentionally has no Authorization header.
 --   3. Run this whole file in the Supabase SQL editor. Safe to re-run: the old schedule
 --      with the same name is removed first.
 --
@@ -34,11 +34,8 @@ select cron.schedule(
   '* * * * *',
   $$
   select net.http_post(
-    url := 'https://YOUR-PROJECT.vercel.app/api/send-due-notifications',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer YOUR_CRON_SECRET'
-    ),
+    url := 'https://everything-app-zeta.vercel.app/api/send-due-notifications',
+    headers := jsonb_build_object('Content-Type', 'application/json'),
     body := '{}'::jsonb
   );
   $$
