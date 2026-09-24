@@ -216,11 +216,12 @@
     <div class="app">
       <div class="sidebar" id="sidebar">
         <div class="brand">
-          <svg
-            class="brand-mark"
-            viewBox="0 0 40 24"
-            xmlns="http://www.w3.org/2000/svg"
-          >
+          <div class="brand-mark-shell">
+            <svg
+              class="brand-mark"
+              viewBox="0 0 40 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
             <defs>
               <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stop-color="#4361ee" />
@@ -234,12 +235,34 @@
               stroke-width="4.5"
               stroke-linecap="round"
             />
-          </svg>
+            </svg>
+          </div>
           <div class="brand-name">EVERYTHING</div>
+          <button
+            class="sidebar-collapse"
+            onclick="toggleSidebarCollapse()"
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            ‹
+          </button>
         </div>
+        <div class="sidebar-caption">MENU</div>
         <div class="nav" id="navList"></div>
-        <button class="capture-btn" onclick="openCapture()">+ Capture</button>
+        <button class="capture-btn" onclick="openCapture()">
+          <span class="capture-icon">＋</span><span class="capture-label">Capture</span>
+        </button>
+        <button class="sidebar-profile" onclick="switchView('settings')" title="Open settings">
+          <span class="sidebar-profile-avatar" id="sidebarProfileInitial">V</span>
+          <span class="sidebar-profile-copy"><strong id="sidebarProfileName">Account</strong><small>Settings</small></span>
+        </button>
       </div>
+      <div
+        class="sidebar-backdrop"
+        id="sidebarBackdrop"
+        onclick="closeSidebar()"
+        aria-hidden="true"
+      ></div>
 
       <div class="main">
         <div class="topbar">
@@ -250,6 +273,14 @@
             id="hamburger"
           >
             ☰
+          </button>
+          <button
+            class="icon-btn mobile-capture-btn"
+            onclick="openCapture()"
+            title="Capture"
+            aria-label="Capture"
+          >
+            ＋
           </button>
           <div class="search-box" onclick="openAsk()">
             <span>🔍</span>
@@ -442,7 +473,7 @@
             </div>
 
             <div class="grid-2">
-              <div>
+              <div id="dashboardPrimaryColumn">
                 <div class="card">
                   <div class="card-head">
                     <h3>Today &amp; upcoming</h3>
@@ -452,7 +483,7 @@
                   </div>
                   <div id="todayList" class="today-agenda"></div>
                 </div>
-                <div class="nudge">
+                <div class="nudge dashboard-movable" id="nudgeCard" data-dashboard-section="nudge" draggable="true">
                   <div class="nudge-text">
                     <b>One thing to consider</b>
                     <div class="nudge-sub">
@@ -460,50 +491,50 @@
                       spend 20 minutes on it today?
                     </div>
                   </div>
-                  <button class="btn-small" onclick="startNudge()">
-                    Start now
-                  </button>
-                </div>
-              </div>
-              <div>
-                <div
-                  class="hero-card"
-                  id="heroQuoteCard"
-                  style="position: relative"
-                >
-                  <div id="heroQuoteText"></div>
-                  <div style="display: flex; gap: 10px; margin-top: 12px">
-                    <button
-                      onclick="shuffleQuote()"
-                      style="
-                        background: rgba(255, 255, 255, 0.2);
-                        border: none;
-                        color: #fff;
-                        padding: 5px 12px;
-                        border-radius: 6px;
-                        font-size: 12px;
-                        cursor: pointer;
-                      "
-                    >
-                      🔄 New quote
+                  <div class="nudge-actions">
+                    <button class="btn-small" onclick="startNudge()">
+                      Start now
                     </button>
                     <button
-                      onclick="saveQuoteToMemory(this)"
-                      style="
-                        background: rgba(255, 255, 255, 0.2);
-                        border: none;
-                        color: #fff;
-                        padding: 5px 12px;
-                        border-radius: 6px;
-                        font-size: 12px;
-                        cursor: pointer;
-                      "
+                      class="nudge-dismiss"
+                      onclick="dismissNudge()"
+                      title="Dismiss for today"
+                      aria-label="Dismiss for today"
                     >
-                      💾 Save
+                      ×
                     </button>
                   </div>
                 </div>
-                <div class="card">
+              </div>
+              <div id="dashboardFeatureColumn">
+                <div
+                  class="hero-card"
+                  id="heroQuoteCard"
+                  data-dashboard-section="quote"
+                  draggable="true"
+                  style="position: relative"
+                >
+                  <div id="heroQuoteText"></div>
+                  <div class="quote-actions">
+                    <button
+                      class="quote-action"
+                      onclick="shuffleQuote()"
+                      title="Show another quote"
+                    >
+                      <span class="quote-action-icon" aria-hidden="true">↻</span>
+                      <span>New quote</span>
+                    </button>
+                    <button
+                      class="quote-action"
+                      onclick="saveQuoteToMemory(this)"
+                      title="Save quote to memory"
+                    >
+                      <span class="quote-action-icon" aria-hidden="true">✦</span>
+                      <span>Save</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="card dashboard-movable" id="quickCaptureCard" data-dashboard-section="quick" draggable="true">
                   <div class="card-head">
                     <h3>What do you want to remember?</h3>
                   </div>
@@ -1751,6 +1782,7 @@
         </div>
       </div>
     </div>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <script src="script.js"></script>
   </body>
 </html>

@@ -752,6 +752,10 @@ async function loadProfile() {
     const avatarInitial = document.getElementById("avatarInitial");
     if (avatarInitial)
       avatarInitial.textContent = displayName.charAt(0).toUpperCase();
+    const sidebarName = document.getElementById("sidebarProfileName");
+    const sidebarInitial = document.getElementById("sidebarProfileInitial");
+    if (sidebarName) sidebarName.textContent = displayName;
+    if (sidebarInitial) sidebarInitial.textContent = displayName.charAt(0).toUpperCase();
   }
   updateAvatarDisplay(profile.full_name, profile.avatar_url);
 }
@@ -824,18 +828,18 @@ function setThemeFromSelect() {
 
 /* ---------- Data model ---------- */
 const NAV = [
-  { id: "today", icon: "🏠", label: "Today" },
-  { id: "inbox", icon: "📥", label: "Inbox", badgeKey: "inboxCount" },
-  { id: "tasks", icon: "✅", label: "Tasks", badgeKey: "taskCount" },
-  { id: "schedule", icon: "📅", label: "Schedule" },
-  { id: "memory", icon: "🧠", label: "Memory" },
-  { id: "people", icon: "👥", label: "People" },
-  { id: "projects", icon: "📁", label: "Projects" },
-  { id: "goals", icon: "🎯", label: "Goals" },
-  { id: "reports", icon: "📊", label: "Reports" },
-  { id: "insights", icon: "✨", label: "Insights" },
-  { id: "settings", icon: "⚙️", label: "Settings" },
-  { id: "logout", icon: "↪️", label: "Logout", divider: true },
+  { id: "today", icon: "layout-dashboard", label: "Dashboard" },
+  { id: "inbox", icon: "inbox", label: "Inbox", badgeKey: "inboxCount" },
+  { id: "tasks", icon: "check-square-2", label: "Tasks", badgeKey: "taskCount" },
+  { id: "schedule", icon: "calendar-days", label: "Schedule" },
+  { id: "memory", icon: "brain", label: "Memory" },
+  { id: "people", icon: "users", label: "People" },
+  { id: "projects", icon: "folder-kanban", label: "Projects" },
+  { id: "goals", icon: "target", label: "Goals" },
+  { id: "reports", icon: "chart-no-axes-combined", label: "Reports" },
+  { id: "insights", icon: "sparkles", label: "Insights" },
+  { id: "settings", icon: "settings-2", label: "Settings" },
+  { id: "logout", icon: "log-out", label: "Logout", divider: true },
 ];
 
 let state = null;
@@ -934,6 +938,10 @@ function renderQuote() {
   if (!el) return;
   if (currentQuoteIndex === null) currentQuoteIndex = getDailyQuoteIndex();
   el.textContent = MOTIVATION_QUOTES[currentQuoteIndex];
+  el.style.animation = "none";
+  requestAnimationFrame(() => {
+    el.style.animation = "quote-arrive 420ms ease both";
+  });
 }
 
 function shuffleQuote() {
@@ -1403,10 +1411,11 @@ function renderNav() {
     if (item.id === "inbox") badge = state.items.length;
     if (item.id === "tasks")
       badge = state.items.filter((i) => i.kind === "task" && !i.done).length;
-    el.innerHTML = `<div class="left"><span class="nav-icon">${item.icon}</span>${item.label}</div>${badge ? `<span class="nav-badge">${badge}</span>` : ""}`;
+    el.innerHTML = `<div class="left"><span class="nav-icon"><i data-lucide="${item.icon}"></i></span><span class="nav-label">${item.label}</span></div>${badge ? `<span class="nav-badge">${badge}</span>` : ""}`;
     el.onclick = () => switchView(item.id);
     nav.appendChild(el);
   });
+  if (window.lucide) window.lucide.createIcons();
 }
 
 let activeView = "today";
@@ -1418,8 +1427,7 @@ function switchView(id) {
     .forEach((v) => v.classList.remove("active"));
   document.getElementById("view-" + id).classList.add("active");
   renderNav();
-  if (document.getElementById("sidebar").classList.contains("open"))
-    toggleSidebar();
+  closeSidebar();
   if (id === "schedule") renderCalendar();
   if (id === "reports") renderReports();
   if (id === "projects") renderProjects();
@@ -1431,7 +1439,30 @@ function switchView(id) {
 }
 
 function toggleSidebar() {
-  document.getElementById("sidebar").classList.toggle("open");
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  const isOpen = sidebar.classList.toggle("open");
+  if (backdrop) backdrop.classList.toggle("visible", isOpen);
+}
+
+function closeSidebar() {
+  document.getElementById("sidebar").classList.remove("open");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (backdrop) backdrop.classList.remove("visible");
+}
+
+function toggleSidebarCollapse() {
+  const sidebar = document.getElementById("sidebar");
+  sidebar.classList.toggle("collapsed");
+  localStorage.setItem(
+    "everything_sidebar_collapsed",
+    sidebar.classList.contains("collapsed") ? "1" : "0",
+  );
+}
+
+function restoreSidebarCollapse() {
+  if (localStorage.getItem("everything_sidebar_collapsed") === "1")
+    document.getElementById("sidebar").classList.add("collapsed");
 }
 
 /* ---------- Rendering ---------- */
@@ -3121,6 +3152,113 @@ async function startNudge() {
   switchView("tasks");
 }
 
+function dismissNudge() {
+  const today = new Date().toISOString().slice(0, 10);
+  localStorage.setItem("everything_nudge_dismissed", today);
+  const card = document.getElementById("nudgeCard");
+  if (card) card.style.display = "none";
+}
+
+function restoreNudge() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (localStorage.getItem("everything_nudge_dismissed") !== today) return;
+  const card = document.getElementById("nudgeCard");
+  if (card) card.style.display = "none";
+}
+
+let draggedDashboardSection = null;
+let dashboardHoldTimer = null;
+let dashboardPointerDragging = false;
+
+function saveDashboardLayout() {
+  const layout = [...document.querySelectorAll("[data-dashboard-section]")].map(
+    (section) => ({
+      id: section.dataset.dashboardSection,
+      parent: section.parentElement.id,
+      index: [...section.parentElement.children].indexOf(section),
+    }),
+  );
+  localStorage.setItem("everything_dashboard_layout", JSON.stringify(layout));
+}
+
+function restoreDashboardLayout() {
+  let layout = [];
+  try {
+    layout = JSON.parse(localStorage.getItem("everything_dashboard_layout") || "[]");
+  } catch (error) {
+    layout = [];
+  }
+  layout.forEach((entry) => {
+    const section = document.querySelector(`[data-dashboard-section="${entry.id}"]`);
+    const parent = document.getElementById(entry.parent);
+    if (!section || !parent) return;
+    const siblings = [...parent.children].filter(
+      (child) => child !== section && child.dataset.dashboardSection,
+    );
+    parent.insertBefore(section, siblings[entry.index] || null);
+  });
+}
+
+function enableDashboardDragging() {
+  document.querySelectorAll("[data-dashboard-section]").forEach((section) => {
+    section.addEventListener("dragstart", (event) => {
+      draggedDashboardSection = section;
+      section.classList.add("dashboard-dragging");
+      event.dataTransfer.effectAllowed = "move";
+    });
+    section.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      if (!draggedDashboardSection || draggedDashboardSection === section) return;
+      const before = event.clientY < section.getBoundingClientRect().top + section.offsetHeight / 2;
+      section.parentElement.insertBefore(
+        draggedDashboardSection,
+        before ? section : section.nextElementSibling,
+      );
+    });
+    section.addEventListener("dragend", () => {
+      section.classList.remove("dashboard-dragging");
+      draggedDashboardSection = null;
+      saveDashboardLayout();
+    });
+
+    section.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button, input, a")) return;
+      dashboardHoldTimer = setTimeout(() => {
+        dashboardPointerDragging = true;
+        draggedDashboardSection = section;
+        section.classList.add("dashboard-dragging");
+      }, 350);
+    });
+    section.addEventListener("pointermove", (event) => {
+      if (!dashboardPointerDragging || draggedDashboardSection !== section) return;
+      event.preventDefault();
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(
+        "[data-dashboard-section]",
+      );
+      if (!target || target === section) return;
+      const before = event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
+      target.parentElement.insertBefore(
+        section,
+        before ? target : target.nextElementSibling,
+      );
+    });
+    section.addEventListener("pointerup", () => {
+      clearTimeout(dashboardHoldTimer);
+      if (!dashboardPointerDragging) return;
+      section.classList.remove("dashboard-dragging");
+      dashboardPointerDragging = false;
+      draggedDashboardSection = null;
+      saveDashboardLayout();
+    });
+    section.addEventListener("pointercancel", () => {
+      clearTimeout(dashboardHoldTimer);
+      dashboardPointerDragging = false;
+      draggedDashboardSection = null;
+      section.classList.remove("dashboard-dragging");
+    });
+  });
+}
+
 /* ---------- Ask / Search ---------- */
 function openAsk() {
   document.getElementById("askOverlay").classList.add("open");
@@ -4249,8 +4387,12 @@ if (window.claude) {
   if (state.theme)
     document.documentElement.setAttribute("data-theme", state.theme);
 }
+restoreSidebarCollapse();
 updateNotifBtn();
 renderQuote();
+restoreNudge();
+restoreDashboardLayout();
+enableDashboardDragging();
 initShortcuts();
 applyLaunchShortcut();
 if ("serviceWorker" in navigator) {
@@ -4264,3 +4406,4 @@ if ("serviceWorker" in navigator) {
 }
 initReminderDelivery();
 setInterval(renderToday, 60000);
+setInterval(shuffleQuote, 60000);
