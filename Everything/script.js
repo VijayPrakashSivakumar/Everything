@@ -213,6 +213,7 @@ let sbUser = null;
 let sbChannel = null;
 let syncReadyPromise = null;
 let hasCompletedAt = false;
+let hasReminderColumns = false;
 
 function itemToRow(item) {
   const row = {
@@ -240,6 +241,18 @@ function itemToRow(item) {
     row.completed_at = item.completedAt
       ? new Date(item.completedAt).toISOString()
       : null;
+  // Reminder delivery bookkeeping (supabase/migrations/004). reminder_at is the exact
+  // time the server cron pushes, so it mirrors the local snooze/due decision.
+  if (hasReminderColumns) {
+    const reminderTime = itemReminderTime(item);
+    row.reminder_at = reminderTime ? new Date(reminderTime).toISOString() : null;
+    row.snoozed_until = item.snoozedUntil
+      ? new Date(item.snoozedUntil).toISOString()
+      : null;
+    row.notified_at = item.notifiedAt
+      ? new Date(item.notifiedAt).toISOString()
+      : null;
+  }
   return row;
 }
 function rowToItem(row) {
@@ -259,6 +272,8 @@ function rowToItem(row) {
     created: Number(row.created),
     done: row.done,
     notified: row.notified,
+    notifiedAt: row.notified_at ? new Date(row.notified_at).getTime() : "",
+    snoozedUntil: row.snoozed_until ? new Date(row.snoozed_until).getTime() : "",
     mediaUrl: row.media_url,
     completedAt: row.completed_at ? new Date(row.completed_at).getTime() : "",
   };
@@ -276,10 +291,23 @@ async function detectCompletedAtColumn() {
   }
 }
 
+/* items.reminder_at / snoozed_until / notified_at arrive with
+   supabase/migrations/004. Until then reminders still work: the app keeps delivering
+   them locally and through the service worker, only the closed-app push is skipped. */
+async function detectReminderColumns() {
+  try {
+    const { error } = await sb.from("items").select("reminder_at").limit(1);
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function startSupabaseSync(userId) {
   await ensureHousehold(userId);
   sbUser = userId;
   hasCompletedAt = await detectCompletedAtColumn();
+  hasReminderColumns = await detectReminderColumns();
   const { data, error } = await sb
     .from("items")
     .select("*")
@@ -289,7 +317,19 @@ async function startSupabaseSync(userId) {
     state.items = data.map(rowToItem);
     if (!state.projects) state.projects = [];
     if (!state.goals) state.goals = [];
+    state.items.forEach((item) => {
+      if (item.notified) rememberNotified(item.id);
+    });
     renderAll();
+    runReminderCheck("sync");
+  }
+
+  // This device may already be allowed to notify but have lost its push subscription
+  // (re-install, storage cleared, browser rotated the endpoint). Re-register it quietly.
+  if (notificationSupported() && Notification.permission === "granted") {
+    ensurePushSubscription({ requestPermission: false }).then(() =>
+      renderNotificationStatus(),
+    );
   }
   if (sbChannel) sb.removeChannel(sbChannel);
   sbChannel = sb
@@ -305,13 +345,17 @@ async function startSupabaseSync(userId) {
       (payload) => {
         if (payload.eventType === "DELETE") {
           state.items = state.items.filter((i) => i.id !== payload.old.id);
+          cancelReminderFor(payload.old.id);
         } else {
           const updated = rowToItem(payload.new);
           const idx = state.items.findIndex((i) => i.id === updated.id);
           if (idx >= 0) state.items[idx] = updated;
           else state.items.unshift(updated);
+          // The cron (or another device) already delivered this one — stay quiet here.
+          if (updated.notified) rememberNotified(updated.id);
         }
         renderAll();
+        refreshReminderSchedule();
       },
     )
     .subscribe();
@@ -1175,6 +1219,9 @@ async function dbSaveItem(item) {
     save();
     await persistEntryToBackend(item);
   }
+  // Every mutation funnels through here (create, edit, complete, snooze, recurrence), so
+  // this is the single place that keeps the reminder schedule in step with the data.
+  refreshReminderSchedule();
   renderAll();
 }
 async function dbDeleteItem(id) {
@@ -2443,7 +2490,12 @@ async function saveEdit() {
 
   const editDueVal = document.getElementById("editDueDate").value;
   const newDueDate = editDueVal ? new Date(editDueVal).toISOString() : "";
-  if (newDueDate !== item.dueDate) item.notified = false;
+  if (newDueDate !== item.dueDate) {
+    // Re-dating re-arms the reminder on this device as well as on the server.
+    item.notified = false;
+    item.snoozedUntil = "";
+    forgetNotified(item.id);
+  }
   item.dueDate = newDueDate;
   item.recurrence = document.getElementById("editRecurrence").value;
   if (item.dueDate) item.due = formatDueDisplay(item.dueDate);
@@ -2470,6 +2522,8 @@ function applyDueToItem(item, date) {
   item.dueDate = date ? date.toISOString() : "";
   item.due = date ? formatDueDisplay(item.dueDate) : "";
   item.notified = false;
+  item.snoozedUntil = "";
+  forgetNotified(item.id);
   return item;
 }
 
@@ -3464,6 +3518,103 @@ let notifiedIds = new Set(
   JSON.parse(localStorage.getItem("notified_ids") || "[]"),
 );
 
+/* ============================================================
+   REMINDER DELIVERY ENGINE
+   A reminder has to reach the user in every state:
+     * app open            -> an exact timer here, shown through the service worker
+     * app closed + online -> /api/send-due-notifications pushes to every device
+     * app closed + offline-> sw.js keeps its own persisted schedule and fires it
+     * back online         -> whatever was missed arrives marked "Missed"
+   items.notified / notified_at / snoozed_until keep the push and the local path from
+   delivering the same reminder twice.
+   ============================================================ */
+const REMINDER_GRACE_MS = 12 * 60 * 60 * 1000; // deliver reminders missed up to 12h ago
+const REMINDER_LOOKAHEAD_MS = 21 * 24 * 60 * 60 * 1000; // page timers; sw.js holds the rest
+const MAX_TIMER_MS = 2147483000;
+const SNOOZE_MINUTES = 10;
+
+let reminderTimers = new Map();
+let remindersInFlight = new Set();
+let reminderSyncTimer = null;
+let swRegistration = null;
+let notificationLog = [];
+
+function notificationSupported() {
+  return "Notification" in window;
+}
+
+/* Safe access while the data layer is still booting (state is null until sync/login). */
+function currentItems() {
+  return (state && state.items) || [];
+}
+
+/* When should this item remind the user? A snooze always wins, and a delivered reminder
+   stays quiet until it is snoozed or re-dated. */
+function itemReminderTime(item) {
+  if (!item || item.done) return null;
+  if (item.snoozedUntil) return item.snoozedUntil;
+  if (item.notified || notifiedIds.has(item.id)) return null;
+  if (!item.dueDate) return null;
+  const time = new Date(item.dueDate).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function rememberNotified(id) {
+  const key = String(id);
+  if (notifiedIds.has(key)) return;
+  notifiedIds.add(key);
+  localStorage.setItem("notified_ids", JSON.stringify([...notifiedIds]));
+}
+
+function forgetNotified(id) {
+  const key = String(id);
+  if (!notifiedIds.delete(key)) return;
+  localStorage.setItem("notified_ids", JSON.stringify([...notifiedIds]));
+}
+
+async function serviceWorkerRegistration() {
+  if (!("serviceWorker" in navigator)) return null;
+  if (swRegistration && swRegistration.active) return swRegistration;
+  try {
+    swRegistration = await navigator.serviceWorker.ready;
+  } catch (e) {
+    swRegistration = null;
+  }
+  return swRegistration;
+}
+
+function postToServiceWorker(message) {
+  if (!("serviceWorker" in navigator)) return;
+  const controller = navigator.serviceWorker.controller;
+  if (controller) {
+    controller.postMessage(message);
+    return;
+  }
+  navigator.serviceWorker.ready
+    .then((reg) => reg.active && reg.active.postMessage(message))
+    .catch(() => {});
+}
+
+/* On Android/iOS a notification must come from the service worker — `new Notification()`
+   throws there, so the constructor is only a desktop fallback. */
+async function showLocalNotification(title, options) {
+  const reg = await serviceWorkerRegistration();
+  if (reg && reg.showNotification) {
+    try {
+      await reg.showNotification(title, options);
+      return true;
+    } catch (e) {
+      /* fall through to the constructor */
+    }
+  }
+  try {
+    new Notification(title, options);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 function requestNotifications() {
   if (!("Notification" in window)) {
     alert("Notifications aren't supported in this browser.");
@@ -3531,32 +3682,98 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 async function enablePushNotifications() {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    alert("Push notifications aren't supported in this browser.");
+  if (!notificationSupported()) {
+    alert("Notifications aren't supported in this browser.");
     return;
   }
 
-  const reg = await navigator.serviceWorker.register("./sw.js", {
-    scope: "./",
-  });
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") return;
+  const btn = document.getElementById("notifBtn");
+  if (btn) btn.textContent = "Enabling…";
 
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-  });
-
-  if (sbUser) {
-    await sb.from("push_subscriptions").upsert({
-      user_id: sbUser,
-      subscription: sub.toJSON(),
-      created: Date.now(),
-    });
+  if (!(await requestNotificationPermission())) {
+    updateNotifBtn();
+    renderNotificationStatus();
+    alert(
+      "Notifications are blocked. Allow them for Everything in your browser or phone settings, then try again.",
+    );
+    return;
   }
 
-  const btn = document.getElementById("notifBtn");
-  if (btn) btn.textContent = "✓ Push enabled";
+  const subscribed = await ensurePushSubscription({ requestPermission: false });
+
+  await showLocalNotification("Everything", {
+    body: subscribed
+      ? "Reminders are on — you'll be notified even when the app is closed."
+      : "Reminders are on. This device is notified while the app is open or in the background.",
+    tag: "everything-welcome",
+    data: { url: "./" },
+  });
+
+  updateNotifBtn();
+  renderNotificationStatus();
+}
+
+async function requestNotificationPermission() {
+  if (Notification.permission === "granted") return true;
+  try {
+    return (await Notification.requestPermission()) === "granted";
+  } catch (e) {
+    return false;
+  }
+}
+
+/* Registers this device so the server can push while the app is closed. Safe to call
+   repeatedly: an existing subscription is reused and its row is refreshed. */
+async function ensurePushSubscription(options) {
+  const opts = options || {};
+
+  if (!notificationSupported()) return false;
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  if (opts.requestPermission && !(await requestNotificationPermission())) return false;
+  if (Notification.permission !== "granted") return false;
+  if (!VAPID_PUBLIC_KEY) return false;
+  if (syncReadyPromise) await syncReadyPromise;
+  if (!sbUser) return false;
+
+  try {
+    const reg = await serviceWorkerRegistration();
+    if (!reg) return false;
+
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+
+    const json = sub.toJSON();
+    const { error } = await sb.from("push_subscriptions").upsert(
+      {
+        user_id: sbUser,
+        household_id: currentHouseholdId,
+        endpoint: json.endpoint,
+        subscription: json,
+        platform: navigator.userAgentData?.platform || navigator.platform || "",
+        user_agent: navigator.userAgent,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+        enabled: true,
+        created: Date.now(),
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: "endpoint" },
+    );
+
+    if (error) {
+      console.warn("Push subscription not stored:", error.message);
+      return false;
+    }
+
+    return true;
+  } catch (e) {
+    console.warn("Push subscribe skipped:", e.message || e);
+    return false;
+  }
 }
 
 function updateNotifBtn() {
@@ -3569,24 +3786,446 @@ function updateNotifBtn() {
       : perm === "denied"
         ? "Blocked — check browser settings"
         : "Enable notifications";
+  renderNotificationStatus();
 }
-function checkDueNotifications() {
-  if (!("Notification" in window) || Notification.permission !== "granted")
+
+/* Shows the user *how* they will be reached right now, which is the honest answer to
+   "will I actually get this offline?". */
+async function renderNotificationStatus() {
+  const el = document.getElementById("notifStatus");
+  if (!el) return;
+
+  const granted = notificationSupported() && Notification.permission === "granted";
+  const pending = currentItems().filter((item) => {
+    const time = itemReminderTime(item);
+    return time !== null && time > Date.now();
+  });
+
+  let pushState = "Not available in this browser";
+  if (granted && "serviceWorker" in navigator && "PushManager" in window) {
+    try {
+      const reg = await serviceWorkerRegistration();
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      pushState = sub ? "Registered — reaches this device with the app closed" : "Not registered yet";
+    } catch (e) {
+      pushState = "Unavailable";
+    }
+  }
+
+  const rows = [
+    ["Device notifications", granted ? "On" : "Off"],
+    ["Closed-app push", pushState],
+    [
+      "Network",
+      navigator.onLine
+        ? "Online"
+        : "Offline — reminders are delivered by this device itself",
+    ],
+    ["Scheduled reminders", String(pending.length)],
+  ];
+
+  el.innerHTML = rows
+    .map(
+      ([label, value]) =>
+        `<div class="field-row" style="padding:4px 0;"><span class="field-label">${escapeHtml(label)}</span><span style="font-size:13px;text-align:right;">${escapeHtml(value)}</span></div>`,
+    )
+    .join("");
+
+  renderNotificationLog();
+}
+
+function renderNotificationLog() {
+  const el = document.getElementById("notifDeliveryLog");
+  if (!el) return;
+
+  el.innerHTML = notificationLog.length
+    ? notificationLog
+        .map(
+          (row) => `
+    <div class="field-row" style="padding:6px 0; align-items:flex-start;">
+      <span class="field-label" style="flex:1;">${escapeHtml(row.title || "Reminder")}</span>
+      <span style="font-size:12px;text-align:right;">${escapeHtml(row.status)} · ${escapeHtml(row.channel)}<br />${new Date(row.created_at).toLocaleTimeString()}</span>
+    </div>`,
+        )
+        .join("")
+    : '<p class="empty">No reminders delivered on this device yet.</p>';
+}
+
+/* Proves both legs of the chain: the local one always works (even offline), the server
+   push only when the endpoint is registered. */
+async function testNotification() {
+  if (!notificationSupported()) {
+    alert("Notifications aren't supported in this browser.");
     return;
-  const now = Date.now();
-  state.items.forEach((item) => {
-    if (item.done || !item.dueDate || notifiedIds.has(item.id)) return;
-    const due = new Date(item.dueDate).getTime();
-    if (due <= now && due > now - 5 * 60000) {
-      // due within the last 5 minutes, not missed by too much
-      new Notification("Due now: " + item.title, {
-        body: item.sub || "Tap to open Everything",
-        icon: "",
+  }
+
+  if (!(await requestNotificationPermission())) {
+    updateNotifBtn();
+    alert("Allow notifications first, then try again.");
+    return;
+  }
+
+  updateNotifBtn();
+
+  const local = await showLocalNotification("Everything", {
+    body: "This reminder came from this device — it works offline too.",
+    tag: "everything-test",
+    data: { url: "./" },
+    actions: [{ action: "open", title: "Open" }],
+  });
+
+  if (!sbUser || !navigator.onLine) return;
+
+  try {
+    // The endpoint requires either CRON_SECRET (cron) or a signed-in user's token (this).
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData && sessionData.session && sessionData.session.access_token;
+
+    const res = await fetch("/api/send-due-notifications", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+      },
+      body: JSON.stringify({ test: true, user_id: sbUser }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    await showLocalNotification("Everything", {
+      body: data && data.ok
+        ? "Server push works too — reminders reach this device when the app is closed."
+        : `Local delivery works${local ? "" : " with a limit"} · server push: ${data.skipped || data.error || "not available"}`,
+      tag: "everything-test-server",
+      data: { url: "./" },
+    });
+  } catch (e) {
+    // Offline or the endpoint isn't deployed — the local notification already arrived.
+  }
+}
+function reminderPayload(item) {
+  const time = itemReminderTime(item);
+
+  return {
+    id: item.id,
+    title: item.title || "Reminder",
+    body: item.sub || item.due || "Tap to open Everything",
+    url: `./?item=${item.id}`,
+    priority: item.priority || "",
+    time,
+    kind: item.kind || "",
+  };
+}
+
+function logNotification(item, status, channel, detail) {
+  const entry = {
+    item_id: item.id,
+    user_id: sbUser || null,
+    channel,
+    status,
+    title: item.title || "",
+    body: item.sub || "",
+    detail: detail || "",
+    created_at: new Date().toISOString(),
+  };
+
+  notificationLog = [entry, ...notificationLog].slice(0, 10);
+  renderNotificationLog();
+
+  // Best effort audit row (supabase/migrations/004) — never block delivery on it.
+  if (sbUser) {
+    sb
+      .from("notification_log")
+      .insert(entry)
+      .then(({ error }) => {
+        if (error) console.warn("notification_log skipped:", error.message);
       });
-      notifiedIds.add(item.id);
-      localStorage.setItem("notified_ids", JSON.stringify([...notifiedIds]));
+  }
+}
+
+/* One reminder, delivered once. `missed` marks the catch-up case: the time passed while
+   the app, the device or the network was away. */
+async function deliverItemReminder(item, options) {
+  const opts = options || {};
+  if (!item || remindersInFlight.has(item.id)) return false;
+
+  const time = itemReminderTime(item);
+  if (time === null) return false;
+
+  remindersInFlight.add(item.id);
+
+  try {
+    const payload = reminderPayload(item);
+    const missed = !!opts.missed;
+    const urgent = item.priority === "urgent" || item.priority === "high";
+
+    // Mark it before showing: the flag is what keeps the cron and other devices quiet,
+    // and it makes a second delivery attempt impossible.
+    rememberNotified(item.id);
+    item.notified = true;
+    item.notifiedAt = Date.now();
+    item.snoozedUntil = "";
+
+    let shown = false;
+    if (notificationSupported() && Notification.permission === "granted") {
+      shown = await showLocalNotification(
+        (missed ? "Missed: " : "") + payload.title,
+        {
+          body: missed ? `Missed while you were away · ${payload.body}` : payload.body,
+          tag: "item-" + item.id,
+          renotify: true,
+          requireInteraction: urgent,
+          timestamp: payload.time,
+          data: { url: payload.url, itemId: item.id, missed },
+          actions: [
+            { action: "open", title: "Open" },
+            { action: "done", title: "Done" },
+            { action: "snooze", title: "Snooze 10m" },
+          ],
+        },
+      );
+    }
+
+    logNotification(
+      item,
+      shown ? (missed ? "missed" : "sent") : "skipped",
+      "local",
+      shown ? "" : "notification permission not granted on this device",
+    );
+
+    await dbSaveItem(item);
+    renderNotificationStatus();
+
+    return shown;
+  } finally {
+    remindersInFlight.delete(item.id);
+  }
+}
+/* ---------- reminder scheduling ---------- */
+
+function pendingReminderPayloads() {
+  return currentItems()
+    .filter((item) => itemReminderTime(item) !== null)
+    .map((item) => reminderPayload(item));
+}
+
+/* Keeps two things in step with the data: the service worker's persisted schedule (which
+   is what survives the app being closed) and exact page timers for anything due soon.
+   Debounced because dbSaveItem runs on every mutation. */
+function refreshReminderSchedule() {
+  if (reminderSyncTimer) clearTimeout(reminderSyncTimer);
+  reminderSyncTimer = setTimeout(() => {
+    reminderSyncTimer = null;
+    applyReminderSchedule();
+  }, 200);
+}
+
+function applyReminderSchedule() {
+  reminderTimers.forEach((handle) => clearTimeout(handle));
+  reminderTimers.clear();
+
+  const now = Date.now();
+  const payloads = pendingReminderPayloads();
+
+  postToServiceWorker({ type: "SYNC_REMINDERS", reminders: payloads });
+
+  payloads.forEach((payload) => {
+    const delay = payload.time - now;
+
+    if (delay <= 0) {
+      // Due already — deliver here if it is inside the catch-up window, otherwise the
+      // worker's copy of the schedule stays as the record of it.
+      if (now - payload.time <= REMINDER_GRACE_MS) {
+        const item = currentItems().find((i) => i.id === payload.id);
+        deliverItemReminder(item, { missed: now - payload.time > 60000 });
+      }
+      return;
+    }
+
+    if (delay > REMINDER_LOOKAHEAD_MS) return; // the service worker still holds it
+
+    const item = currentItems().find((i) => i.id === payload.id);
+    if (!item) return;
+
+    reminderTimers.set(
+      payload.id,
+      setTimeout(() => {
+        reminderTimers.delete(payload.id);
+        deliverItemReminder(item, { missed: false });
+      }, Math.min(delay, MAX_TIMER_MS)),
+    );
+  });
+
+  renderNotificationStatus();
+}
+
+function cancelReminderFor(id) {
+  const handle = reminderTimers.get(String(id));
+  if (handle) {
+    clearTimeout(handle);
+    reminderTimers.delete(String(id));
+  }
+  postToServiceWorker({ type: "CANCEL_REMINDER", id });
+}
+
+/* The catch-up path. Runs on load, every 30s, when the network returns, when the tab
+   becomes visible again and whenever data syncs — so a reminder that was due while the
+   device was offline reaches the user as soon as anything changes. */
+function runReminderCheck(reason) {
+  refreshReminderSchedule();
+
+  const now = Date.now();
+
+  currentItems().forEach((item) => {
+    const time = itemReminderTime(item);
+    if (time === null || time > now) return;
+    if (now - time > REMINDER_GRACE_MS) return;
+    deliverItemReminder(item, { missed: now - time > 60000, reason });
+  });
+}
+/* ---------- reminder actions ---------- */
+
+/* Open / Done / Snooze come back from sw.js as a message, or as ?notifAction=… in the URL
+   when the worker had no window to talk to. */
+async function handleNotificationAction(action, itemId) {
+  if (!itemId) return;
+
+  const item = currentItems().find((i) => i.id === itemId);
+  if (!item) return;
+
+  if (action === "done") {
+    if (!item.done) await toggleDone(itemId);
+    return;
+  }
+
+  if (action === "snooze") {
+    item.snoozedUntil = Date.now() + SNOOZE_MINUTES * 60000;
+    item.notified = false;
+    item.notifiedAt = "";
+    forgetNotified(item.id);
+    await dbSaveItem(item);
+    logNotification(item, "snoozed", "in_app", `until ${new Date(item.snoozedUntil).toLocaleTimeString()}`);
+    renderNotificationStatus();
+    return;
+  }
+
+  if (typeof openPanel === "function") openPanel(itemId);
+}
+
+/* Deep links: ?item=<id> opens the reminder, ?notifAction=…&itemId=… replays an action
+   that was tapped while the app was closed. The query is cleaned so a reload is neutral. */
+function applyNotificationIntentFromUrl() {
+  let params;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch (e) {
+    return;
+  }
+
+  const action = params.get("notifAction");
+  const actionItemId = params.get("itemId");
+  const openItemId = params.get("item");
+
+  if (!action && !openItemId) return;
+
+  params.delete("notifAction");
+  params.delete("itemId");
+  params.delete("item");
+
+  const query = params.toString();
+  history.replaceState(
+    {},
+    "",
+    window.location.pathname + (query ? "?" + query : "") + window.location.hash,
+  );
+
+  if (action && actionItemId) handleNotificationAction(action, actionItemId);
+  else if (openItemId && typeof openPanel === "function") openPanel(openItemId);
+}
+
+function initNotificationChannel() {
+  if (!("serviceWorker" in navigator)) return;
+
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const data = event.data || {};
+
+    if (data.type === "NOTIFICATION_ACTION") {
+      handleNotificationAction(data.action, data.itemId);
+      return;
+    }
+
+    if (data.type === "REMINDER_DELIVERED") {
+      // The worker showed it (app closed, or the page was asleep). Mirror that into the
+      // item so the cron and the other devices do not send it again.
+      const deliveredId = data.reminder && data.reminder.id;
+      if (!deliveredId) return;
+
+      rememberNotified(deliveredId);
+
+      const item = currentItems().find((i) => i.id === deliveredId);
+      if (item && !item.notified) {
+        item.notified = true;
+        item.notifiedAt = Date.now();
+        item.snoozedUntil = "";
+        dbSaveItem(item);
+      }
+
+      renderNotificationStatus();
+      return;
+    }
+
+    if (data.type === "REMINDER_DELIVERIES") {
+      // Whatever the worker delivered while this page was closed.
+      (data.deliveries || []).forEach((delivery) => rememberNotified(delivery.id));
+      refreshReminderSchedule();
+      renderNotificationStatus();
     }
   });
+
+  postToServiceWorker({ type: "READ_DELIVERIES" });
+}
+
+function initReminderDelivery() {
+  initNotificationChannel();
+  applyNotificationIntentFromUrl();
+  runReminderCheck("startup");
+
+  setInterval(() => runReminderCheck("interval"), 30000);
+
+  window.addEventListener("online", () => {
+    runReminderCheck("online");
+    // Re-register quietly: a device that lost its subscription while offline gets it back.
+    if (notificationSupported() && Notification.permission === "granted") {
+      ensurePushSubscription({ requestPermission: false }).then(() =>
+        renderNotificationStatus(),
+      );
+    }
+  });
+
+  window.addEventListener("offline", () => {
+    renderNotificationStatus();
+    runReminderCheck("offline");
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      runReminderCheck("visible");
+      postToServiceWorker({ type: "READ_DELIVERIES" });
+    }
+  });
+
+  // Periodic catch-up for installed PWAs where the browser allows it.
+  if ("serviceWorker" in navigator && navigator.serviceWorker.ready) {
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        if (reg.periodicSync && reg.periodicSync.register) {
+          return reg.periodicSync
+            .register("everything-reminders", { minInterval: 15 * 60 * 1000 })
+            .catch(() => {});
+        }
+        return undefined;
+      })
+      .catch(() => {});
+  }
 }
 /* ---------- Init ---------- */
 restoreRememberedEmail();
@@ -3617,7 +4256,11 @@ applyLaunchShortcut();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker
     .register("./sw.js", { scope: "./" })
+    .then((reg) => {
+      swRegistration = reg;
+      return reg;
+    })
     .catch((err) => console.warn("Service worker registration failed:", err));
 }
-setInterval(checkDueNotifications, 30000);
+initReminderDelivery();
 setInterval(renderToday, 60000);

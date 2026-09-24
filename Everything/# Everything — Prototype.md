@@ -9,7 +9,8 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - `script.js` — app logic (local state + optional multi-user sync)
 - `sw.js` — service worker (offline shell + push notifications)
 - `api/ask.js` — AI search endpoint (`/api/ask`)
-- `api/send-due-notifications.js` — Vercel cron that pushes due reminders
+- `api/send-due-notifications.js` — cron/API that pushes due reminders to closed apps
+- `vercel.json` — declares that cron (also kept in `api/vercel.json`; see *Cron cadence*)
 
 ## Features
 - **Capture** — text, voice, image, file and link captures, with type detection and
@@ -25,6 +26,49 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - **Keyboard shortcuts** — `Ctrl/⌘ + K` search, `C` quick capture, `/` focus search,
   `Esc` close the top-most dialog.
 - **Installable PWA** — offline shell via `sw.js`, plus web-push reminders.
+- **Reminders that arrive offline** — see *Reminder delivery* below.
+
+## Reminder delivery
+A reminder reaches the user in every state, and never twice:
+
+| Situation | How it is delivered |
+| --- | --- |
+| App open | Exact per-item timer in `script.js`, shown through the service worker |
+| App closed, online | `/api/send-due-notifications` (cron) sends a Web Push to every device in `push_subscriptions` |
+| App closed, offline | `sw.js` keeps its own schedule in Cache Storage (survives the app being closed) and fires it itself |
+| Missed while offline | The next client that comes back delivers it marked *Missed* (up to 12h later) |
+| Notification tapped | *Open* / *Done* / *Snooze 10m* actions; they are handed to the app, or replayed through `?notifAction=…&itemId=…` when it was closed |
+
+`items.reminder_at` / `notified` / `notified_at` / `snoozed_until` are the shared record, so
+the push path and the local path stay in step across devices. Settings → Notifications shows
+whether this device is registered, whether it is online, and the last deliveries.
+
+### Configuration
+| Variable | Needed? | Default / effect |
+| --- | --- | --- |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Required | used by every API route |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Required for closed-app push | must match the public key in `script.js` |
+| `VAPID_SUBJECT` | Optional | `mailto:notifications@everything.local` — set a real address for best acceptance, especially on iOS |
+| `CRON_SECRET` | Optional | if set, Vercel sends it automatically as `Authorization: Bearer …` and the cron path requires it; the in-app test authenticates with the user's Supabase token instead |
+| `REMINDER_TIMEZONE` | Optional | `UTC` — only changes the "Due …" wording inside the notification |
+| `REMINDER_LOOKBACK_MINUTES` | Optional | `60` — how far back a missed run still delivers |
+
+### Cron cadence
+Vercel **Hobby only allows daily** cron expressions; `* * * * *` fails the deployment with
+*"Hobby accounts are limited to daily cron jobs"*. Pro allows once per minute.
+
+- Cron is declared in `vercel.json`. It is kept in **two** places because Vercel only reads the
+  file at the project root: `Everything/vercel.json` (root = the app folder, which is what the
+  relative `/api/...` calls need) and `Everything/api/vercel.json` (root = the api folder).
+  Both currently run once a day at 01:00 (`0 1 * * *`) so a Hobby deploy never fails.
+- **Minute-level delivery on Hobby:** run `supabase/reminder-cron.sql` once (after replacing
+  `YOUR-PROJECT` and `YOUR_CRON_SECRET`). It uses `pg_cron` + `pg_net` to call the endpoint
+  every minute, which works on the Supabase free plan.
+- **On Pro:** change the expression in both `vercel.json` files back to `* * * * *` and you can
+  skip the Supabase schedule.
+
+Without any server-side trigger the app still delivers reminders whenever it is open or in
+the background, and catches up on anything missed the next time it runs.
 
 ## Running it locally
 This is a static site — no build step needed.
@@ -47,6 +91,10 @@ Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, 
 | `001_add_items_completed_at.sql` | `items.completed_at` — a real completion timestamp |
 | `002_foundation_entry_model.sql` | Entries, tasks, people, projects, and goals |
 | `003_household_workspace.sql` | Households and household memberships |
+| `004_reminder_delivery.sql` | `items.reminder_at/notified_at/snoozed_until`, `push_subscriptions`, `notification_log` |
+
+`supabase/reminder-cron.sql` is **not** a migration — it is the optional minute-level trigger
+described under *Cron cadence*, and only needs running if the project stays on Vercel Hobby.
 
 The client probes for `items.completed_at` at sign-in and only sends it when the column
 exists, so the app keeps working on a database that hasn't been migrated yet (Reports
