@@ -10,10 +10,18 @@ export default async function handler(req, res) {
     SUPABASE_ANON_KEY: Boolean(process.env.SUPABASE_ANON_KEY),
     SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
     ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY),
+    VAPID_PUBLIC_KEY: Boolean(process.env.VAPID_PUBLIC_KEY),
+    VAPID_PRIVATE_KEY: Boolean(process.env.VAPID_PRIVATE_KEY),
+    VAPID_SUBJECT: process.env.VAPID_SUBJECT || 'default (mailto:notifications@everything.local)',
+    CRON_SECRET: Boolean(process.env.CRON_SECRET),
+    REMINDER_TIMEZONE: process.env.REMINDER_TIMEZONE || 'default (UTC)',
     NODE_ENV: process.env.NODE_ENV || 'development',
   };
 
+  const pushReady = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+
   let databaseReady = false;
+  let reminderSchemaReady = false;
   const supabase = getSupabaseServerClient();
   if (supabase) {
     try {
@@ -21,6 +29,14 @@ export default async function handler(req, res) {
       databaseReady = !error;
     } catch (error) {
       databaseReady = false;
+    }
+
+    // migration 004 — without it reminders still work, only closed-app push is skipped
+    try {
+      const { error } = await supabase.from('push_subscriptions').select('id').limit(1);
+      reminderSchemaReady = !error;
+    } catch (error) {
+      reminderSchemaReady = false;
     }
   }
 
@@ -39,6 +55,13 @@ export default async function handler(req, res) {
     envStatus,
     ready,
     databaseReady,
+    reminderSchemaReady,
+    pushReady,
+    notifications: !pushReady
+      ? 'Closed-app push is off: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY, then redeploy.'
+      : !reminderSchemaReady
+        ? 'Run supabase/migrations/004_reminder_delivery.sql to enable closed-app push.'
+        : 'Closed-app push is configured.',
     aiAvailable: envStatus.ANTHROPIC_API_KEY,
     timestamp: new Date().toISOString(),
   });

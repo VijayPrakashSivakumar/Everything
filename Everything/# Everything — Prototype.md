@@ -10,6 +10,7 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - `sw.js` — service worker (offline shell + push notifications)
 - `api/ask.js` — AI search endpoint (`/api/ask`)
 - `api/send-due-notifications.js` — cron/API that pushes due reminders to closed apps
+- `api/check-vapid.mjs` — verifies a VAPID key pair matches `script.js` (`npm run check:vapid`)
 - `vercel.json` — declares that cron (also kept in `api/vercel.json`; see *Cron cadence*)
 
 ## Features
@@ -52,6 +53,46 @@ whether this device is registered, whether it is online, and the last deliveries
 | `CRON_SECRET` | Optional | if set, Vercel sends it automatically as `Authorization: Bearer …` and the cron path requires it; the in-app test authenticates with the user's Supabase token instead |
 | `REMINDER_TIMEZONE` | Optional | `UTC` — only changes the "Due …" wording inside the notification |
 | `REMINDER_LOOKBACK_MINUTES` | Optional | `60` — how far back a missed run still delivers |
+
+### Setting it up on Vercel
+1. Project → Settings → Environment Variables (add to Production, and Preview if you test there):
+   - `SUPABASE_URL` — Supabase → Project Settings → API → Project URL.
+   - `SUPABASE_SERVICE_ROLE_KEY` — same page, the `service_role` secret (server-side only, never
+     in the frontend).
+   - `VAPID_PUBLIC_KEY` — must be identical to `VAPID_PUBLIC_KEY` in `script.js`.
+   - `VAPID_PRIVATE_KEY` — the private half of that same pair.
+   - optional: `VAPID_SUBJECT=mailto:you@gmail.com`, `CRON_SECRET=<random 16+ chars>`,
+     `REMINDER_TIMEZONE=Asia/Kolkata`.
+2. Lost the private key? Generate a new pair and update `script.js` with the new public key:
+
+```bash
+cd Everything/api
+node node_modules/web-push/src/cli.js generate-vapid-keys --json   # npx is blocked by the PowerShell execution policy
+node check-vapid.mjs --public <new public key> --private <new private key>
+```
+
+   `check:vapid` fails when the two keys do not belong together, or do not match `script.js` —
+   that mismatch is the usual cause of a rejected push.
+3. Redeploy. Environment changes only apply to new deployments.
+4. Confirm with `https://<your-project>.vercel.app/api/health`: it reports `pushReady`,
+   `reminderSchemaReady` and a `notifications` message.
+
+### Checking delivery end to end
+1. Open the deployed site over HTTPS (localhost works too; `file://` does not).
+2. Settings → Notifications → *Enable notifications* → Allow.
+3. The status block must read *Device notifications: On*, *Closed-app push: Registered …*,
+   *Network: Online*. *Not registered yet* means migration `004` has not run, or the worker is
+   not active yet (reload once).
+4. Press *Send test*: one local notification arrives immediately, a second one confirms the
+   server push. When it fails, the second notification names the reason:
+   - `VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not configured` → env vars missing or no redeploy
+   - `no push subscription registered yet` → `push_subscriptions` is empty (migration or RLS)
+   - `unauthorized` → signed out, or `CRON_SECRET` mismatch
+5. Cross-check in Supabase: `select * from push_subscriptions;` and
+   `select status, channel, item_id, created_at from notification_log order by created_at desc limit 10;`
+6. Real test: add a task due in two minutes, close the app completely, and wait for the push.
+7. Phones: install first (Android Chrome → *Install app*; iOS 16.4+ → Safari → Share →
+   *Add to Home Screen*), then enable notifications inside the installed app.
 
 ### Cron cadence
 Vercel **Hobby only allows daily** cron expressions; `* * * * *` fails the deployment with
