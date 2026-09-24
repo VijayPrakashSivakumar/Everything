@@ -72,6 +72,18 @@ body {
   overflow-x: hidden;
 }
 
+svg.lucide {
+  display: block;
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .app {
   display: flex;
   height: 100vh;
@@ -98,65 +110,120 @@ body {
 }
 
 .brand {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 6px 8px 18px;
 }
 
-.brand-mark {
-  width: 28px;
-  height: 20px;
-  flex-shrink: 0;
+/* Soft ambient glow behind the mark: depth without adding chrome. */
+.brand::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  width: 58px;
+  height: 28px;
+  border-radius: 14px;
+  background: radial-gradient(
+    ellipse at 32% 50%,
+    rgba(99, 102, 241, 0.42),
+    rgba(124, 58, 237, 0.18) 58%,
+    transparent 78%
+  );
+  filter: blur(5px);
+  opacity: 0.85;
+  pointer-events: none;
 }
 
-.brand-mark-shell {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
+.brand-mark {
+  width: 50px;
+  height: 20px;
   flex-shrink: 0;
-  border: 1px solid rgba(126, 150, 255, 0.35);
-  border-radius: 11px;
-  background: linear-gradient(145deg, #202b63, #11162f);
-  box-shadow: 0 8px 18px rgba(8, 12, 32, 0.32), inset 0 1px rgba(255, 255, 255, 0.12);
+  filter: drop-shadow(0 2px 6px rgba(79, 70, 229, 0.32));
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.brand:hover .brand-mark {
+  transform: translateY(-1px);
+  filter: drop-shadow(0 4px 10px rgba(124, 58, 237, 0.42));
 }
 
 .brand-name {
   font-weight: 700;
   font-size: 15px;
-  letter-spacing: 1.8px;
+  letter-spacing: 0.3px;
   color: #fff;
-  line-height: 1;
+  text-shadow: 0 1px 2px rgba(8, 12, 32, 0.35);
 }
 
 .sidebar-collapse {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   margin-left: auto;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
   background: transparent;
   color: #cfd3ec;
   cursor: pointer;
-  font-size: 20px;
-  line-height: 1;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.sidebar-collapse svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
 }
 
 .sidebar-collapse:hover {
-  background: var(--sidebar-hover);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
+/* Collapsed rail: the mark stays centred and the same button expands it again. */
 .sidebar.collapsed .brand {
+  flex-wrap: wrap;
   justify-content: center;
+  row-gap: 8px;
   padding-left: 0;
   padding-right: 0;
 }
 
-.sidebar.collapsed .brand-name,
-.sidebar.collapsed .sidebar-collapse {
+.sidebar.collapsed .brand::before {
+  left: 50%;
+  top: 2px;
+  width: 50px;
+  transform: translateX(-50%);
+}
+
+.sidebar.collapsed .brand-mark {
+  width: 44px;
+}
+
+.sidebar.collapsed .brand-name {
   display: none;
+}
+
+.sidebar.collapsed .sidebar-collapse {
+  margin-left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .brand-mark,
+  .sidebar-collapse {
+    transition: none;
+  }
+
+  .brand:hover .brand-mark {
+    transform: none;
+  }
 }
 
 .nav {
@@ -179,11 +246,11 @@ body {
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
   color: #b8bcda;
   justify-content: space-between;
+  position: relative;
 }
 
 .nav-item .left {
@@ -192,18 +259,38 @@ body {
   gap: 10px;
 }
 
+/* Bare glyph only — no square/rounded container behind the icon. */
 .nav-icon {
-  width: 18px;
-  height: 18px;
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  width: auto;
+  height: auto;
+  padding: 0;
+  margin: 0;
+  background: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  outline: none;
+  opacity: 0.9;
 }
 
 .nav-icon svg {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   stroke-width: 1.8;
+}
+
+/* Collapsed rail: the accent bar centres under the icon. */
+.sidebar.collapsed .nav-item::before {
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.sidebar.collapsed .nav-item.active::before {
+  height: 20px;
 }
 
 .sidebar.collapsed .nav-item {
@@ -222,20 +309,34 @@ body {
   display: none;
 }
 
-.nav-item:hover {
-  background: var(--sidebar-hover);
+/* No filled box behind a nav row: hover brightens the text and the active row
+   is marked with a slim accent bar on the left edge, as in the reference. */
+.nav-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  transform: translateY(-50%);
+  transition: height 160ms ease;
+}
+
+.nav-item:hover .nav-label,
+.nav-item:hover .nav-icon {
   color: #fff;
+  opacity: 1;
 }
 
 .nav-item.active {
-  background: var(--sidebar-active);
   color: #fff;
+  font-weight: 600;
 }
 
-.nav-icon {
-  width: 18px;
-  text-align: center;
-  opacity: 0.9;
+.nav-item.active::before {
+  height: 22px;
 }
 
 .nav-badge {
@@ -263,15 +364,26 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 9px;
 }
 
 .capture-btn:hover {
   opacity: 0.92;
 }
 
+/* The brand mark replaces the "+" glyph, sized to sit on the label's baseline. */
 .capture-icon {
-  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   line-height: 1;
+}
+
+.capture-mark {
+  width: 24px;
+  height: 15px;
+  filter: drop-shadow(0 1px 2px rgba(12, 16, 48, 0.35));
 }
 
 .sidebar-profile {
@@ -354,10 +466,18 @@ body {
   background: var(--card);
 }
 
+/* Top bar only: the brand mark, a touch larger than the sidebar one, with no
+   plate behind it. The gradient (#logoGrad) is shared with the sidebar mark. */
 .mobile-capture-btn {
   display: none;
-  color: var(--accent);
-  font-size: 21px;
+  border: 0;
+  background: none;
+}
+
+.mobile-capture-btn .capture-mark {
+  width: 23px;
+  height: 14px;
+  filter: drop-shadow(0 1px 2px rgba(67, 97, 238, 0.28));
 }
 
 .sidebar-backdrop {
@@ -386,12 +506,21 @@ body {
   font-size: 14px;
 }
 
+.search-box > svg,
+.topbar .icon-btn > svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  stroke-width: 1.8;
+}
+
+/* Bare icon buttons: no bordered square, just the glyph on a soft hover. */
 .icon-btn {
   width: 36px;
   height: 36px;
   border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--card);
+  border: 0;
+  background: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -400,20 +529,24 @@ body {
   font-size: 16px;
   position: relative;
   flex-shrink: 0;
+  transition: background 140ms ease, color 140ms ease;
 }
 
 .icon-btn:hover {
   background: var(--bg);
+  color: var(--text);
 }
 
+/* The unread dot needs its own contrast now the button has no white plate. */
 .theme-dot {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 9px;
-  height: 9px;
+  top: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--accent);
+  box-shadow: 0 0 0 2px var(--card);
   display: none;
 }
 
@@ -506,15 +639,51 @@ h1.page-title {
   color: var(--muted);
 }
 
+/* Dashboard page icons are glyph-only: the tinted square tile is dropped.
+   !important is required because the renderers set `background` inline
+   (index.html stat cards, and kindColor() for .recent-dot). */
+.stat-icon,
+.recent-dot {
+  background: transparent !important;
+  box-shadow: none;
+}
+
 .stat-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
   flex-shrink: 0;
+}
+
+.stat-icon svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.8;
+  vertical-align: middle;
+}
+
+.recent-dot svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.9;
+}
+
+.type-chip svg,
+#voiceRecordBtn svg,
+#visibilityRow svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+  vertical-align: middle;
+}
+
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .grid-2 {
@@ -606,17 +775,42 @@ h1.page-title {
 .task-title {
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.4;
 }
 
 .task-sub {
   font-size: 12.5px;
   color: var(--muted);
+  line-height: 1.4;
 }
 
 .task-time {
   font-size: 12.5px;
   color: var(--muted);
   white-space: nowrap;
+  line-height: 1.4;
+}
+
+/* Icons placed inside a line of text (Today & upcoming rows and every task
+   list) must scale with the text and sit on its optical centre. Without this
+   they keep Lucide's 24px default and sit on the baseline, which is what made
+   the text and icons look misaligned. */
+.task-title svg,
+.task-sub svg,
+.task-time svg,
+.task-meta > span svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.14em;
+  stroke-width: 2;
+  flex-shrink: 0;
+}
+
+/* The tick inside the 18px checkbox must fit the box. */
+.checkbox svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
 }
 
 .badge {
@@ -690,9 +884,8 @@ h1.page-title {
 }
 
 .recent-dot {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -783,8 +976,12 @@ h1.page-title {
   display: inline-grid;
   place-items: center;
   width: 15px;
-  font-size: 16px;
   line-height: 1;
+}
+
+.quote-action-icon>svg {
+  width: 15px;
+  height: 15px;
 }
 
 .quote-action:hover {
@@ -955,10 +1152,24 @@ h1.page-title {
 
 .close-x {
   cursor: pointer;
-  font-size: 18px;
   color: var(--muted);
   background: none;
   border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.close-x:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.close-x>svg {
+  width: 18px;
+  height: 18px;
 }
 
 .field-row {
@@ -985,10 +1196,29 @@ h1.page-title {
   border-radius: 8px;
   font-size: 13.5px;
   font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+/* Icons inside buttons keep the same optical size as the label. */
+.btn>svg,
+.btn>[data-lucide] {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.btn[disabled] {
+  opacity: 0.6;
+  cursor: default;
+  pointer-events: none;
 }
 
 .btn.primary {
@@ -1092,9 +1322,31 @@ h1.page-title {
   padding: 9px 12px;
   border-radius: 8px;
   font-size: 13.5px;
+  font-family: inherit;
   cursor: pointer;
   color: var(--muted);
   margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+/* Icon + label stay optically centred in every tab / button. */
+.tab-vert>svg,
+.tab-vert>[data-lucide] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.tab-vert>span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tab-vert:hover {
@@ -1106,6 +1358,70 @@ h1.page-title {
   color: var(--blue-fg);
   font-weight: 600;
 }
+
+.tab-vert:focus-visible,
+.btn:focus-visible,
+.settings-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Settings: three columns on desktop, a single column with a scrollable tab
+   strip on phones. minmax(0,1fr) keeps the middle column from overflowing. */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 260px;
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-tabs {
+  padding: 8px;
+}
+
+.settings-aside {
+  min-width: 0;
+}
+
+.save-hint {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--green-fg, var(--accent));
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .settings-grid {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .settings-aside {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-tabs {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .settings-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-vert {
+    margin-bottom: 0;
+    white-space: nowrap;
+  }
+  .settings-aside {
+    grid-column: auto;
+  }
+}
+
+
 
 @media (max-width:900px) {
   .topbar {
@@ -1176,11 +1492,19 @@ h1.page-title {
 
 .ask-input-row input {
   flex: 1;
+  min-width: 0;
   border: none;
   outline: none;
   background: transparent;
   font-size: 16px;
   color: var(--text);
+}
+
+.ask-input-row>svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  color: var(--muted);
 }
 
 .ask-results {
@@ -1242,23 +1566,28 @@ h1.page-title {
   padding: 6px;
   font-size: 12px;
   position: relative;
+  min-width: 0;
 }
 
+/* Fixed-size number box for every cell: the "today" pill must not push that
+   cell's events down relative to the rest of the row. */
 .cal-cell .num {
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-
-.cal-cell.today .num {
-  color: #fff;
-  background: var(--accent);
   width: 20px;
   height: 20px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.cal-cell.today .num {
+  color: #fff;
+  background: var(--accent);
+  font-weight: 600;
 }
 
 .cal-event {
@@ -1272,6 +1601,7 @@ h1.page-title {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  max-width: 100%;
 }
 
 .cal-week-wrap {
@@ -1297,12 +1627,11 @@ h1.page-title {
   height: 50px;
   font-size: 11px;
   color: var(--muted);
-  text-align: right;
-  padding-right: 6px;
-  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 1px 6px 0 0;
   border-bottom: 1px solid var(--border);
-  position: relative;
-  top: -6px;
 }
 
 .cal-week-days {
@@ -1314,6 +1643,7 @@ h1.page-title {
 .cal-week-day-col {
   border-right: 1px solid var(--border);
   position: relative;
+  min-width: 0;
 }
 
 .cal-week-day-col:last-child {
@@ -1361,13 +1691,21 @@ h1.page-title {
 .cal-week-event {
   position: absolute;
   left: 4px;
-  right: 4px;
+  right: auto;
   border-radius: 6px;
   font-size: 11px;
   padding: 3px 6px;
   overflow: hidden;
   cursor: pointer;
   line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-height: 18px;
+}
+
+.cal-week-event:hover {
+  filter: brightness(1.06);
+  z-index: 2;
 }
 
 @media (max-width:900px) {
@@ -1395,9 +1733,21 @@ h1.page-title {
   }
 
   .sidebar.collapsed .brand {
+    flex-wrap: nowrap;
     justify-content: flex-start;
     padding-left: 8px;
     padding-right: 8px;
+  }
+
+  .sidebar.collapsed .brand::before {
+    left: 4px;
+    top: 2px;
+    width: 58px;
+    transform: none;
+  }
+
+  .sidebar.collapsed .brand-mark {
+    width: 50px;
   }
 
   .sidebar.collapsed .brand-name,
@@ -1529,10 +1879,7 @@ h1.page-title {
     padding-right: 0;
   }
 
-  #view-settings>div>div:last-child {
-    grid-template-columns: 1fr;
-  }
-
+  /* The settings aside wraps under the main column on medium screens. */
   #settingsTab-account .card>div[style*="grid-template-columns"] {
     grid-template-columns: 1fr !important;
   }

@@ -113,7 +113,7 @@ function togglePasswordVisibility(inputId, toggleId) {
   const toggle = document.getElementById(toggleId);
   const isHidden = input.type === "password";
   input.type = isHidden ? "text" : "password";
-  toggle.textContent = isHidden ? "🙈" : "👁️";
+  toggle.innerHTML = icon(isHidden ? "eye-off" : "eye");
 }
 
 function showForgotPassword() {
@@ -522,7 +522,8 @@ async function getInviteCode() {
 async function showInviteCode() {
   if (!currentHouseholdId) return;
   const code = await getInviteCode();
-  document.getElementById("inviteCodeDisplay").textContent = code || "—";
+  const el = document.getElementById("inviteCodeDisplay");
+  if (el) el.textContent = code || "—";
 }
 
 async function loadHouseholdName() {
@@ -574,9 +575,18 @@ async function persistMembershipToBackend(householdId, userId, role = "member") 
 }
 
 async function saveHouseholdName() {
-  const name = document.getElementById("householdNameInput").value.trim();
+  const input = document.getElementById("householdNameInput");
+  const name = input ? input.value.trim() : "";
   if (!name || !currentHouseholdId) return;
-  await sb.from("households").update({ name }).eq("id", currentHouseholdId);
+  const { error } = await sb
+    .from("households")
+    .update({ name })
+    .eq("id", currentHouseholdId);
+  if (error) {
+    flashSaveHint("householdSaveHint", "Could not save", true);
+    return;
+  }
+  flashSaveHint("householdSaveHint", "Saved");
   if (typeof fetch === "function") {
     try {
       await fetch("/api/households", {
@@ -593,10 +603,12 @@ async function saveHouseholdName() {
 async function joinHousehold() {
   const code = document.getElementById("joinCodeInput").value.trim();
   const msg = document.getElementById("joinMessage");
+  const btn = document.getElementById("joinHouseholdBtn");
   if (!code) {
     msg.textContent = "Enter a code.";
     return;
   }
+  if (btn) btn.disabled = true;
 
   if (typeof fetch === "function") {
     try {
@@ -618,6 +630,7 @@ async function joinHousehold() {
         await persistMembershipToBackend(currentHouseholdId, sbUser || currentUserId, "member");
         await startSupabaseSync(sbUser || currentUserId);
         showInviteCode();
+        if (btn) btn.disabled = false;
         return;
       }
     } catch (err) {
@@ -633,6 +646,7 @@ async function joinHousehold() {
   if (!house) {
     msg.style.color = "var(--red-fg)";
     msg.textContent = "Invalid invite code.";
+    if (btn) btn.disabled = false;
     return;
   }
   await sb.from("household_members").delete().eq("user_id", sbUser);
@@ -645,6 +659,7 @@ async function joinHousehold() {
   await persistMembershipToBackend(house.id, sbUser || currentUserId, "member");
   await startSupabaseSync(sbUser);
   showInviteCode();
+  if (btn) btn.disabled = false;
 }
 function toggleAvatarMenu() {
   const menu = document.getElementById("avatarMenu");
@@ -690,7 +705,8 @@ sb.auth.onAuthStateChange((event, session) => {
       showInviteCode();
       loadHouseholdName();
       loadProfile();
-      document.getElementById("settingsEmail").textContent = session.user.email;
+      const settingsEmail = document.getElementById("settingsEmail");
+      if (settingsEmail) settingsEmail.textContent = session.user.email;
     }
     const name = session.user.email.split("@")[0];
     const greetEl = document.getElementById("greeting");
@@ -707,13 +723,47 @@ sb.auth.onAuthStateChange((event, session) => {
   }
 });
 function showSettingsTab(tab) {
+  const panel = document.getElementById("settingsTab-" + tab);
+  if (!panel) return;
   document
     .querySelectorAll(".settings-panel")
     .forEach((p) => (p.style.display = "none"));
-  document.getElementById("settingsTab-" + tab).style.display = "block";
-  document
-    .querySelectorAll(".tab-vert")
-    .forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  panel.style.display = "block";
+  document.querySelectorAll(".tab-vert").forEach((t) => {
+    const active = t.dataset.tab === tab;
+    t.classList.toggle("active", active);
+    t.setAttribute("aria-selected", String(active));
+  });
+  panel.scrollIntoView({ block: "nearest" });
+  refreshIcons();
+}
+
+/* Arrow keys move between tabs, as expected for a tab list. */
+document.addEventListener("keydown", (e) => {
+  const tab = e.target.closest && e.target.closest(".tab-vert");
+  if (!tab || (e.key !== "ArrowDown" && e.key !== "ArrowRight" && e.key !== "ArrowUp" && e.key !== "ArrowLeft")) return;
+  const tabs = [...document.querySelectorAll(".tab-vert")];
+  const index = tabs.indexOf(tab);
+  if (index < 0) return;
+  e.preventDefault();
+  const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1;
+  const next = tabs[(index + step + tabs.length) % tabs.length];
+  showSettingsTab(next.dataset.tab);
+  next.focus();
+});
+
+/* Called every time Settings is opened, so the page always shows current data
+   (delivery log, reminder counts, household name, profile) instead of whatever
+   was left over from the last visit. */
+function renderSettings() {
+  updateNotifBtn();
+  renderNotificationLog();
+  showInviteCode();
+  loadHouseholdName();
+  if (sbUser) loadProfile();
+  const sq = document.getElementById("settingsQuote");
+  if (sq && currentQuoteIndex !== null)
+    sq.textContent = '"' + MOTIVATION_QUOTES[currentQuoteIndex] + '"';
 }
 
 async function loadProfile() {
@@ -731,7 +781,9 @@ async function loadProfile() {
     date_format: "MM/DD/YYYY",
     time_format: "12h",
   };
+  applyFormatPrefs(profile);
   document.getElementById("profileFullName").value = profile.full_name || "";
+  applyFormatPrefs(profile);
   document.getElementById("profilePhone").value = profile.phone || "";
   document.getElementById("dateFormatSelect").value =
     profile.date_format || "MM/DD/YYYY";
@@ -763,6 +815,7 @@ async function loadProfile() {
 function updateAvatarDisplay(name, url) {
   const el = document.getElementById("settingsAvatar");
   const initial = document.getElementById("settingsAvatarInitial");
+  if (!el || !initial) return;
   if (url) {
     el.style.backgroundImage = `url(${url})`;
     el.style.backgroundSize = "cover";
@@ -778,8 +831,11 @@ function updateAvatarDisplay(name, url) {
   }
 }
 
-async function saveProfile() {
-  if (!sbUser) return;
+async function saveProfile(btnEl) {
+  if (!sbUser) {
+    flashSaveHint("profileSaveHint", "Sign in to save", true);
+    return;
+  }
   const profile = {
     user_id: sbUser,
     full_name: document.getElementById("profileFullName").value.trim(),
@@ -788,17 +844,53 @@ async function saveProfile() {
     time_format: document.getElementById("timeFormatSelect").value,
     created: Date.now(),
   };
+  if (btnEl) btnEl.disabled = true;
   const { error } = await sb.from("profiles").upsert(profile);
+  if (btnEl) btnEl.disabled = false;
   if (error) {
     console.error("Profile save failed:", error.message);
+    flashSaveHint("profileSaveHint", "Could not save — try again", true);
     return;
   }
+  applyFormatPrefs(profile);
+  // The name/format choices drive the greeting, the sidebar and every date
+  // label, so re-render instead of leaving stale text on screen.
   const av = document.getElementById("avatarInitial");
   if (av && profile.full_name)
     av.textContent = profile.full_name.charAt(0).toUpperCase();
+  const sidebarName = document.getElementById("sidebarProfileName");
+  const sidebarInitial = document.getElementById("sidebarProfileInitial");
+  if (sidebarName && profile.full_name) sidebarName.textContent = profile.full_name;
+  if (sidebarInitial && profile.full_name)
+    sidebarInitial.textContent = profile.full_name.charAt(0).toUpperCase();
   const greetEl = document.getElementById("greeting");
   if (greetEl && profile.full_name)
     greetEl.textContent = `${greetingText()}, ${profile.full_name.split(" ")[0]}!`;
+  renderAll();
+  flashSaveHint("profileSaveHint", "Saved");
+  if (btnEl) flashButton(btnEl, "Saved");
+}
+
+/* Small, non-blocking confirmation next to the field that changed. */
+function flashSaveHint(id, text, isError) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isError ? "var(--red-fg)" : "";
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => {
+    el.textContent = "";
+  }, 2000);
+}
+function flashButton(btn, label) {
+  const span = btn.querySelector("span");
+  const original = span ? span.textContent : null;
+  if (span) span.textContent = label;
+  else btn.textContent = label;
+  setTimeout(() => {
+    if (span) span.textContent = original;
+    else btn.textContent = original;
+  }, 1500);
 }
 
 async function uploadAvatar() {
@@ -838,9 +930,58 @@ const NAV = [
   { id: "goals", icon: "target", label: "Goals" },
   { id: "reports", icon: "chart-no-axes-combined", label: "Reports" },
   { id: "insights", icon: "sparkles", label: "Insights" },
-  { id: "settings", icon: "settings-2", label: "Settings" },
   { id: "logout", icon: "log-out", label: "Logout", divider: true },
 ];
+
+/* ---------- Icons ----------
+   One place to build icon markup, so any HTML string can use icon("bell").
+   The observer below upgrades newly inserted <i data-lucide> placeholders.
+
+   Two guards keep this from thrashing the page: lucide's createIcons() copies
+   data-lucide onto the <svg> it generates, so a naive observer + createIcons
+   pair re-replaces every icon forever (each swap is another mutation).
+   So we (1) ignore mutations caused by lucide itself, (2) only look for
+   placeholders that are still <i>, and (3) skip the scan when none exist. */
+function icon(name, cls) {
+  return `<i data-lucide="${name}"${cls ? ` class="${cls}"` : ""} aria-hidden="true"></i>`;
+}
+let iconRefreshQueued = false;
+let iconUpgradeRunning = false;
+function refreshIcons() {
+  if (iconRefreshQueued) return;
+  iconRefreshQueued = true;
+  setTimeout(() => {
+    iconRefreshQueued = false;
+    if (!window.lucide || !window.lucide.createIcons) return;
+    // Nothing pending: already-rendered <svg> icons are left untouched.
+    if (!document.querySelector("i[data-lucide]")) return;
+    iconUpgradeRunning = true;
+    try {
+      window.lucide.createIcons();
+    } finally {
+      iconUpgradeRunning = false;
+    }
+  }, 0);
+}
+if (typeof MutationObserver === "function")
+  new MutationObserver((records) => {
+    if (iconUpgradeRunning) return;
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (
+          node.matches("i[data-lucide]") ||
+          (typeof node.querySelector === "function" &&
+            node.querySelector("i[data-lucide]"))
+        ) {
+          refreshIcons();
+          return;
+        }
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+if (document.readyState !== "loading") refreshIcons();
+else window.addEventListener("load", refreshIcons, { once: true });
 
 let state = null;
 let currentItemId = null;
@@ -860,14 +1001,48 @@ function seedData() {
 function cid() {
   return "i_" + Math.random().toString(36).slice(2, 10);
 }
+/* ---------- Date & time preferences (Settings ▸ Appearance) ----------
+   These used to be saved to the profile but nothing read them, so the two
+   selects had no visible effect. Every user-facing date/time now goes through
+   fmtDate()/fmtTime() so the choices actually apply. */
+let dateFormatPref = "MM/DD/YYYY";
+let timeFormatPref = "12h";
+function applyFormatPrefs(profile) {
+  if (profile && profile.date_format) dateFormatPref = profile.date_format;
+  if (profile && profile.time_format) timeFormatPref = profile.time_format;
+}
+function toDate(value) {
+  // null/undefined are "no value" (new Date(null) is 1970, which would silently
+  // print a real-looking time), and anything unparseable is null too.
+  if (value === null || value === undefined || value === "") return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function fmtTime(value) {
+  const d = toDate(value);
+  if (!d) return "";
+  return d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: timeFormatPref !== "24h",
+  });
+}
+function fmtDate(value) {
+  const d = toDate(value);
+  if (!d) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  const y = d.getFullYear(),
+    m = pad(d.getMonth() + 1),
+    day = pad(d.getDate());
+  if (dateFormatPref === "YYYY-MM-DD") return `${y}-${m}-${day}`;
+  if (dateFormatPref === "DD/MM/YYYY") return `${day}/${m}/${y}`;
+  return `${m}/${day}/${y}`;
+}
 function formatDueDisplay(iso) {
   if (!iso) return "";
   const d = new Date(iso),
     now = new Date();
-  const timeStr = d.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const timeStr = fmtTime(d);
   if (d.toDateString() === now.toDateString()) return "Today, " + timeStr;
   const tmrw = new Date(now);
   tmrw.setDate(now.getDate() + 1);
@@ -973,7 +1148,7 @@ async function saveQuoteToMemory(btnEl) {
   await dbSaveItem(newItem);
   if (!btnEl) return;
   const original = btnEl.textContent;
-  btnEl.textContent = "✓ Saved";
+  btnEl.innerHTML = icon("check") + " Saved";
   setTimeout(() => {
     btnEl.textContent = original;
   }, 1500);
@@ -1388,6 +1563,12 @@ function resetData() {
     );
     return;
   }
+  if (
+    !confirm(
+      "Reset all local Everything data to the empty demo state?\n\nThis cannot be undone.",
+    )
+  )
+    return;
   state = seedData();
 
   save();
@@ -1415,7 +1596,7 @@ function renderNav() {
     el.onclick = () => switchView(item.id);
     nav.appendChild(el);
   });
-  if (window.lucide) window.lucide.createIcons();
+  refreshIcons();
 }
 
 let activeView = "today";
@@ -1436,6 +1617,30 @@ function switchView(id) {
   if (id === "inbox") renderInbox();
   if (id === "memory") renderMemory();
   if (id === "people") renderPeople();
+  if (id === "settings") renderSettings();
+}
+
+function syncSidebarMode() {
+  const sidebar = document.getElementById("sidebar");
+  const btn = document.querySelector(".sidebar-collapse");
+  if (!sidebar || !btn) return;
+  const isMobile = sidebarMedia.matches;
+  const collapsed = sidebar.classList.contains("collapsed");
+  const name = isMobile ? "x" : collapsed ? "chevron-right" : "chevron-left";
+  const label = isMobile
+    ? "Close menu"
+    : collapsed
+      ? "Expand sidebar"
+      : "Collapse sidebar";
+  btn.innerHTML = icon(name);
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  const hamburger = document.getElementById("hamburger");
+  if (hamburger) {
+    hamburger.style.display = isMobile ? "flex" : "none";
+    hamburger.setAttribute("aria-expanded", String(sidebar.classList.contains("open")));
+  }
+  refreshIcons();
 }
 
 function toggleSidebar() {
@@ -1443,27 +1648,40 @@ function toggleSidebar() {
   const backdrop = document.getElementById("sidebarBackdrop");
   const isOpen = sidebar.classList.toggle("open");
   if (backdrop) backdrop.classList.toggle("visible", isOpen);
+  syncSidebarMode();
 }
 
 function closeSidebar() {
   document.getElementById("sidebar").classList.remove("open");
   const backdrop = document.getElementById("sidebarBackdrop");
   if (backdrop) backdrop.classList.remove("visible");
+  syncSidebarMode();
 }
 
 function toggleSidebarCollapse() {
   const sidebar = document.getElementById("sidebar");
-  sidebar.classList.toggle("collapsed");
+  // The rail is always the full drawer on phones, so there the same
+  // button means "close" instead of "collapse".
+  if (sidebarMedia.matches) {
+    closeSidebar();
+    return;
+  }
+  const collapsed = sidebar.classList.toggle("collapsed");
   localStorage.setItem(
     "everything_sidebar_collapsed",
-    sidebar.classList.contains("collapsed") ? "1" : "0",
+    collapsed ? "1" : "0",
   );
+  syncSidebarMode();
 }
 
 function restoreSidebarCollapse() {
   if (localStorage.getItem("everything_sidebar_collapsed") === "1")
     document.getElementById("sidebar").classList.add("collapsed");
 }
+
+const sidebarMedia = window.matchMedia("(max-width:900px)");
+if (typeof sidebarMedia.addEventListener === "function")
+  sidebarMedia.addEventListener("change", syncSidebarMode);
 
 /* ---------- Rendering ---------- */
 function timeAgo(ts) {
@@ -1479,19 +1697,20 @@ function timeAgo(ts) {
 }
 
 function kindIcon(kind) {
-  return (
+  return icon(
     {
-      task: "✓",
-      event: "📅",
-      waiting: "⏳",
-      memory: "💭",
-      project: "📁",
-      openloop: "🔴",
-      file: "📄",
-      voice: "🎙️",
-      image: "🖼️",
-      link: "🔗",
-    }[kind] || "•"
+      task: "check-square-2",
+      event: "calendar-days",
+      waiting: "hourglass",
+      memory: "brain",
+      project: "folder-kanban",
+      openloop: "circle-alert",
+      file: "file-text",
+      note: "sticky-note",
+      voice: "mic",
+      image: "image",
+      link: "link",
+    }[kind] || "circle",
   );
 }
 function kindColor(kind) {
@@ -1574,7 +1793,7 @@ function renderToday() {
   insights.innerHTML = insightData
     .map(
       (i) =>
-        `<div class="insight-item"><span>${i.icon}</span><div><div class="insight-title">${i.title}</div><div class="insight-sub">${i.sub}</div></div></div>`,
+        `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${i.title}</div><div class="insight-sub">${i.sub}</div></div></div>`,
     )
     .join("");
   document.getElementById("insightsFull").innerHTML =
@@ -1587,10 +1806,11 @@ function renderToday() {
       state.items.map((i) => new Date(i.created).toDateString()),
     ).size;
     statsEl.innerHTML = `
-      <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">📥</div><div><div class="stat-num">${totalItems}</div><div class="stat-label">Total captured</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div><div><div class="stat-num">${completedCount}</div><div class="stat-label">Completed</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📅</div><div><div class="stat-num">${activeDays}</div><div class="stat-label">Active days</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${totalItems}</div><div class="stat-label">Total captured</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${completedCount}</div><div class="stat-label">Completed</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);"><i data-lucide="calendar-days"></i></div><div><div class="stat-num">${activeDays}</div><div class="stat-label">Active days</div></div></div>
     `;
+    refreshIcons();
   }
 }
 
@@ -1601,7 +1821,7 @@ function getInsights() {
   );
   if (openLoops.length)
     arr.push({
-      icon: "✨",
+      icon: "sparkles",
       title: `You have ${openLoops.length} open loop${openLoops.length > 1 ? "s" : ""}`,
       sub: openLoops
         .map((o) => o.title)
@@ -1620,7 +1840,7 @@ function getInsights() {
   )[0];
   if (topProject)
     arr.push({
-      icon: "📁",
+      icon: "folder-kanban",
       title: `Most active project: ${topProject[0]}`,
       sub: `${topProject[1]} item${topProject[1] > 1 ? "s" : ""} linked`,
     });
@@ -1633,7 +1853,7 @@ function getInsights() {
   const topPerson = Object.entries(personCounts).sort((a, b) => b[1] - a[1])[0];
   if (topPerson)
     arr.push({
-      icon: "👤",
+      icon: "user",
       title: `You mention ${topPerson[0]} most often`,
       sub: `${topPerson[1]} linked item${topPerson[1] > 1 ? "s" : ""}`,
     });
@@ -1655,7 +1875,7 @@ function getInsights() {
       "Saturday",
     ];
     arr.push({
-      icon: "📈",
+      icon: "trending-up",
       title: `You capture the most on ${dayNames[maxDay]}s`,
       sub: `${dayCounts[maxDay]} item${dayCounts[maxDay] > 1 ? "s" : ""} total`,
     });
@@ -1665,7 +1885,7 @@ function getInsights() {
   const overdue = state.items.filter((i) => isOverdue(i));
   if (overdue.length)
     arr.push({
-      icon: "⚠️",
+      icon: "triangle-alert",
       title: `${overdue.length} task${overdue.length > 1 ? "s are" : " is"} overdue`,
       sub: overdue
         .slice(0, 3)
@@ -1677,7 +1897,7 @@ function getInsights() {
   const stale = openLoops.filter((i) => Date.now() - i.created > 7 * 86400000);
   if (stale.length)
     arr.push({
-      icon: "🕰️",
+      icon: "history",
       title: `${stale.length} open loop${stale.length > 1 ? "s have" : " has"} sat for a week+`,
       sub: stale
         .slice(0, 3)
@@ -1687,7 +1907,7 @@ function getInsights() {
 
   if (!arr.length)
     arr.push({
-      icon: "🌱",
+      icon: "sprout",
       title: "Not enough activity yet",
       sub: "Capture more to start seeing patterns.",
     });
@@ -1703,7 +1923,7 @@ function taskRow(item) {
   };
   const check = document.createElement("div");
   check.className = "checkbox" + (item.done ? " checked" : "");
-  check.textContent = item.done ? "✓" : "";
+  check.innerHTML = item.done ? icon("check") : "";
   check.onclick = () => toggleDone(item.id);
   row.appendChild(check);
 
@@ -1718,14 +1938,15 @@ function taskRow(item) {
     mediaHtml = `<a href="${item.mediaUrl}" target="_blank" style="font-size:12.5px;color:var(--accent);">Open file</a>`;
   if (item.kind === "link")
     mediaHtml = `<a href="${escapeHtml(item.title)}" target="_blank" style="font-size:12.5px;color:var(--accent);">${escapeHtml(item.title)}</a>`;
-  meta.innerHTML = `<div class="task-title">${item.scope === "private" ? "🔒 " : ""}${escapeHtml(item.kind === "link" ? "Link" : item.title)}</div><div class="task-sub">${escapeHtml(item.sub || "")}${item.person ? " · <span>👤 " + escapeHtml(item.person) + "</span>" : ""}</div>${mediaHtml}`;
+  meta.innerHTML = `<div class="task-title">${item.scope === "private" ? icon("lock") + " " : ""}${escapeHtml(item.kind === "link" ? "Link" : item.title)}</div><div class="task-sub">${escapeHtml(item.sub || "")}${item.person ? " · <span>" + icon("user") + " " + escapeHtml(item.person) + "</span>" : ""}</div>${mediaHtml}`;
   row.appendChild(meta);
 
   if (item.due) {
     const t = document.createElement("div");
     t.className = "task-time";
-    t.textContent =
-      (item.recurrence && item.recurrence !== "none" ? "🔁 " : "") + item.due;
+    t.innerHTML =
+      (item.recurrence && item.recurrence !== "none" ? icon("repeat") + " " : "") +
+      escapeHtml(item.due);
     row.appendChild(t);
   }
   const badgeText = item.priority || item.status || item.kind;
@@ -1928,8 +2149,8 @@ function renderMemory() {
       <div>${items
         .map(
           (i) => `<div class="task-row" onclick="openPanel('${i.id}')">
-        <div class="task-meta"><div class="task-title">${i.scope === "private" ? "🔒 " : ""}${escapeHtml(i.title)}</div>
-        <div class="task-sub">${timeAgo(i.created)}${i.person ? " · 👤 " + escapeHtml(i.person) : ""}</div></div>
+        <div class="task-meta"><div class="task-title">${i.scope === "private" ? icon("lock") + " " : ""}${escapeHtml(i.title)}</div>
+        <div class="task-sub">${timeAgo(i.created)}${i.person ? " · " + icon("user") + " " + escapeHtml(i.person) : ""}</div></div>
       </div>`,
         )
         .join("")}</div>
@@ -1987,7 +2208,7 @@ function openPersonModal(id, name) {
     ? items
         .map(
           (i) =>
-            `<div class="task-row" onclick="closePersonModal();openPanel('${i.id}')"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? "✓" : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`,
+            `<div class="task-row" onclick="closePersonModal();openPanel('${i.id}')"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`,
         )
         .join("")
     : '<p class="empty">No linked items yet.</p>';
@@ -2064,7 +2285,7 @@ function renderProjects() {
       </div><p style="font-size:12px;color:var(--muted);margin:-6px 0 12px;">${pct}% complete (${done}/${total})</p>`
           : ""
       }
-      ${items.length ? items.map((i) => `<div class="task-row" onclick="openPanel('${i.id}')"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? "✓" : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`).join("") : '<p class="empty">No items here yet.</p>'}
+      ${items.length ? items.map((i) => `<div class="task-row" onclick="openPanel('${i.id}')"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`).join("") : '<p class="empty">No items here yet.</p>'}
     </div>`;
     })
     .join("");
@@ -2101,7 +2322,7 @@ function renderGoals() {
   const renderRow = (g) => {
     const days = Math.floor((Date.now() - g.created) / 86400000);
     return `<div class="task-row">
-      <div class="checkbox ${g.done ? "checked" : ""}" onclick="toggleGoal('${g.id}')">${g.done ? "✓" : ""}</div>
+      <div class="checkbox ${g.done ? "checked" : ""}" onclick="toggleGoal('${g.id}')">${g.done ? icon("check") : ""}</div>
       <div class="task-meta">
         <div class="task-title" style="${g.done ? "text-decoration:line-through;color:var(--muted);" : ""}">${escapeHtml(g.title)}</div>
         <div class="task-sub">${g.done ? "Completed" : days === 0 ? "Started today" : `In progress · ${days} day${days !== 1 ? "s" : ""}`}</div>
@@ -2161,11 +2382,12 @@ function renderReports() {
   });
 
   statsEl.innerHTML = `
-    <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">✔</div><div><div class="stat-num">${completed.length}</div><div class="stat-label">Completed</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">📥</div><div><div class="stat-num">${createdThisWeek.length}</div><div class="stat-label">Captured this week</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">📈</div><div><div class="stat-num">${completionRate}%</div><div class="stat-label">Task completion rate</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);">🎯</div><div><div class="stat-num">${state.goals.filter((g) => !g.done).length}</div><div class="stat-label">Open goals</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${completed.length}</div><div class="stat-label">Completed</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${createdThisWeek.length}</div><div class="stat-label">Captured this week</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);"><i data-lucide="chart-no-axes-combined"></i></div><div><div class="stat-num">${completionRate}%</div><div class="stat-label">Task completion rate</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);"><i data-lucide="target"></i></div><div><div class="stat-num">${state.goals.filter((g) => !g.done).length}</div><div class="stat-label">Open goals</div></div></div>
   `;
+  refreshIcons();
 
   const completedEl = document.getElementById("reportCompleted");
   completedEl.innerHTML = completed.length
@@ -2174,7 +2396,7 @@ function renderReports() {
         .slice(0, 10)
         .map(
           (i) =>
-            `<div class="task-row"><div class="checkbox checked">✓</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">Completed ${timeAgo(completedWhen(i))}</div></div></div>`,
+            `<div class="task-row"><div class="checkbox checked">${icon("check")}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">Completed ${timeAgo(completedWhen(i))}</div></div></div>`,
         )
         .join("")
     : '<p class="empty">Nothing finished yet.</p>';
@@ -2234,7 +2456,7 @@ function renderActivityChart(days) {
       const capturedH = Math.round((b.captured / max) * 100);
       const completedH = Math.round((b.completed / max) * 100);
       const label = b.date.toLocaleDateString(undefined, { day: "numeric" });
-      const tip = `${b.date.toLocaleDateString()} — ${b.captured} captured, ${b.completed} completed`;
+      const tip = `${fmtDate(b.date)} — ${b.captured} captured, ${b.completed} completed`;
       return `<div class="chart-col" title="${tip}">
       <div class="chart-bars">
         <div class="chart-bar" style="height:${capturedH}%;background:var(--accent);"></div>
@@ -2319,16 +2541,42 @@ function renderWeekView() {
       html += `<div class="cal-hour-row"></div>`;
     });
 
-    scheduled
+    // Events are placed in lanes so simultaneous items sit side by side
+    // instead of stacking on top of each other, and are clamped to the body
+    // so nothing spills past the 8 PM row.
+    const bodyHeight = hours.length * rowHeight;
+    const dayItems = scheduled
       .filter((i) => new Date(i.dueDate).toDateString() === day.toDateString())
-      .forEach((item) => {
+      .map((item) => {
         const d = new Date(item.dueDate);
-        const hour = d.getHours() + d.getMinutes() / 60;
-        if (hour < startHour || hour > endHour + 1) return;
-        const top = (hour - startHour) * rowHeight;
-        const [bg, fg] = kindColor(item.kind);
-        html += `<div class="cal-week-event" style="top:${top}px;height:${rowHeight - 4}px;background:${bg};color:${fg};" onclick="openPanel('${item.id}')"><b>${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</b> ${escapeHtml(item.title)}</div>`;
-      });
+        const start = d.getHours() + d.getMinutes() / 60;
+        return { item, d, start };
+      })
+      .filter((e) => e.start >= startHour && e.start < endHour + 1)
+      .sort((a, b) => a.start - b.start);
+
+    const laneEnds = [];
+    dayItems.forEach((e) => {
+      let lane = laneEnds.findIndex((end) => end <= e.start);
+      if (lane === -1) {
+        laneEnds.push(e.start + 1);
+        lane = laneEnds.length - 1;
+      } else {
+        laneEnds[lane] = e.start + 1;
+      }
+      e.lane = lane;
+    });
+    const laneCount = Math.max(laneEnds.length, 1);
+    const laneWidth = 100 / laneCount;
+
+    dayItems.forEach((e) => {
+      const top = Math.max(0, (e.start - startHour) * rowHeight);
+      const height = Math.min(rowHeight - 4, bodyHeight - top);
+      if (height < 14) return;
+      const [bg, fg] = kindColor(e.item.kind);
+      const time = fmtTime(e.d);
+      html += `<div class="cal-week-event" title="${escapeHtml(time + " " + e.item.title)}" style="top:${top}px;height:${height}px;left:calc(${(e.lane * laneWidth).toFixed(4)}% + 4px);width:calc(${laneWidth.toFixed(4)}% - 8px);background:${bg};color:${fg};" onclick="openPanel('${e.item.id}')"><b>${time}</b> ${escapeHtml(e.item.title)}</div>`;
+    });
     html += `</div></div>`;
   });
   html += `</div></div>`;
@@ -2380,13 +2628,7 @@ function renderMonthView() {
         const ev = document.createElement("div");
         ev.className = "cal-event";
         ev.onclick = () => openPanel(item.id);
-        ev.textContent =
-          new Date(item.dueDate).toLocaleTimeString(undefined, {
-            hour: "numeric",
-            minute: "2-digit",
-          }) +
-          " " +
-          item.title;
+        ev.textContent = fmtTime(item.dueDate) + " " + item.title;
         c.appendChild(ev);
       });
     grid.appendChild(c);
@@ -2412,8 +2654,10 @@ function openPanel(id) {
     ? "Complete" +
       (completedWhen(item) ? " · " + timeAgo(completedWhen(item)) : "")
     : item.status || "Open";
-  document.getElementById("panelVisibility").textContent =
-    item.scope === "private" ? "🔒 Private (only you)" : "🌐 Shared";
+  document.getElementById("panelVisibility").innerHTML =
+    item.scope === "private"
+      ? icon("lock") + " Private (only you)"
+      : icon("globe") + " Shared";
   document.getElementById("panelCreated").textContent = new Date(
     item.created,
   ).toLocaleString();
@@ -2435,14 +2679,14 @@ function renderRelatedChips(item) {
 
   if (item.person) {
     chips.push({
-      label: `👤 ${item.person}`,
+      label: `${icon("user")} ${item.person}`,
       tag: "Person",
       onclick: `closePanel();openPersonModal(null,'${escapeHtml(item.person)}')`,
     });
   }
   if (item.project) {
     chips.push({
-      label: `📁 ${item.project}`,
+      label: `${icon("folder-kanban")} ${item.project}`,
       tag: "Project",
       onclick: `closePanel();switchView('projects')`,
     });
@@ -2634,16 +2878,16 @@ async function deleteProject(id, name) {
 
 /* ---------- Capture modal ---------- */
 const CAPTURE_TYPES = [
-  { id: "text", label: "📝 Text" },
-  { id: "task", label: "✓ Task" },
-  { id: "event", label: "📅 Event" },
-  { id: "memory", label: "💭 Memory" },
-  { id: "waiting", label: "⏳ Waiting for" },
-  { id: "openloop", label: "🔴 Open loop" },
-  { id: "voice", label: "🎙️ Voice" },
-  { id: "image", label: "🖼️ Image" },
-  { id: "file", label: "📄 File" },
-  { id: "link", label: "🔗 Link" },
+  { id: "text", icon: "file-text", label: "Text" },
+  { id: "task", icon: "check-square-2", label: "Task" },
+  { id: "event", icon: "calendar-days", label: "Event" },
+  { id: "memory", icon: "brain", label: "Memory" },
+  { id: "waiting", icon: "hourglass", label: "Waiting for" },
+  { id: "openloop", icon: "circle-help", label: "Open loop" },
+  { id: "voice", icon: "mic", label: "Voice" },
+  { id: "image", icon: "image", label: "Image" },
+  { id: "file", icon: "paperclip", label: "File" },
+  { id: "link", icon: "link", label: "Link" },
 ];
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -2652,8 +2896,14 @@ let recordingInterval = null;
 let pendingBlob = null;
 let pendingBlobExt = null;
 
-async function toggleVoiceRecording() {
+function setVoiceRecordLabel(label, icon) {
   const btn = document.getElementById("voiceRecordBtn");
+  if (!btn) return;
+  btn.innerHTML = `<i data-lucide="${icon || "mic"}" aria-hidden="true"></i><span id="voiceRecordLabel">${label}</span>`;
+  refreshIcons();
+}
+
+async function toggleVoiceRecording() {
   if (mediaRecorder && mediaRecorder.state === "recording") {
     mediaRecorder.stop();
     return;
@@ -2671,12 +2921,12 @@ async function toggleVoiceRecording() {
       document.getElementById("voicePreview").style.display = "block";
       clearInterval(recordingInterval);
       document.getElementById("voiceTimer").textContent = "";
-      btn.textContent = "🎙️ Re-record";
+      setVoiceRecordLabel("Re-record", "mic");
       stream.getTracks().forEach((t) => t.stop());
     };
     mediaRecorder.start();
     recordingSeconds = 0;
-    btn.textContent = "⏹️ Stop recording";
+    setVoiceRecordLabel("Stop recording", "square");
     recordingInterval = setInterval(() => {
       recordingSeconds++;
       document.getElementById("voiceTimer").textContent =
@@ -2735,8 +2985,9 @@ function openCapture() {
   const row = document.getElementById("typeRow");
   row.innerHTML = CAPTURE_TYPES.map(
     (t) =>
-      `<div class="type-chip ${t.id === captureType ? "active" : ""}" data-type="${t.id}" onclick="pickType('${t.id}', true)">${t.label}</div>`,
+      `<div class="type-chip ${t.id === captureType ? "active" : ""}" data-type="${t.id}" onclick="pickType('${t.id}', true)"><i data-lucide="${t.icon}"></i><span>${t.label}</span></div>`,
   ).join("");
+  refreshIcons();
   document.getElementById("captureText").value = "";
   document.getElementById("captureHint").textContent = "";
   populateProjectSelect();
@@ -2758,7 +3009,7 @@ function openCapture() {
   pendingBlobExt = null;
   if (mediaRecorder && mediaRecorder.state === "recording")
     mediaRecorder.stop();
-  document.getElementById("voiceRecordBtn").textContent = "🎙️ Start recording";
+  setVoiceRecordLabel("Start recording", "mic");
   setTimeout(() => document.getElementById("captureText").focus(), 50);
 }
 function populateProjectSelect() {
@@ -2822,7 +3073,8 @@ function onCaptureInput() {
   }
 
   clearTimeout(extractDebounce);
-  document.getElementById("captureHint").textContent = "✨ Reading…";
+  document.getElementById("captureHint").innerHTML =
+    icon("sparkles") + " Reading…";
   extractDebounce = setTimeout(() => extractWithAI(text), 700);
 }
 
@@ -2884,8 +3136,8 @@ function applyExtraction(data) {
   if (data.kind) parts.push(data.kind);
   if (data.dueDate) parts.push("due " + formatDueDisplay(data.dueDate));
   if (data.person) parts.push("person: " + data.person);
-  document.getElementById("captureHint").textContent = parts.length
-    ? `✨ AI detected: ${parts.join(", ")} — edit any field to override.`
+  document.getElementById("captureHint").innerHTML = parts.length
+    ? `${icon("sparkles")} AI detected: ${escapeHtml(parts.join(", "))} — edit any field to override.`
     : "";
 }
 
@@ -3793,7 +4045,7 @@ function renderNotifPanel() {
         .map(
           (i) => `
     <div class="task-row" style="padding:9px 14px;" onclick="toggleNotifPanel();openPanel('${i.id}')">
-      <div class="task-meta"><div class="task-title">${isOverdue(i) ? "⚠️ " : ""}${escapeHtml(i.title)}</div>
+      <div class="task-meta"><div class="task-title">${isOverdue(i) ? icon("triangle-alert") + " " : ""}${escapeHtml(i.title)}</div>
       <div class="task-sub">${isOverdue(i) ? "Overdue" : i.due || "Waiting for"}</div></div>
     </div>`,
         )
@@ -3918,13 +4170,14 @@ function updateNotifBtn() {
   const btn = document.getElementById("notifBtn");
   if (!btn || !("Notification" in window)) return;
   const perm = Notification.permission;
-  btn.textContent =
+  btn.innerHTML =
     perm === "granted"
-      ? "✓ Enabled"
+      ? icon("circle-check") + "<span>Enabled</span>"
       : perm === "denied"
-        ? "Blocked — check browser settings"
-        : "Enable notifications";
+        ? "<span>Blocked — check browser settings</span>"
+        : "<span>Enable notifications</span>";
   renderNotificationStatus();
+  refreshIcons();
 }
 
 /* Shows the user *how* they will be reached right now, which is the honest answer to
@@ -3982,7 +4235,7 @@ function renderNotificationLog() {
           (row) => `
     <div class="field-row" style="padding:6px 0; align-items:flex-start;">
       <span class="field-label" style="flex:1;">${escapeHtml(row.title || "Reminder")}</span>
-      <span style="font-size:12px;text-align:right;">${escapeHtml(row.status)} · ${escapeHtml(row.channel)}<br />${new Date(row.created_at).toLocaleTimeString()}</span>
+      <span style="font-size:12px;text-align:right;">${escapeHtml(row.status)} · ${escapeHtml(row.channel)}<br />${escapeHtml(fmtTime(row.created_at))}</span>
     </div>`,
         )
         .join("")
@@ -3996,7 +4249,18 @@ async function testNotification() {
     alert("Notifications aren't supported in this browser.");
     return;
   }
+  const btn = document.getElementById("notifTestBtn");
+  if (btn) btn.disabled = true;
+  try {
+    await runNotificationTest();
+  } finally {
+    if (btn) btn.disabled = false;
+    // The delivery log and scheduled count may have changed.
+    renderNotificationStatus();
+  }
+}
 
+async function runNotificationTest() {
   if (!(await requestNotificationPermission())) {
     updateNotifBtn();
     alert("Allow notifications first, then try again.");
@@ -4241,7 +4505,7 @@ async function handleNotificationAction(action, itemId) {
     item.notifiedAt = "";
     forgetNotified(item.id);
     await dbSaveItem(item);
-    logNotification(item, "snoozed", "in_app", `until ${new Date(item.snoozedUntil).toLocaleTimeString()}`);
+    logNotification(item, "snoozed", "in_app", `until ${fmtTime(item.snoozedUntil)}`);
     renderNotificationStatus();
     return;
   }
@@ -4367,12 +4631,6 @@ function initReminderDelivery() {
 }
 /* ---------- Init ---------- */
 restoreRememberedEmail();
-document.getElementById("hamburger").style.display =
-  window.innerWidth < 900 ? "flex" : "none";
-window.addEventListener("resize", () => {
-  document.getElementById("hamburger").style.display =
-    window.innerWidth < 900 ? "flex" : "none";
-});
 if (window.claude) {
   initMultiUser();
 } else {
@@ -4388,6 +4646,8 @@ if (window.claude) {
     document.documentElement.setAttribute("data-theme", state.theme);
 }
 restoreSidebarCollapse();
+syncSidebarMode();
+refreshIcons();
 updateNotifBtn();
 renderQuote();
 restoreNudge();

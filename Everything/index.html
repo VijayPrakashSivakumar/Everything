@@ -78,7 +78,7 @@
                 cursor: pointer;
                 font-size: 15px;
               "
-              >👁️</span
+              ><i data-lucide="eye" aria-hidden="true"></i></span
             >
           </div>
           <label
@@ -191,7 +191,7 @@
                 cursor: pointer;
                 font-size: 15px;
               "
-              >👁️</span
+              ><i data-lucide="eye" aria-hidden="true"></i></span
             >
           </div>
           <p
@@ -216,12 +216,11 @@
     <div class="app">
       <div class="sidebar" id="sidebar">
         <div class="brand">
-          <div class="brand-mark-shell">
-            <svg
-              class="brand-mark"
-              viewBox="0 0 40 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
+          <svg
+            class="brand-mark"
+            viewBox="0 0 40 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
             <defs>
               <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stop-color="#4361ee" />
@@ -235,8 +234,7 @@
               stroke-width="4.5"
               stroke-linecap="round"
             />
-            </svg>
-          </div>
+          </svg>
           <div class="brand-name">EVERYTHING</div>
           <button
             class="sidebar-collapse"
@@ -244,13 +242,29 @@
             title="Collapse sidebar"
             aria-label="Collapse sidebar"
           >
-            ‹
+            <i data-lucide="chevron-left" aria-hidden="true"></i>
           </button>
         </div>
         <div class="sidebar-caption">MENU</div>
         <div class="nav" id="navList"></div>
         <button class="capture-btn" onclick="openCapture()">
-          <span class="capture-icon">＋</span><span class="capture-label">Capture</span>
+          <span class="capture-icon" aria-hidden="true">
+            <svg class="capture-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="captureGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#ffffff" />
+                  <stop offset="100%" stop-color="#e7e9ff" />
+                </linearGradient>
+              </defs>
+              <path
+                d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
+                fill="none"
+                stroke="url(#captureGrad)"
+                stroke-width="5"
+                stroke-linecap="round"
+              />
+            </svg>
+          </span><span class="capture-label">Capture</span>
         </button>
         <button class="sidebar-profile" onclick="switchView('settings')" title="Open settings">
           <span class="sidebar-profile-avatar" id="sidebarProfileInitial">V</span>
@@ -271,8 +285,12 @@
             onclick="toggleSidebar()"
             style="display: none"
             id="hamburger"
+            title="Open menu"
+            aria-label="Open menu"
+            aria-controls="sidebar"
+            aria-expanded="false"
           >
-            ☰
+            <i data-lucide="menu" aria-hidden="true"></i>
           </button>
           <button
             class="icon-btn mobile-capture-btn"
@@ -280,15 +298,24 @@
             title="Capture"
             aria-label="Capture"
           >
-            ＋
+            <!-- Same brand paint as the sidebar mark, so both read as one logo. -->
+            <svg class="capture-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path
+                d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
+                fill="none"
+                stroke="url(#logoGrad)"
+                stroke-width="5"
+                stroke-linecap="round"
+              />
+            </svg>
           </button>
           <div class="search-box" onclick="openAsk()">
-            <span>🔍</span>
+            <i data-lucide="search" aria-hidden="true"></i>
             <input readonly placeholder="Search anything or ask a question…" />
             <span class="kbd" id="searchKbdHint">Ctrl K</span>
           </div>
           <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">
-            🌓
+            <i data-lucide="sun-moon" aria-hidden="true"></i>
           </div>
           <div style="position: relative">
             <div
@@ -297,7 +324,7 @@
               title="Notifications"
               style="cursor: pointer"
             >
-              🔔<span
+              <i data-lucide="bell" aria-hidden="true"></i><span
                 class="theme-dot"
                 id="notifDot"
                 style="display: none"
@@ -412,7 +439,7 @@
                   class="stat-icon"
                   style="background: var(--blue-bg); color: var(--blue-fg)"
                 >
-                  ✓
+                  <i data-lucide="check-square-2" aria-hidden="true"></i>
                 </div>
                 <div>
                   <div class="stat-num" id="statTasks">0</div>
@@ -429,7 +456,7 @@
                   class="stat-icon"
                   style="background: var(--purple-bg); color: var(--purple-fg)"
                 >
-                  📅
+                  <i data-lucide="calendar-days" aria-hidden="true"></i>
                 </div>
                 <div>
                   <div class="stat-num" id="statEvents">0</div>
@@ -446,7 +473,7 @@
                   class="stat-icon"
                   style="background: var(--amber-bg); color: var(--amber-fg)"
                 >
-                  ⏳
+                  <i data-lucide="hourglass" aria-hidden="true"></i>
                 </div>
                 <div>
                   <div class="stat-num" id="statWaiting">0</div>
@@ -463,7 +490,7 @@
                   class="stat-icon"
                   style="background: var(--green-bg); color: var(--green-fg)"
                 >
-                  ✔
+                  <i data-lucide="circle-check" aria-hidden="true"></i>
                 </div>
                 <div>
                   <div class="stat-num" id="statOpen">0</div>
@@ -529,7 +556,9 @@
                       onclick="saveQuoteToMemory(this)"
                       title="Save quote to memory"
                     >
-                      <span class="quote-action-icon" aria-hidden="true">✦</span>
+                      <span class="quote-action-icon" aria-hidden="true">
+                        <i data-lucide="sparkles"></i>
+                      </span>
                       <span>Save</span>
                     </button>
                   </div>
@@ -749,50 +778,63 @@
               Manage your account, preferences, and app settings.
             </p>
 
-            <div
-              style="
-                display: grid;
-                grid-template-columns: 180px 1fr 260px;
-                gap: 16px;
-                align-items: start;
-              "
-            >
-              <div class="card" style="padding: 8px">
-                <div
+            <div class="settings-grid">
+              <div class="card settings-tabs">
+                <button
+                  type="button"
                   class="tab-vert active"
+                  role="tab"
                   data-tab="account"
+                  aria-selected="true"
                   onclick="showSettingsTab('account')"
                 >
-                  👤 Account
-                </div>
-                <div
+                  <i data-lucide="user-round" aria-hidden="true"></i>
+                  <span>Profile</span>
+                </button>
+                <button
+                  type="button"
                   class="tab-vert"
+                  role="tab"
                   data-tab="notifications"
+                  aria-selected="false"
                   onclick="showSettingsTab('notifications')"
                 >
-                  🔔 Notifications
-                </div>
-                <div
+                  <i data-lucide="bell" aria-hidden="true"></i>
+                  <span>Notifications</span>
+                </button>
+                <button
+                  type="button"
                   class="tab-vert"
+                  role="tab"
                   data-tab="appearance"
+                  aria-selected="false"
                   onclick="showSettingsTab('appearance')"
                 >
-                  🎨 Appearance
-                </div>
-                <div
+                  <i data-lucide="palette" aria-hidden="true"></i>
+                  <span>Appearance</span>
+                </button>
+                <button
+                  type="button"
                   class="tab-vert"
+                  role="tab"
                   data-tab="household"
+                  aria-selected="false"
                   onclick="showSettingsTab('household')"
                 >
-                  🏠 Household
-                </div>
-                <div
+                  <i data-lucide="house" aria-hidden="true"></i>
+                  <span>Household</span>
+                </button>
+                <button
+                  type="button"
                   class="tab-vert"
+                  role="tab"
                   data-tab="danger"
+                  aria-selected="false"
                   onclick="showSettingsTab('danger')"
                 >
-                  ⚠️ Account
-                </div>
+                  <i data-lucide="triangle-alert" aria-hidden="true"></i>
+                  <span>Account &amp; data</span>
+                </button>
               </div>
 
               <div>
@@ -800,8 +842,13 @@
                   <div class="card">
                     <div class="card-head">
                       <h3>Account Information</h3>
-                      <button class="btn primary" onclick="saveProfile()">
-                        Save Changes
+                      <button
+                        class="btn primary"
+                        id="saveProfileBtn"
+                        onclick="saveProfile(this)"
+                      >
+                        <i data-lucide="save" aria-hidden="true"></i>
+                        <span>Save Changes</span>
                       </button>
                     </div>
                     <div
@@ -835,9 +882,18 @@
                         style="display: none"
                         onchange="uploadAvatar()"
                       />
-                      <span style="font-size: 12.5px; color: var(--muted)"
-                        >Click your avatar to change it</span
+                      <span
+                        style="
+                          display: flex;
+                          flex-direction: column;
+                          gap: 3px;
+                          font-size: 12.5px;
+                          color: var(--muted);
+                        "
                       >
+                        <span>Click your avatar to change it</span>
+                        <span id="profileSaveHint" class="save-hint"></span>
+                      </span>
                     </div>
                     <div
                       style="
@@ -900,8 +956,13 @@
                     <div id="notifStatus" style="margin-top: 10px"></div>
                     <div class="field-row" style="margin-top: 12px">
                       <span class="field-label">Test both delivery paths</span
-                      ><button class="btn" onclick="testNotification()">
-                        Send test
+                      ><button
+                        class="btn"
+                        id="notifTestBtn"
+                        onclick="testNotification()"
+                      >
+                        <i data-lucide="send" aria-hidden="true"></i>
+                        <span>Send test</span>
                       </button>
                     </div>
                     <p
@@ -1017,12 +1078,14 @@
                     </div>
                     <div class="field-row">
                       <span class="field-label">Household name</span
-                      ><input
-                        class="capture-input"
-                        id="householdNameInput"
-                        style="max-width: 180px; text-align: right"
-                        onblur="saveHouseholdName()"
-                      />
+                      ><span style="display: flex; align-items: center; gap: 8px"
+                        ><span id="householdSaveHint" class="save-hint"></span
+                        ><input
+                          class="capture-input"
+                          id="householdNameInput"
+                          style="max-width: 180px; text-align: right"
+                          onblur="saveHouseholdName()"
+                      /></span>
                     </div>
                     <div class="field-row">
                       <span class="field-label">Your invite code</span
@@ -1050,8 +1113,13 @@
                           margin: 4px 0;
                         "
                       ></p>
-                      <button class="btn primary" onclick="joinHousehold()">
-                        Join
+                      <button
+                        class="btn primary"
+                        id="joinHouseholdBtn"
+                        onclick="joinHousehold()"
+                      >
+                        <i data-lucide="log-in" aria-hidden="true"></i>
+                        <span>Join</span>
                       </button>
                     </div>
                   </div>
@@ -1069,7 +1137,8 @@
                     <div class="field-row">
                       <span class="field-label">Sign out</span
                       ><button class="btn" onclick="authSignOut()">
-                        Sign out
+                        <i data-lucide="log-out" aria-hidden="true"></i>
+                        <span>Sign out</span>
                       </button>
                     </div>
                   </div>
@@ -1089,7 +1158,8 @@
                     </p>
                     <div style="display: flex; gap: 8px; flex-wrap: wrap">
                       <button class="btn" onclick="exportData()">
-                        ⬇️ Export backup
+                        <i data-lucide="download" aria-hidden="true"></i>
+                        <span>Export backup</span>
                       </button>
                       <button
                         class="btn"
@@ -1097,7 +1167,8 @@
                           document.getElementById('importDataInput').click()
                         "
                       >
-                        ⬆️ Import backup
+                        <i data-lucide="upload" aria-hidden="true"></i>
+                        <span>Import backup</span>
                       </button>
                     </div>
                     <input
@@ -1115,14 +1186,15 @@
                     <div class="field-row">
                       <span class="field-label">Reset prototype data</span
                       ><button class="btn danger" onclick="resetData()">
-                        Reset
+                        <i data-lucide="rotate-ccw" aria-hidden="true"></i>
+                        <span>Reset</span>
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div>
+              <div class="settings-aside">
                 <div class="card">
                   <div class="card-head">
                     <h3>Your Account</h3>
@@ -1137,7 +1209,8 @@
                     Manage your profile and account details.
                   </p>
                   <button class="btn" onclick="showSettingsTab('account')">
-                    👤 Edit Profile
+                    <i data-lucide="square-pen" aria-hidden="true"></i>
+                    <span>Edit Profile</span>
                   </button>
                 </div>
                 <div class="hero-card" style="min-height: auto; padding: 16px">
@@ -1272,7 +1345,9 @@
     <div class="panel" id="panel">
       <div class="panel-head">
         <span id="panelBadge" class="badge high">High</span>
-        <button class="close-x" onclick="closePanel()">✕</button>
+        <button class="close-x" onclick="closePanel()" aria-label="Close">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
       </div>
       <div class="panel-body">
         <h2 id="panelTitle" style="margin: 0 0 6px; font-size: 19px"></h2>
@@ -1335,11 +1410,18 @@
         </div>
       </div>
       <div class="panel-actions">
-        <button class="btn" onclick="openEditModal()">✏️ Edit</button>
-        <button class="btn primary" onclick="completeCurrent()">
-          ✓ Mark complete
+        <button class="btn" onclick="openEditModal()">
+          <i data-lucide="pencil" aria-hidden="true"></i>
+          <span>Edit</span>
         </button>
-        <button class="btn danger" onclick="deleteCurrent()">Delete</button>
+        <button class="btn primary" onclick="completeCurrent()">
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>Mark complete</span>
+        </button>
+        <button class="btn danger" onclick="deleteCurrent()">
+          <i data-lucide="trash-2" aria-hidden="true"></i>
+          <span>Delete</span>
+        </button>
       </div>
     </div>
 
@@ -1356,7 +1438,8 @@
             id="voiceRecordBtn"
             onclick="toggleVoiceRecording()"
           >
-            🎙️ Start recording
+            <i data-lucide="mic" aria-hidden="true"></i
+            ><span id="voiceRecordLabel">Start recording</span>
           </button>
           <span
             id="voiceTimer"
@@ -1414,7 +1497,7 @@
             data-scope="shared"
             onclick="pickScope('shared')"
           >
-            🌐 Shared
+            <i data-lucide="users" aria-hidden="true"></i><span>Shared</span>
           </div>
 
           <div
@@ -1422,7 +1505,7 @@
             data-scope="private"
             onclick="pickScope('private')"
           >
-            🔒 Private (only me)
+            <i data-lucide="lock-keyhole" aria-hidden="true"></i><span>Private (only me)</span>
           </div>
         </div>
 
@@ -1766,14 +1849,16 @@
       onclick="if (event.target === this) closeAsk();"
     >
       <div class="ask-box">
+        <button class="close-x" onclick="closeAsk()" aria-label="Close">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
         <div class="ask-input-row">
-          <span>🔍</span>
+          <i data-lucide="search" aria-hidden="true"></i>
           <input
             id="askInput"
             placeholder="Search anything or ask a question…"
             oninput="runAsk(this.value)"
           />
-          <button class="close-x" onclick="closeAsk()">✕</button>
         </div>
         <div class="ask-results" id="askResults">
           <p class="empty">
