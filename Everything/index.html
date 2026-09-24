@@ -6,7 +6,10 @@
        load, script.js falls back to its own built-in date regexes. -->
     <script src="https://cdn.jsdelivr.net/npm/chrono-node@1/dist/chrono.min.js"></script>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><path d=%22M12 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%234361ee%22 stroke-width=%224%22/><path d=%22M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%237b2ff7%22 stroke-width=%224%22/></svg>"
@@ -249,18 +252,12 @@
         <div class="nav" id="navList"></div>
         <button class="capture-btn" onclick="openCapture()">
           <span class="capture-icon" aria-hidden="true">
-            <svg class="capture-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="captureGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#ffffff" />
-                  <stop offset="100%" stop-color="#e7e9ff" />
-                </linearGradient>
-              </defs>
+            <svg class="capture-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
               <path
                 d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
                 fill="none"
-                stroke="url(#captureGrad)"
-                stroke-width="5"
+                stroke="url(#logoGrad)"
+                stroke-width="4.5"
                 stroke-linecap="round"
               />
             </svg>
@@ -293,7 +290,7 @@
             <i data-lucide="menu" aria-hidden="true"></i>
           </button>
           <button
-            class="icon-btn mobile-capture-btn"
+            class="mobile-capture-btn"
             onclick="openCapture()"
             title="Capture"
             aria-label="Capture"
@@ -304,7 +301,7 @@
                 d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
                 fill="none"
                 stroke="url(#logoGrad)"
-                stroke-width="5"
+                stroke-width="4.5"
                 stroke-linecap="round"
               />
             </svg>
@@ -314,10 +311,15 @@
             <input readonly placeholder="Search anything or ask a question…" />
             <span class="kbd" id="searchKbdHint">Ctrl K</span>
           </div>
-          <div class="icon-btn" onclick="toggleTheme()" title="Toggle theme">
+          <button
+            class="icon-btn theme-toggle"
+            onclick="toggleTheme()"
+            title="Toggle theme"
+            aria-label="Toggle theme"
+          >
             <i data-lucide="sun-moon" aria-hidden="true"></i>
-          </div>
-          <div style="position: relative">
+          </button>
+          <div class="topbar-menu-wrap">
             <div
               class="icon-btn"
               onclick="toggleNotifPanel()"
@@ -360,7 +362,7 @@
               <div id="notifList"></div>
             </div>
           </div>
-          <div style="position: relative">
+          <div class="topbar-menu-wrap">
             <div
               class="avatar"
               id="avatarWrap"
@@ -623,18 +625,9 @@
           <!-- CALENDAR VIEW -->
           <div class="view" id="view-schedule">
             <h1 class="page-title">Schedule</h1>
-            <div
-              style="
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                flex-wrap: wrap;
-                gap: 10px;
-                margin-bottom: 14px;
-              "
-            >
+            <div class="calendar-toolbar">
               <p class="page-sub" id="calRangeLabel" style="margin: 0"></p>
-              <div style="display: flex; align-items: center; gap: 8px">
+              <div class="calendar-controls">
                 <button class="btn" onclick="calNav(-1)">‹</button>
                 <button class="btn" onclick="calGoToday()">Today</button>
                 <button class="btn" onclick="calNav(1)">›</button>
@@ -657,7 +650,9 @@
               </div>
             </div>
             <div id="calWeekView"></div>
-            <div class="cal-grid" id="calGrid" style="display: none"></div>
+            <div class="calendar-month-scroll">
+              <div class="cal-grid" id="calGrid" style="display: none"></div>
+            </div>
           </div>
 
           <!-- MEMORY VIEW -->
@@ -852,6 +847,7 @@
                       </button>
                     </div>
                     <div
+                      class="profile-summary"
                       style="
                         display: flex;
                         gap: 16px;
@@ -896,6 +892,7 @@
                       </span>
                     </div>
                     <div
+                      class="profile-fields"
                       style="
                         display: grid;
                         grid-template-columns: 1fr 1fr;
@@ -1427,8 +1424,13 @@
 
     <!-- Capture modal -->
     <div class="modal-overlay" id="captureModal">
-      <div class="modal">
-        <h3>Capture something</h3>
+      <div class="modal modal-capture">
+        <div class="modal-head">
+          <h3>Capture something</h3>
+          <button class="close-x modal-close" onclick="closeCapture()" aria-label="Close capture dialog">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
 
         <!-- Capture type -->
         <div class="type-row" id="typeRow"></div>
@@ -1657,7 +1659,12 @@
     <!-- Edit modal -->
     <div class="modal-overlay" id="editModal">
       <div class="modal">
-        <h3>Edit item</h3>
+        <div class="modal-head">
+          <h3>Edit item</h3>
+          <button class="close-x modal-close" onclick="closeEditModal()" aria-label="Close edit dialog">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
 
         <!-- Title -->
         <input class="capture-input" id="editTitle" placeholder="Title" />
@@ -1810,7 +1817,12 @@
 
     <div class="modal-overlay" id="personModal">
       <div class="modal">
-        <h3 id="personModalName">Person</h3>
+        <div class="modal-head">
+          <h3 id="personModalName">Person</h3>
+          <button class="close-x modal-close" onclick="closePersonModal()" aria-label="Close person dialog">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
         <label style="font-size: 12.5px; color: var(--muted)">Notes</label>
         <textarea
           id="personNotes"

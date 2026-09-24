@@ -1556,6 +1556,16 @@ function save() {
     console.error("save failed", e);
   }
 }
+function lockPageScroll(locked) {
+  if (locked) {
+    document.body.classList.add("overlay-open");
+    return;
+  }
+  const hasOpenLayer = document.querySelector(
+    ".modal-overlay.open, .ask-overlay.open, #panel.open, #sidebar.open",
+  );
+  document.body.classList.toggle("overlay-open", !!hasOpenLayer);
+}
 function resetData() {
   if (db) {
     alert(
@@ -1618,6 +1628,9 @@ function switchView(id) {
   if (id === "memory") renderMemory();
   if (id === "people") renderPeople();
   if (id === "settings") renderSettings();
+
+  const content = document.querySelector(".content");
+  if (content) content.scrollTo({ top: 0, left: 0, behavior: "auto" });
 }
 
 function syncSidebarMode() {
@@ -1640,21 +1653,37 @@ function syncSidebarMode() {
     hamburger.style.display = isMobile ? "flex" : "none";
     hamburger.setAttribute("aria-expanded", String(sidebar.classList.contains("open")));
   }
+  if (isMobile) {
+    sidebar.setAttribute("aria-hidden", String(!sidebar.classList.contains("open")));
+  } else {
+    sidebar.removeAttribute("aria-hidden");
+  }
   refreshIcons();
 }
 
 function toggleSidebar() {
   const sidebar = document.getElementById("sidebar");
   const backdrop = document.getElementById("sidebarBackdrop");
+  if (!sidebar) return;
   const isOpen = sidebar.classList.toggle("open");
+  if (sidebarMedia.matches) {
+    sidebar.setAttribute("aria-hidden", String(!isOpen));
+  } else {
+    sidebar.removeAttribute("aria-hidden");
+  }
   if (backdrop) backdrop.classList.toggle("visible", isOpen);
+  lockPageScroll(isOpen);
   syncSidebarMode();
 }
 
 function closeSidebar() {
-  document.getElementById("sidebar").classList.remove("open");
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+  sidebar.classList.remove("open");
+  if (sidebarMedia.matches) sidebar.setAttribute("aria-hidden", "true");
   const backdrop = document.getElementById("sidebarBackdrop");
   if (backdrop) backdrop.classList.remove("visible");
+  lockPageScroll(false);
   syncSidebarMode();
 }
 
@@ -2213,10 +2242,13 @@ function openPersonModal(id, name) {
         .join("")
     : '<p class="empty">No linked items yet.</p>';
   document.getElementById("personModal").classList.add("open");
+  lockPageScroll(true);
 }
 function closePersonModal() {
   document.getElementById("personModal").classList.remove("open");
   currentPersonName = null;
+  if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open"))
+    lockPageScroll(false);
 }
 async function savePersonNotes() {
   if (!currentPersonName) return;
@@ -2640,6 +2672,7 @@ function openPanel(id) {
   currentItemId = id;
   const item = state.items.find((i) => i.id === id);
   if (!item) return;
+  lockPageScroll(true);
   document.getElementById("panelTitle").textContent = item.title;
   document.getElementById("panelDesc").textContent = item.sub || "";
   document.getElementById("panelType").textContent =
@@ -2726,6 +2759,8 @@ function closePanel() {
   document.getElementById("overlay").classList.remove("open");
   document.getElementById("panel").classList.remove("open");
   currentItemId = null;
+  if (!document.querySelector(".modal-overlay.open, .ask-overlay.open"))
+    lockPageScroll(false);
 }
 function openEditModal() {
   if (!currentItemId) return;
@@ -2750,9 +2785,12 @@ function openEditModal() {
       .join("");
   projSel.value = item.project || "";
   document.getElementById("editModal").classList.add("open");
+  lockPageScroll(true);
 }
 function closeEditModal() {
   document.getElementById("editModal").classList.remove("open");
+  if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open"))
+    lockPageScroll(false);
 }
 async function saveEdit() {
   const item = state.items.find((i) => i.id === currentItemId);
@@ -2992,6 +3030,7 @@ function openCapture() {
   document.getElementById("captureHint").textContent = "";
   populateProjectSelect();
   document.getElementById("captureModal").classList.add("open");
+  lockPageScroll(true);
   document.getElementById("captureDueDate").value = "";
   document.getElementById("captureRecurrence").value = "none";
   document.getElementById("capturePriority").value = "";
@@ -3273,6 +3312,7 @@ function extractLocally(text) {
 }
 function closeCapture() {
   document.getElementById("captureModal").classList.remove("open");
+  lockPageScroll(false);
 }
 async function saveCapture() {
   const kind = captureType;
@@ -3513,7 +3553,10 @@ function enableDashboardDragging() {
 
 /* ---------- Ask / Search ---------- */
 function openAsk() {
+  if (document.getElementById("sidebar")?.classList.contains("open"))
+    closeSidebar();
   document.getElementById("askOverlay").classList.add("open");
+  lockPageScroll(true);
   document.getElementById("askInput").value = "";
   document.getElementById("askResults").innerHTML =
     '<p class="empty">Start typing to search your captures, tasks and notes.</p>';
@@ -3521,6 +3564,8 @@ function openAsk() {
 }
 function closeAsk() {
   document.getElementById("askOverlay").classList.remove("open");
+  if (!document.querySelector(".modal-overlay.open, #panel.open"))
+    lockPageScroll(false);
 }
 let askDebounce = null;
 let lastAskQuery = "";
@@ -3671,6 +3716,11 @@ function closeTopmostOverlay() {
   const avatar = document.getElementById("avatarMenu");
   if (avatar && avatar.style.display === "block") {
     avatar.style.display = "none";
+    return true;
+  }
+
+  if (document.getElementById("sidebar")?.classList.contains("open")) {
+    closeSidebar();
     return true;
   }
 
