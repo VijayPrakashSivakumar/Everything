@@ -15,11 +15,15 @@ import { requireUser } from './lib/auth.js';
 //   ANTHROPIC_API_KEY  + ANTHROPIC_MODEL
 
 const PROVIDERS = {
-  // Groq is listed first because its free tier is the fastest for this workload.
+  // Gemini is listed first and is the default primary. Its free tier has a far larger token
+  // allowance than Groq's, which matters because Ask sends up to 30 items of context and this
+  // build also uses the model for smart-capture extraction. It is also far less likely to be
+  // rate limited on a free key, so the first attempt is the one most likely to succeed.
+  gemini: { keyVar: 'GEMINI_API_KEY', modelVar: 'GEMINI_MODEL', defaultModel: 'gemini-flash-latest' },
+  // Groq remains the fallback, and is still used first when AI_PROVIDER=groq is set.
   // NOTE: llama-3.3-70b-versatile is an Enterprise model on Groq, so the free default is a
   // GPT-OSS model, which is what the free plan actually serves.
   groq: { keyVar: 'GROQ_API_KEY', modelVar: 'GROQ_MODEL', defaultModel: 'openai/gpt-oss-120b' },
-  gemini: { keyVar: 'GEMINI_API_KEY', modelVar: 'GEMINI_MODEL', defaultModel: 'gemini-flash-latest' },
   openai: { keyVar: 'OPENAI_API_KEY', modelVar: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
   openrouter: { keyVar: 'OPENROUTER_API_KEY', modelVar: 'OPENROUTER_MODEL', defaultModel: 'openrouter/free' },
   anthropic: { keyVar: 'ANTHROPIC_API_KEY', modelVar: 'ANTHROPIC_MODEL', defaultModel: 'claude-sonnet-4-6' },

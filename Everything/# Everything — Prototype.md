@@ -309,10 +309,30 @@ caveats worth knowing before choosing:
 - **Gemini free plan** has a far larger token allowance, so it is the better default if you
   expect to ask questions with a lot of history.
 
+**Gemini is the default primary**, because it is both the higher token allowance *and* the
+one less likely to be rate limited on a free key, and smart capture now spends the same
+model on extraction as well. Groq stays as the automatic fallback. To go back to Groq-first
+without a code change, set `AI_PROVIDER=groq` in Vercel.
+
 `OPENAI_BASE_URL` overrides the base URL for any provider, so any OpenAI-compatible host
 also works. `GET /api/health` reports `aiAvailable`, `aiProvider`, `aiModel`, `aiFallbacks`,
 and a plain-language `aiMessage` (never any key value). With no key configured, Ask shows
 your matching items plus a one-line note, instead of an error.
+
+### Diagnosing a search that "is not working"
+
+Check these in order — the first one that fails explains it:
+
+1. `https://<your-project>.vercel.app/api/health?probe=1` — `aiProbe.ok` proves a real
+   completion came back, not just that a key exists. `provider` shows who actually answered.
+2. `aiProvider` — if it is not the one you expect, `AI_PROVIDER` is pinned in Vercel and
+   overrides the built-in order.
+3. A bare `POST /api/ask` returns **401 Authentication required**. That is correct: the route
+   requires a signed-in Supabase token, so this is how you confirm the route is live without
+   a session. It is *not* evidence that search is broken.
+4. In the browser, the AI line under the search box names the failure, e.g.
+   *"(groq:429 -> gemini:timeout)"*. That trail is appended by `readAskError()` and is the
+   fastest way to see a real cause without opening DevTools.
 
 ### Automatic fallback
 If you configure **more than one** key, Ask walks them in order and moves to the next one

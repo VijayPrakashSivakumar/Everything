@@ -59,25 +59,25 @@ await check('primary success returns the answer and calls nothing else', async (
 });
 
 await check('429 on the primary falls back to the next configured provider', async () => {
-  setEnv({ GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
+  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   seen = [];
-  handler = (url) => (url.includes('groq')
+  handler = (url) => (url.includes('googleapis')
     ? { status: 429, body: { error: { message: 'rate limited' } } }
-    : { status: 200, body: { candidates: [{ content: { parts: [{ text: 'From Gemini.' }] } }] } });
+    : { status: 200, body: { choices: [{ message: { content: 'From Groq.' } }] } });
   const r = await complete({ prompt: 'q' });
-  assert.equal(r.answer, 'From Gemini.');
-  assert.equal(r.provider, 'gemini');
+  assert.equal(r.answer, 'From Groq.');
+  assert.equal(r.provider, 'groq');
   assert.equal(seen.length, 2);
 });
 
 await check('401 is not retried elsewhere and reports an actionable reason', async () => {
-  setEnv({ GROQ_API_KEY: 'bad', GEMINI_API_KEY: 'g' });
+  setEnv({ GEMINI_API_KEY: 'bad', GROQ_API_KEY: 'k' });
   seen = [];
   handler = () => ({ status: 401, body: { error: { message: 'Invalid API Key' } } });
   const r = await complete({ prompt: 'q' });
   assert.equal(r.answer, undefined);
   assert.equal(r.status, 502);
-  assert.equal(r.reason, 'groq:401');
+  assert.equal(r.reason, 'gemini:401');
   assert.equal(seen.length, 1, 'a bad key must not be retried on another provider');
 });
 
@@ -142,23 +142,23 @@ await check('GPT-OSS models request light reasoning so the budget survives', asy
 });
 
 await check('a successful but empty completion is treated as failure and retried', async () => {
-  setEnv({ GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
+  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   seen = [];
-  handler = (url) => (url.includes('groq')
-    ? { status: 200, body: { choices: [{ message: { content: '   ' } }] } }
-    : { status: 200, body: { candidates: [{ content: { parts: [{ text: 'Recovered.' }] } }] } });
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 200, body: { candidates: [{ content: { parts: [{ text: '   ' }] } }] } }
+    : { status: 200, body: { choices: [{ message: { content: 'Recovered.' } }] } });
   const r = await complete({ prompt: 'q' });
   assert.equal(r.answer, 'Recovered.');
   assert.equal(seen.length, 2);
 });
 
 await check('every provider failing reports the whole trail', async () => {
-  setEnv({ GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
+  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   seen = [];
-  handler = (url) => (url.includes('groq') ? { status: 429, body: {} } : { status: 503, body: {} });
+  handler = (url) => (url.includes('googleapis') ? { status: 429, body: {} } : { status: 503, body: {} });
   const r = await complete({ prompt: 'q' });
   assert.equal(r.status, 502);
-  assert.equal(r.reason, 'groq:429 -> gemini:503');
+  assert.equal(r.reason, 'gemini:429 -> groq:503');
 });
 
 await check('no keys configured is a 503 and contacts nobody', async () => {
@@ -191,12 +191,14 @@ await check('a hung provider stays inside the total budget and aborts the socket
 });
 
 await check('aiStatus reports the primary and the configured fallbacks', async () => {
-  setEnv({ GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
+  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   const s = aiStatus();
   assert.equal(s.configured, true);
-  assert.equal(s.provider, 'groq');
-  assert.equal(s.model, 'openai/gpt-oss-120b');
-  assert.deepEqual(s.fallbacks, ['gemini/gemini-flash-latest']);
+  // Gemini is the default primary: its free tier allows far more tokens, and Ask now also
+  // spends the model on smart-capture extraction.
+  assert.equal(s.provider, 'gemini');
+  assert.equal(s.model, 'gemini-flash-latest');
+  assert.deepEqual(s.fallbacks, ['groq/openai/gpt-oss-120b']);
 });
 
 /* The live probe is how a provider is verified for real, rather than trusting that a key exists.
@@ -351,6 +353,43 @@ await check('the extraction prompt refuses to invent a date and carries the date
   assert.match(prompt, /Maybe Friday about the quote/, 'the sentence must be included');
   assert.match(prompt, /waiting/, 'the prompt must explain the non-task kinds');
   assert.match(prompt, /openloop/, 'the prompt must explain open loops');
+});
+
+await check('the Gemini path is a working default, not just a reordered list', async () => {
+  // Guards the change that made Gemini primary: it must be tried first, must speak its own
+  // response shape, and must not carry an OpenAI-only parameter.
+  setEnv({ GEMINI_API_KEY: 'g' });
+  seen = [];
+  let sent = '';
+  try {
+    globalThis.fetch = async (url, init) => {
+      seen.push(String(url));
+      sent = String(init.body || '');
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'Gemini answered.' }] } }] }) };
+    };
+    const r = await complete({ prompt: 'q' });
+    assert.equal(r.provider, 'gemini');
+    assert.equal(r.answer, 'Gemini answered.');
+    assert.equal(seen.length, 1, 'Gemini must answer without needing a fallback');
+    assert.match(seen[0], /generativelanguage\.googleapis\.com/, 'it must call the Gemini endpoint');
+    assert.match(seen[0], /gemini-flash-latest/, 'it must use the free-tier model');
+    const body = JSON.parse(sent);
+    assert.equal(body.generationConfig.temperature, 0.2, 'Gemini takes generationConfig, not top-level temperature');
+    assert.equal(body.temperature, undefined, 'a top-level temperature would be ignored by Gemini');
+    assert.equal(body.reasoning_effort, undefined, 'reasoning_effort is OpenAI-only and must not be sent');
+    assert.equal(body.messages, undefined, 'Gemini takes contents, not messages');
+  } finally {
+    installMockFetch();
+  }
+});
+
+await check('an OpenAI-style reply is never trusted from the Gemini path', async () => {
+  // A cross-wired or misconfigured proxy must not be able to make the parser read the wrong field.
+  setEnv({ GEMINI_API_KEY: 'g' });
+  seen = [];
+  handler = () => ({ status: 200, body: { choices: [{ message: { content: 'wrong shape' } }] } });
+  const r = await complete({ prompt: 'q' });
+  assert.equal(r.answer, undefined, 'a non-Gemini shape must not be read as a Gemini answer');
 });
 
 for (const k of ENV_KEYS) {
