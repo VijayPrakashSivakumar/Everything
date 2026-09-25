@@ -20,7 +20,7 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - **Views** — Today, Inbox, Tasks, Schedule (week/month), Memory, People, Projects,
   Goals, Reports and Insights.
 - **Ask / Search** — `Ctrl/⌘ + K` or `/` opens search, which answers questions via
-  `/api/ask` (Claude) and falls back to keyword matching offline.
+  `/api/ask` (any supported model provider) and falls back to keyword matching offline.
 - **Quick reschedule** — open any item and use *Reschedule* (Tomorrow 9 AM, +1 day,
   +1 week, clear) instead of editing the date by hand.
 - **Task workflow** — tasks support Planned, Today, In progress, Waiting, Someday, and Completed states, with a Priority view, persisted checklist steps, quick conversion, duplication, rescheduling, priority-aware ordering, and reversible Archive/Restore.
@@ -149,7 +149,25 @@ The browser still falls back to direct Supabase household access when the API is
 available, so the prototype remains usable before deployment.
 
 The AI endpoint (`/api/ask`) only works when served with Vercel functions
-(`vercel dev`) or on a deployed Vercel project, and needs an `ANTHROPIC_API_KEY`.
+(`vercel dev`) or on a deployed Vercel project, and needs one model provider key.
+
+### Ask / Search model provider
+`/api/ask` is provider-agnostic. Set a key and it works; set `AI_PROVIDER` to pin a specific
+one. Switching provider or model is an environment change only — no new code, and no extra
+serverless function (the adapter lives inside `api/ask.js` because `api/` is already at
+Vercel Hobby's 12-function limit).
+
+| `AI_PROVIDER` | Key variable | Model variable | Default model |
+| --- | --- | --- | --- |
+| `gemini` | `GEMINI_API_KEY` | `GEMINI_MODEL` | `gemini-flash-latest` |
+| `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-4o-mini` |
+| `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | `openrouter/free` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` |
+
+`OPENAI_BASE_URL` also works for any OpenAI-compatible endpoint. If `AI_PROVIDER` is unset,
+the first provider that has a key is used. `GET /api/health` reports `aiAvailable`,
+`aiProvider`, `aiModel`, and a plain-language `aiMessage` (never any key value). With no key
+configured, Ask returns a clear 503 and the browser falls back to offline keyword results.
 
 ## Note on multi-user / private items / AI search
 The live multi-user sync, private-per-person data, and AI-powered search

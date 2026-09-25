@@ -1,4 +1,5 @@
 import { getSupabaseServerClient } from './lib/supabase.js';
+import { aiStatus } from './ask.js';
 
 export default async function handler(req, res) {
   if (req.method && req.method !== 'GET') {
@@ -10,6 +11,9 @@ export default async function handler(req, res) {
     SUPABASE_ANON_KEY: Boolean(process.env.SUPABASE_ANON_KEY),
     SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
     ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY),
+    GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
+    OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
+    OPENROUTER_API_KEY: Boolean(process.env.OPENROUTER_API_KEY),
     VAPID_PUBLIC_KEY: Boolean(process.env.VAPID_PUBLIC_KEY),
     VAPID_PRIVATE_KEY: Boolean(process.env.VAPID_PRIVATE_KEY),
     VAPID_SUBJECT: process.env.VAPID_SUBJECT || 'default (mailto:notifications@everything.local)',
@@ -65,6 +69,8 @@ export default async function handler(req, res) {
     databaseReady;
   const ready = backendReady && taskWorkflowSchemaReady && smartCaptureSchemaReady;
 
+  const ai = aiStatus();
+
   return res.status(200).json({
     ok: true,
     app: 'Everything',
@@ -89,7 +95,14 @@ export default async function handler(req, res) {
       : !reminderSchemaReady
         ? 'Run supabase/migrations/004_reminder_delivery.sql to enable closed-app push.'
         : 'Closed-app push is configured.',
-    aiAvailable: envStatus.ANTHROPIC_API_KEY,
+    aiAvailable: ai.configured,
+    aiProvider: ai.provider,
+    aiModel: ai.model,
+    aiMessage: ai.configured
+      ? `Ask / Search uses ${ai.provider} (${ai.model}).`
+      : ai.missingKeyVar
+        ? `Ask / Search is off: set ${ai.missingKeyVar}, then redeploy.`
+        : 'Ask / Search is off: set one of GEMINI_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Search still works with offline keyword matching.',
     timestamp: new Date().toISOString(),
   });
 }
