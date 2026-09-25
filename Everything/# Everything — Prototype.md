@@ -159,15 +159,27 @@ Vercel Hobby's 12-function limit).
 
 | `AI_PROVIDER` | Key variable | Model variable | Default model |
 | --- | --- | --- | --- |
+| `groq` | `GROQ_API_KEY` | `GROQ_MODEL` | `openai/gpt-oss-120b` |
 | `gemini` | `GEMINI_API_KEY` | `GEMINI_MODEL` | `gemini-flash-latest` |
 | `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-4o-mini` |
 | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | `openrouter/free` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` |
 
-`OPENAI_BASE_URL` also works for any OpenAI-compatible endpoint. If `AI_PROVIDER` is unset,
-the first provider that has a key is used. `GET /api/health` reports `aiAvailable`,
-`aiProvider`, `aiModel`, and a plain-language `aiMessage` (never any key value). With no key
-configured, Ask returns a clear 503 and the browser falls back to offline keyword results.
+Groq and Gemini both have usable free tiers and need only their single key variable. Two
+caveats worth knowing before choosing:
+
+- **Groq free plan** allows 30 requests/min and 8K input tokens/min, and it does *not*
+  include `llama-3.3-70b-versatile` (that is an Enterprise model) — hence the
+  `openai/gpt-oss-120b` default. Because of the token cap, Ask sends at most 30 items with
+  each field truncated to 120 characters.
+- **Gemini free plan** has a far larger token allowance, so it is the better default if you
+  expect to ask questions with a lot of history.
+
+`OPENAI_BASE_URL` overrides the base URL for any provider, so any OpenAI-compatible host
+also works. If `AI_PROVIDER` is unset, the first provider that has a key is used.
+`GET /api/health` reports `aiAvailable`, `aiProvider`, `aiModel`, and a plain-language
+`aiMessage` (never any key value). With no key configured, Ask shows your matching items
+plus a one-line note, instead of an error.
 
 ## Note on multi-user / private items / AI search
 The live multi-user sync, private-per-person data, and AI-powered search

@@ -11,6 +11,7 @@ export default async function handler(req, res) {
     SUPABASE_ANON_KEY: Boolean(process.env.SUPABASE_ANON_KEY),
     SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
     ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY),
+    GROQ_API_KEY: Boolean(process.env.GROQ_API_KEY),
     GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
     OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
     OPENROUTER_API_KEY: Boolean(process.env.OPENROUTER_API_KEY),
@@ -102,7 +103,7 @@ export default async function handler(req, res) {
       ? `Ask / Search uses ${ai.provider} (${ai.model}).`
       : ai.missingKeyVar
         ? `Ask / Search is off: set ${ai.missingKeyVar}, then redeploy.`
-        : 'Ask / Search is off: set one of GEMINI_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Search still works with offline keyword matching.',
+        : 'Ask / Search is off: set one of GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Search still works with offline keyword matching.',
     timestamp: new Date().toISOString(),
   });
 }

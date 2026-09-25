@@ -7,13 +7,18 @@ import { requireUser } from './lib/auth.js';
 // so switching models or vendors never requires another code deployment. It lives inline in
 // this route on purpose: api/ is already at Vercel Hobby's 12-function limit.
 //
-//   AI_PROVIDER=gemini | openai | openrouter | anthropic   (auto-detected if unset)
-//   GEMINI_API_KEY     + GEMINI_MODEL      (default: gemini-flash-latest)
-//   OPENAI_API_KEY     + OPENAI_MODEL      (+ OPENAI_BASE_URL for any OpenAI-compatible API)
-//   OPENROUTER_API_KEY + OPENROUTER_MODEL  (default: openrouter/free)
+//   AI_PROVIDER=groq | gemini | openai | openrouter | anthropic   (auto-detected if unset)
+//   GROQ_API_KEY       + GROQ_MODEL         (default: openai/gpt-oss-120b)
+//   GEMINI_API_KEY     + GEMINI_MODEL       (default: gemini-flash-latest)
+//   OPENAI_API_KEY     + OPENAI_MODEL       (+ OPENAI_BASE_URL for any OpenAI-compatible API)
+//   OPENROUTER_API_KEY + OPENROUTER_MODEL   (default: openrouter/free)
 //   ANTHROPIC_API_KEY  + ANTHROPIC_MODEL
 
 const PROVIDERS = {
+  // Groq is listed first because its free tier is the fastest for this workload.
+  // NOTE: llama-3.3-70b-versatile is an Enterprise model on Groq, so the free default is a
+  // GPT-OSS model, which is what the free plan actually serves.
+  groq: { keyVar: 'GROQ_API_KEY', modelVar: 'GROQ_MODEL', defaultModel: 'openai/gpt-oss-120b' },
   gemini: { keyVar: 'GEMINI_API_KEY', modelVar: 'GEMINI_MODEL', defaultModel: 'gemini-flash-latest' },
   openai: { keyVar: 'OPENAI_API_KEY', modelVar: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
   openrouter: { keyVar: 'OPENROUTER_API_KEY', modelVar: 'OPENROUTER_MODEL', defaultModel: 'openrouter/free' },
@@ -82,10 +87,13 @@ function callAnthropic({ key, model, prompt, maxTokens }) {
 }
 
 function callOpenAiCompatible({ provider, key, model, prompt, maxTokens }) {
-  const base =
-    provider === 'openrouter'
-      ? 'https://openrouter.ai/api/v1'
-      : String(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const knownBases = {
+    groq: 'https://api.groq.com/openai/v1',
+    openrouter: 'https://openrouter.ai/api/v1',
+    openai: 'https://api.openai.com/v1',
+  };
+  // OPENAI_BASE_URL still overrides everything, so any OpenAI-compatible host can be used.
+  const base = String(process.env.OPENAI_BASE_URL || knownBases[provider] || knownBases.openai).replace(/\/+$/, '');
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
   if (provider === 'openrouter') {
     headers['HTTP-Referer'] = 'https://everything-app-zeta.vercel.app';
@@ -135,6 +143,21 @@ export async function complete({ prompt, maxTokens = 300 }) {
   }
 }
 
+// Free tiers (Groq in particular) cap input tokens per minute, so the context is bounded
+// rather than sending every item. Newest items are the useful ones, and each line is
+// truncated so one very long title cannot consume the whole budget.
+const MAX_CONTEXT_ITEMS = 30;
+const MAX_FIELD = 120;
+
+export function buildContextLine(item) {
+  const label = `[${item.kind || 'item'}${item.priority ? '/' + item.priority : ''}]`;
+  const title = String(item.title || '').slice(0, MAX_FIELD);
+  const sub = item.sub ? `: ${String(item.sub).slice(0, MAX_FIELD)}` : '';
+  const person = item.person ? ` (person: ${item.person})` : '';
+  const due = item.due ? ` (due: ${item.due})` : '';
+  return `- ${label} ${title}${sub}${person}${due}`;
+}
+
 export default async function handler(req, res) {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -142,8 +165,10 @@ export default async function handler(req, res) {
   const { query, items } = req.body || {};
   if (!query || !query.trim()) return res.status(400).json({ error: 'Missing query' });
 
-  const context = (items || []).filter((item) => !item.archivedAt && !item.archived_at).slice(0, 60)
-    .map(i => `- [${i.kind}${i.priority ? '/' + i.priority : ''}] ${i.title}${i.sub ? ': ' + i.sub : ''}${i.person ? ' (person: ' + i.person + ')' : ''}${i.due ? ' (due: ' + i.due + ')' : ''}`)
+  const context = (items || [])
+    .filter((item) => item && !item.archivedAt && !item.archived_at)
+    .slice(0, MAX_CONTEXT_ITEMS)
+    .map(buildContextLine)
     .join('\n');
 
   const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${query}`;
