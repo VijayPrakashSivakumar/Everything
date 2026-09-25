@@ -32,9 +32,14 @@ const PROVIDER_NAMES = Object.keys(PROVIDERS);
 // will fail identically everywhere, so retrying just wastes the user's time.
 const FALLBACK_STATUSES = new Set([402, 429, 500, 502, 503, 504]);
 
-// A single provider attempt is capped so two sequential attempts cannot exceed the
-// serverless function budget. The abort makes a hung provider fail fast.
-const ATTEMPT_TIMEOUT_MS = 8000;
+// The serverless function has a hard platform duration limit (10s on the Hobby plan). If the
+// budget is exceeded the platform kills the function and returns a NON-JSON error page, which
+// the client can only report as a generic failure. So provider work is bounded by a total
+// budget, not just a per-attempt one: two sequential 8s attempts would overrun the limit.
+const TOTAL_BUDGET_MS = 8000;
+// The first provider gets the larger slice; a fallback only gets whatever is left. A fallback
+// is worth having, but a real answer is worth more than a second attempt.
+const PER_ATTEMPT_MS = 6000;
 
 // An explicit AI_PROVIDER pins the *primary* only. It still falls back to the other
 // configured providers, because being rate limited is no reason to break Ask.
@@ -44,15 +49,17 @@ function providerOrder() {
   return [requested, ...PROVIDER_NAMES.filter((name) => name !== requested)];
 }
 
-function withTimeout(promise, ms) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      controller.signal.addEventListener('abort', () => reject(new Error(`timeout after ${ms}ms`)));
-    }),
-  ]).finally(() => clearTimeout(timer));
+// Races a request against a deadline. The controller is passed into the fetch itself, so a
+// timed-out provider also has its socket closed rather than lingering in the background.
+function withTimeout(request, ms, controller) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      if (controller) controller.abort();
+      reject(new Error(`timeout after ${ms}ms`));
+    }, ms);
+  });
+  return Promise.race([request, deadline]).finally(() => clearTimeout(timer));
 }
 
 // The provider list to try, in order: only ones that actually have a key, so a fallback
@@ -90,8 +97,6 @@ export function aiStatus() {
     model: resolved.model,
     // Every other configured provider that can take over when the primary is rate limited.
     fallbacks: chain.slice(1).map((entry) => `${entry.provider}/${entry.model}`),
-    provider: resolved.provider,
-    model: resolved.model,
     missingKeyVar: resolved.missingKey ? PROVIDERS[resolved.provider].keyVar : null,
   };
 }
@@ -106,7 +111,7 @@ function extractText(provider, data) {
   return String(data?.choices?.[0]?.message?.content || '').trim();
 }
 
-function callGemini({ key, model, prompt, maxTokens }) {
+function callGemini({ key, model, prompt, maxTokens, signal }) {
   return fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
@@ -116,19 +121,21 @@ function callGemini({ key, model, prompt, maxTokens }) {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 },
       }),
+      signal,
     },
   );
 }
 
-function callAnthropic({ key, model, prompt, maxTokens }) {
+function callAnthropic({ key, model, prompt, maxTokens, signal }) {
   return fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
+    signal,
   });
 }
 
-function callOpenAiCompatible({ provider, key, model, prompt, maxTokens }) {
+function callOpenAiCompatible({ provider, key, model, prompt, maxTokens, signal }) {
   const knownBases = {
     groq: 'https://api.groq.com/openai/v1',
     openrouter: 'https://openrouter.ai/api/v1',
@@ -150,23 +157,31 @@ function callOpenAiCompatible({ provider, key, model, prompt, maxTokens }) {
       temperature: 0.2,
       messages: [{ role: 'user', content: prompt }],
     }),
+    signal,
   });
 }
 
 // One attempt against a single provider. Returns { answer } or { error, retryable, status, reason }.
 // `reason` is a short, key-free diagnostic (e.g. "groq:429") so a failure can be identified
 // from the UI without exposing anything sensitive.
-async function attempt(entry, { prompt, maxTokens }) {
+async function attempt(entry, { prompt, maxTokens, deadline }) {
   const { provider, model, key } = entry;
+  // Every attempt shares the one total budget, so the function always answers in time.
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    return { status: 502, error: 'AI search is temporarily unavailable.', retryable: false, reason: `${provider}:budget` };
+  }
+  const budgetMs = Math.min(PER_ATTEMPT_MS, remaining);
+  const controller = new AbortController();
   try {
     const request =
       provider === 'gemini'
-        ? callGemini({ key, model, prompt, maxTokens })
+        ? callGemini({ key, model, prompt, maxTokens, signal: controller.signal })
         : provider === 'anthropic'
-          ? callAnthropic({ key, model, prompt, maxTokens })
-          : callOpenAiCompatible({ provider, key, model, prompt, maxTokens });
+          ? callAnthropic({ key, model, prompt, maxTokens, signal: controller.signal })
+          : callOpenAiCompatible({ provider, key, model, prompt, maxTokens, signal: controller.signal });
 
-    const response = await withTimeout(request, ATTEMPT_TIMEOUT_MS);
+    const response = await withTimeout(request, budgetMs, controller);
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
@@ -187,7 +202,7 @@ async function attempt(entry, { prompt, maxTokens }) {
   } catch (err) {
     // Timeouts and transport failures are always worth retrying elsewhere.
     console.error(`ask: ${provider}/${model} request failed:`, err?.message || err);
-    const timedOut = /timeout/i.test(err?.message || '');
+    const timedOut = controller.signal.aborted || /timeout|abort/i.test(err?.message || '');
     return {
       status: 502,
       error: 'AI search is temporarily unavailable.',
@@ -208,10 +223,11 @@ export async function complete({ prompt, maxTokens = 300 }) {
       : { status: 503, error: 'AI search is not configured. Add a model provider API key.', reason: 'not-configured' };
   }
 
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
   const tried = [];
   let last = { status: 502, error: 'AI search is temporarily unavailable.', reason: 'unknown' };
   for (const entry of chain) {
-    const result = await attempt(entry, { prompt, maxTokens });
+    const result = await attempt(entry, { prompt, maxTokens, deadline });
     if (result.answer) return result;
     tried.push(result.reason || `${entry.provider}:error`);
     last = result;

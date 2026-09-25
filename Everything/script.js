@@ -4919,11 +4919,19 @@ async function askAI(q) {
 
 /* Turns an /api/ask error response into one short line, and never throws.
    The server's `reason` (e.g. "groq:429 -> gemini:timeout") is appended so a failure can be
-   diagnosed from the UI without opening DevTools. */
+   diagnosed from the UI without opening DevTools. A platform-level failure (e.g. the function
+   exceeding its duration limit) returns HTML rather than JSON, so the body is read as text
+   first and the status code is still reported. */
 async function readAskError(res) {
   let note = "Showing your matching items.";
+  let data = null;
   try {
-    const data = await res.json();
+    const raw = await res.text();
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = null;
+    }
     if (res.status === 503) {
       note = "AI answers are off — add a model API key in Vercel to enable them.";
     } else if (res.status === 502) {
@@ -4932,10 +4940,11 @@ async function readAskError(res) {
       note = data.error;
     }
     if (data?.reason) note += ` (${data.reason})`;
-    console.warn("ask failed:", res.status, data);
+    else if (!data) note += ` (request failed, status ${res.status})`;
   } catch (e) {
-    console.warn("ask failed with a non-JSON response:", res.status, e);
+    note += ` (request failed, status ${res.status})`;
   }
+  console.warn("ask failed:", res.status, data);
   return note;
 }
 
