@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-25.5";
+const APP_BUILD = "2026-09-25.6";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -4075,6 +4075,144 @@ function previewImageFile() {
   const preview = document.getElementById("imagePreview");
   preview.src = URL.createObjectURL(file);
   preview.style.display = "block";
+  // A new image invalidates any text read from the previous one.
+  imageOcrText = "";
+  setImageOcrStatus("");
+}
+
+/* ---------- Image text reading (OCR) ----------
+   Runs entirely in the browser through Tesseract.js (WebAssembly): no API key, no cost, and
+   the image never leaves the device — which is the whole point on a machine like this one.
+
+   Everything here is opt-in and failure-tolerant. The library is fetched from a CDN only when
+   the person actually presses "Read text", so a normal capture never pays for it, and if the
+   download fails (offline, blocked CDN) the capture sheet carries on working exactly as before
+   with a plain one-line explanation. */
+const OCR_LANGUAGES = [
+  { tag: "en", label: "English" },
+  { tag: "ta", label: "தமிழ்" },
+  { tag: "hi", label: "हिन्दी" },
+  { tag: "te", label: "తెలుగు" },
+  { tag: "kn", label: "ಕನ್ನಡ" },
+  { tag: "ml", label: "മലയാളം" },
+];
+const OCR_SCRIPT_SRC = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+
+let captureOcrLang = "en";
+let ocrScriptPromise = null;
+let ocrWorker = null;
+let ocrBusy = false;
+let imageOcrText = "";
+
+function setImageOcrStatus(message) {
+  const status = document.getElementById("imageOcrStatus");
+  if (status) status.textContent = message || "";
+}
+
+function pickOcrLang(tag) {
+  if (!OCR_LANGUAGES.some((entry) => entry.tag === tag)) return;
+  captureOcrLang = tag;
+  document
+    .querySelectorAll("#imageOcrLangRow .type-chip")
+    .forEach((el) => el.classList.toggle("active", el.dataset.lang === captureOcrLang));
+}
+
+function renderOcrLanguages() {
+  const row = document.getElementById("imageOcrLangRow");
+  if (!row) return;
+  row.innerHTML = OCR_LANGUAGES.map(
+    (entry) =>
+      `<div class="type-chip ${entry.tag === captureOcrLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickOcrLang('${entry.tag}')"><span>${entry.label}</span></div>`,
+  ).join("");
+}
+
+/* Loads Tesseract on first use. Resolves to the global, or rejects — never throws into the
+   caller, so a failed download degrades to "type the text yourself". */
+function loadOcrEngine() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (ocrScriptPromise) return ocrScriptPromise;
+  ocrScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = OCR_SCRIPT_SRC;
+    script.async = true;
+    script.onload = () =>
+      window.Tesseract
+        ? resolve(window.Tesseract)
+        : reject(new Error("The text reader loaded but did not start."));
+    script.onerror = () => reject(new Error("The text reader could not be downloaded."));
+    document.head.appendChild(script);
+  }).catch((error) => {
+    // Let a later attempt retry rather than caching the failure forever.
+    ocrScriptPromise = null;
+    throw error;
+  });
+  return ocrScriptPromise;
+}
+
+function setOcrButtonBusy(busy) {
+  const button = document.getElementById("imageOcrBtn");
+  if (!button) return;
+  button.disabled = busy;
+  const label = document.getElementById("imageOcrLabel");
+  if (label) label.textContent = busy ? "Reading…" : "Read text from image";
+}
+
+async function runImageOcr() {
+  if (ocrBusy) return;
+  if (!pendingBlob) {
+    setImageOcrStatus("Choose an image first.");
+    return;
+  }
+
+  ocrBusy = true;
+  setOcrButtonBusy(true);
+  try {
+    setImageOcrStatus("Loading the text reader…");
+    const Tesseract = await loadOcrEngine();
+
+    setImageOcrStatus("Preparing…");
+    if (!ocrWorker) {
+      ocrWorker = await Tesseract.createWorker(captureOcrLang, 1, {
+        logger: (message) => {
+          // Progress is reported by Tesseract as a 0..1 fraction per stage.
+          if (message?.status && typeof message.progress === "number") {
+            const percent = Math.round(message.progress * 100);
+            setImageOcrStatus(`${message.status} ${percent}%`);
+          }
+        },
+      });
+    }
+
+    setImageOcrStatus("Reading the image…");
+    const { data } = await ocrWorker.recognize(pendingBlob);
+    const text = String(data?.text || "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    if (!text) {
+      setImageOcrStatus("No text was found. Try a clearer, closer photo, or type the note yourself.");
+      return;
+    }
+
+    imageOcrText = text;
+    // The recognised text becomes the capture body, so the existing smart-capture pipeline
+    // treats a photographed receipt or note exactly like typed text: same suggestions, same
+    // duplicate protection, same Task/Event/Reminder outcome. No new code path to maintain.
+    const input = document.getElementById("captureText");
+    input.value = text;
+    setImageOcrStatus(`Read ${text.length} characters. Edit anything that looks wrong, then save.`);
+    onCaptureInput();
+  } catch (error) {
+    // Soft failure: the capture sheet must stay usable with no text read at all.
+    setImageOcrStatus(
+      `${error?.message || "Text reading failed."} You can still type the note yourself.`,
+    );
+    console.warn("image ocr failed:", error);
+  } finally {
+    ocrBusy = false;
+    setOcrButtonBusy(false);
+  }
 }
 
 function previewGenericFile() {
@@ -4156,6 +4294,10 @@ function openCapture() {
   document.getElementById("captureText").style.display = "block";
   document.getElementById("voicePreview").style.display = "none";
   document.getElementById("imagePreview").style.display = "none";
+  document.getElementById("imageOcrStatus").textContent = "";
+  setOcrButtonBusy(false);
+  imageOcrText = "";
+  renderOcrLanguages();
   document.getElementById("fileNamePreview").textContent = "";
   document.getElementById("linkUrlInput").value = "";
   document.getElementById("imageFileInput").value = "";
@@ -4686,6 +4828,9 @@ async function saveCapture(forceSave = false) {
       transcript: kind === "voice" && captureVoiceFinal ? captureVoiceFinal : undefined,
       // Which language was actually dictated, so a transcript can be read back correctly later.
       language: kind === "voice" && captureVoiceLanguage ? captureVoiceLanguage : undefined,
+      // Text read out of a picture, kept so the original recognition is auditable.
+      ocrText: kind === "image" && imageOcrText ? imageOcrText : undefined,
+      ocrLanguage: kind === "image" && imageOcrText ? captureOcrLang : undefined,
       mediaName: pendingBlob?.name || undefined,
     };
     Object.keys(captureMetadata).forEach((key) => captureMetadata[key] === undefined && delete captureMetadata[key]);

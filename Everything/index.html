@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-25.5" />
+    <meta name="everything-build" content="2026-09-25.6" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -1557,6 +1557,24 @@
               margin-top: 8px;
             "
           />
+          <button
+            class="btn"
+            id="imageOcrBtn"
+            onclick="runImageOcr()"
+            style="margin-top: 10px; width: 100%"
+          >
+            <i data-lucide="scan-text" aria-hidden="true"></i
+            ><span id="imageOcrLabel">Read text from image</span>
+          </button>
+          <div class="voice-lang-block">
+            <span class="voice-lang-label">Text language in the image</span>
+            <div class="type-row" id="imageOcrLangRow"></div>
+          </div>
+          <p
+            id="imageOcrStatus"
+            class="voice-dictation-status"
+            aria-live="polite"
+          ></p>
         </div>
 
         <div id="fileCaptureUI" style="display: none; margin: 10px 0">

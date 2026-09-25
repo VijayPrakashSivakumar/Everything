@@ -357,6 +357,31 @@ check('the language picker is styled on desktop, not only on phones', () => {
   assert.match(base, /#voiceLangRow\s*\{/, '#voiceLangRow must have a base rule');
 });
 
+check('image text reading is local, opt-in and cannot break capture', () => {
+  assert.match(html, /id="imageOcrBtn"/, 'the read-text button is missing');
+  assert.match(html, /id="imageOcrLangRow"/, 'the OCR language picker is missing');
+  assert.match(js, /async function runImageOcr\(\)/, 'runImageOcr is missing');
+  // It must be free and private: the engine comes from a CDN, not from an AI provider key.
+  assert.match(js, /tesseract\.js@5/, 'the OCR engine is not the local Tesseract build');
+  assert.doesNotMatch(js, /runImageOcr[\s\S]{0,400}GROQ_API_KEY/, 'OCR must not call a paid provider');
+  // Opt-in: the library is only fetched when the button is pressed, never on page load.
+  assert.match(js, /function loadOcrEngine\(\)/, 'the lazy loader is missing');
+  assert.match(js, /document\.createElement\("script"\)/, 'the engine must be injected on demand');
+  assert.doesNotMatch(html, /tesseract/i, 'OCR must not load on every page view');
+  // Failure must be survivable, so a blocked CDN cannot break the capture sheet.
+  assert.match(js, /catch \(error\)[\s\S]{0,400}?You can still type the note yourself\./, 'a failed read must still leave capture usable');
+  // The recognised text must re-enter the existing smart-capture pipeline, not a new path.
+  assert.match(js, /onCaptureInput\(\);[\s\S]{0,80}\} catch \(error\)/, 'OCR text must go through onCaptureInput');
+  assert.match(js, /ocrText: kind === "image"/, 'the recognised text must be saved with the capture');
+});
+
+check('the OCR language picker is styled and reset with the capture sheet', () => {
+  const base = css.slice(0, css.indexOf('@media (max-width'));
+  assert.match(base, /#voiceLangRow\s*\{/, 'language chip styles are missing');
+  assert.match(js, /renderOcrLanguages\(\);/, 'the OCR language picker is never rendered on open');
+  assert.match(js, /imageOcrText = "";[\s\S]{0,200}?renderOcrLanguages\(\);/, 'OCR state must reset when the sheet opens');
+});
+
 check('the Ask overlay still has an entry point for keyboard users', () => {
   assert.match(js, /openAsk\(\);\s*\n\s*return;/, 'Ctrl+K no longer opens the overlay');
   assert.match(html, /id="askInput"/, 'the overlay input was removed');

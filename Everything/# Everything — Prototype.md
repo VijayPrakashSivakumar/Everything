@@ -135,6 +135,34 @@ the full-screen Ask overlay pre-filled with what you typed, or `Escape` to dismi
 The dropdown and the overlay share one `searchMatches()` helper, so the two can never disagree
 about what matches. Memory view search uses it too, instead of a private copy of the matcher.
 
+## Voice and image capture
+
+**Dictation language** — the picker in the Voice capture decides which language the browser
+recogniser listens for (English, தமிழ், हिन्दి, తెలుగు, ಕನ್ನಡ, മലയಾളം). It used to follow
+`navigator.language`, so a Tamil speaker with an English browser got an English transcription of
+Tamil speech. The language used is saved on the capture so the transcript reads back correctly.
+
+**Reading text from a picture** — *Capture → Image → Read text from image* runs OCR with
+Tesseract.js **inside the browser**:
+
+- **Free, private and offline-capable.** No API key, no cost, and the image never leaves the
+  device. Nothing is sent to a model provider.
+- **Opt-in.** The engine is fetched from a CDN only when the button is pressed, so ordinary
+  capture never downloads it.
+- **Safe when it fails.** Offline or a blocked CDN produces one line explaining that, and the
+  capture sheet keeps working — you can always type the note yourself.
+- **One code path.** Recognised text is placed into the normal capture field, so a photographed
+  receipt or note gets the *same* smart suggestions, duplicate protection and Task/Event/Reminder
+  outcome as typed text.
+- The recognised text and the language are stored with the capture, so the original reading stays
+  auditable.
+
+> **Vision is deliberately not here.** A model that *understands* an image (not just reads it)
+> needs a vision model. On a 2-core / 8 GB laptop without a GPU that is not practical — a text
+> model already took ~36 s to answer "ok". The provider adapter in `api/ask.js` is where a
+> self-hosted vision model will be added once suitable hardware is available; no rework is needed
+> in the capture flow.
+
 ## How Ask finds what to answer
 
 Ask is only as good as the context it is given, so retrieval matters more than the model:
