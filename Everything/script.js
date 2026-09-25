@@ -4917,22 +4917,26 @@ async function askAI(q) {
   }
 }
 
-/* Turns an /api/ask error response into one short line, and never throws. */
+/* Turns an /api/ask error response into one short line, and never throws.
+   The server's `reason` (e.g. "groq:429 -> gemini:timeout") is appended so a failure can be
+   diagnosed from the UI without opening DevTools. */
 async function readAskError(res) {
+  let note = "Showing your matching items.";
   try {
     const data = await res.json();
     if (res.status === 503) {
-      return "AI answers are off — add a model API key in Vercel to enable them.";
+      note = "AI answers are off — add a model API key in Vercel to enable them.";
+    } else if (res.status === 502) {
+      note = "The AI provider is unavailable right now — showing your matching items.";
+    } else if (typeof data?.error === "string" && data.error.length < 120) {
+      note = data.error;
     }
-    if (res.status === 502) {
-      return "The AI provider is unavailable right now — showing your matching items.";
-    }
-    return typeof data?.error === "string" && data.error.length < 120
-      ? data.error
-      : "Showing your matching items.";
+    if (data?.reason) note += ` (${data.reason})`;
+    console.warn("ask failed:", res.status, data);
   } catch (e) {
-    return "Showing your matching items.";
+    console.warn("ask failed with a non-JSON response:", res.status, e);
   }
+  return note;
 }
 
 /* ---------- Keyboard shortcuts ---------- */

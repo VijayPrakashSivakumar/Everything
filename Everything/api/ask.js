@@ -153,7 +153,9 @@ function callOpenAiCompatible({ provider, key, model, prompt, maxTokens }) {
   });
 }
 
-// One attempt against a single provider. Returns { answer } or { error, retryable, status }.
+// One attempt against a single provider. Returns { answer } or { error, retryable, status, reason }.
+// `reason` is a short, key-free diagnostic (e.g. "groq:429") so a failure can be identified
+// from the UI without exposing anything sensitive.
 async function attempt(entry, { prompt, maxTokens }) {
   const { provider, model, key } = entry;
   try {
@@ -174,18 +176,24 @@ async function attempt(entry, { prompt, maxTokens }) {
         status: 502,
         error: 'AI search is temporarily unavailable.',
         retryable: FALLBACK_STATUSES.has(response.status),
-        upstreamStatus: response.status,
+        reason: `${provider}:${response.status}`,
       };
     }
 
     const answer = extractText(provider, data);
-    return answer
-      ? { answer, provider, model }
-      : { status: 502, error: 'The model returned an empty answer.', retryable: true };
+    if (answer) return { answer, provider, model };
+    console.error(`ask: ${provider}/${model} returned an empty body:`, JSON.stringify(data).slice(0, 300));
+    return { status: 502, error: 'The model returned an empty answer.', retryable: true, reason: `${provider}:empty` };
   } catch (err) {
     // Timeouts and transport failures are always worth retrying elsewhere.
     console.error(`ask: ${provider}/${model} request failed:`, err?.message || err);
-    return { status: 502, error: 'AI search is temporarily unavailable.', retryable: true };
+    const timedOut = /timeout/i.test(err?.message || '');
+    return {
+      status: 502,
+      error: 'AI search is temporarily unavailable.',
+      retryable: true,
+      reason: `${provider}:${timedOut ? 'timeout' : 'network'}`,
+    };
   }
 }
 
@@ -196,19 +204,22 @@ export async function complete({ prompt, maxTokens = 300 }) {
   if (!chain.length) {
     const resolved = resolveProvider();
     return resolved?.missingKey
-      ? { status: 503, error: `AI search is not configured: ${PROVIDERS[resolved.provider].keyVar} is not set.` }
-      : { status: 503, error: 'AI search is not configured. Add a model provider API key.' };
+      ? { status: 503, error: `AI search is not configured: ${PROVIDERS[resolved.provider].keyVar} is not set.`, reason: 'not-configured' }
+      : { status: 503, error: 'AI search is not configured. Add a model provider API key.', reason: 'not-configured' };
   }
 
-  let last = { status: 502, error: 'AI search is temporarily unavailable.' };
+  const tried = [];
+  let last = { status: 502, error: 'AI search is temporarily unavailable.', reason: 'unknown' };
   for (const entry of chain) {
     const result = await attempt(entry, { prompt, maxTokens });
     if (result.answer) return result;
+    tried.push(result.reason || `${entry.provider}:error`);
     last = result;
     if (!result.retryable) break;
     console.warn(`ask: falling back from ${entry.provider} to the next configured provider`);
   }
-  return last;
+  // Report the whole trail so "everything failed" is distinguishable from "one bad key".
+  return { ...last, reason: tried.join(' -> ') };
 }
 
 // Free tiers (Groq in particular) cap input tokens per minute, so the context is bounded
@@ -242,6 +253,9 @@ export default async function handler(req, res) {
   const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${query}`;
 
   const result = await complete({ prompt });
-  if (result.error) return res.status(result.status || 500).json({ error: result.error });
+  if (result.error) {
+    // `reason` is a short provider/status trail (e.g. "groq:429 -> gemini:timeout").
+    return res.status(result.status || 500).json({ error: result.error, reason: result.reason });
+  }
   return res.status(200).json({ answer: result.answer, provider: result.provider, model: result.model });
 }
