@@ -253,6 +253,49 @@ await check('the probe stays cheap and sends no user data', async () => {
   }
 });
 
+/* The empty-200 shape is what makes the provider diagnosable from outside the function, so it
+   must be safe: structure and lengths only, never values and never anything key-derived. */
+await check('an empty completion reports the response shape, never its contents', async () => {
+  setEnv({ GROQ_API_KEY: 'sk-super-secret-value' });
+  handler = () => ({
+    status: 200,
+    body: {
+      choices: [{
+        finish_reason: 'length',
+        message: { role: 'assistant', content: '', refusal: 'private-detail-here' },
+      }],
+      id: 'req-123',
+    },
+  });
+  const r = await complete({ prompt: 'q', maxTokens: 16 });
+  assert.equal(r.answer, undefined);
+  assert.equal(r.reason, 'groq:empty');
+  assert.ok(r.shapes && r.shapes.length, 'a shape must be attached to an empty result');
+  const shape = r.shapes[0];
+  assert.equal(shape.finishReason, 'length', 'the finish reason is the key clue');
+  assert.equal(shape.choices, 1);
+  assert.ok(shape.messageKeys.includes('content'), 'the message keys must be listed');
+  assert.match(String(shape.content), /^string\(0\)$/, 'content is reported as a length, not a value');
+
+  const serialised = JSON.stringify(r);
+  assert.doesNotMatch(serialised, /sk-super-secret-value/, 'the API key must never be reported');
+  assert.doesNotMatch(serialised, /private-detail-here/, 'field values must never be reported');
+});
+
+await check('probeProvider surfaces the upstream shape on failure', async () => {
+  setEnv({ GROQ_API_KEY: 'k' });
+  handler = () => ({ status: 200, body: { choices: [{ finish_reason: 'length', message: { content: '' } }] } });
+  const bad = await probeProvider();
+  assert.equal(bad.ok, false);
+  assert.ok(bad.shapes && bad.shapes.length, 'the probe must expose the shape');
+  assert.equal(bad.shapes[0].finishReason, 'length');
+  // A success must not carry a shape, so the field only appears when it means something.
+  handler = () => ({ status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+  const good = await probeProvider();
+  assert.equal(good.ok, true);
+  assert.equal(good.shapes, undefined, 'a working provider must not report a shape');
+});
+
 await check('an explicit AI_PROVIDER pins the primary', async () => {
   setEnv({ AI_PROVIDER: 'gemini', GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
   seen = [];

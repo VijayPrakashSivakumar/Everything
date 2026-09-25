@@ -127,6 +127,36 @@ function extractText(provider, data) {
   return '';
 }
 
+/* Describes the *shape* of a response — key names, counts and finish reason only. Never values,
+   never anything derived from the API key. This is what makes an empty 200 diagnosable from
+   outside the function, where the server logs are not visible. */
+function describeShape(data) {
+  if (!data || typeof data !== 'object') return { type: typeof data };
+  const out = { top: Object.keys(data).slice(0, 12) };
+  if (Array.isArray(data.choices)) {
+    out.choices = data.choices.length;
+    const choice = data.choices[0];
+    if (choice && typeof choice === 'object') {
+      out.choiceKeys = Object.keys(choice).slice(0, 12);
+      if (choice.finish_reason) out.finishReason = choice.finish_reason;
+      const message = choice.message || choice.delta;
+      if (message && typeof message === 'object') {
+        out.messageKeys = Object.keys(message).slice(0, 12);
+        for (const key of ['content', 'reasoning', 'refusal']) {
+          if (key in message) {
+            const v = message[key];
+            out[key] = typeof v === 'string' ? `string(${v.length})` : typeof v;
+          }
+        }
+      }
+    }
+  } else if (Array.isArray(data.candidates)) {
+    out.candidates = data.candidates.length;
+  }
+  if (typeof data.error === 'object' && data.error) out.errorKeys = Object.keys(data.error).slice(0, 8);
+  return out;
+}
+
 function callGemini({ key, model, prompt, maxTokens, signal }) {
   return fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -219,8 +249,17 @@ async function attempt(entry, { prompt, maxTokens, deadline }) {
 
     const answer = extractText(provider, data);
     if (answer) return { answer, provider, model };
-    console.error(`ask: ${provider}/${model} returned an empty body:`, JSON.stringify(data).slice(0, 300));
-    return { status: 502, error: 'The model returned an empty answer.', retryable: true, reason: `${provider}:empty` };
+    // A 200 with no usable text is the one failure that is hardest to diagnose from the outside,
+    // so the shape is reported (key names and finish reason only, never values or secrets).
+    const shape = describeShape(data);
+    console.error(`ask: ${provider}/${model} returned an empty body:`, JSON.stringify(shape));
+    return {
+      status: 502,
+      error: 'The model returned an empty answer.',
+      retryable: true,
+      reason: `${provider}:empty`,
+      shape,
+    };
   } catch (err) {
     // Timeouts and transport failures are always worth retrying elsewhere.
     console.error(`ask: ${provider}/${model} request failed:`, err?.message || err);
@@ -247,17 +286,19 @@ export async function complete({ prompt, maxTokens = 300 }) {
 
   const deadline = Date.now() + TOTAL_BUDGET_MS;
   const tried = [];
+  const shapes = [];
   let last = { status: 502, error: 'AI search is temporarily unavailable.', reason: 'unknown' };
   for (const entry of chain) {
     const result = await attempt(entry, { prompt, maxTokens, deadline });
     if (result.answer) return result;
     tried.push(result.reason || `${entry.provider}:error`);
+    if (result.shape) shapes.push({ provider: entry.provider, model: entry.model, ...result.shape });
     last = result;
     if (!result.retryable) break;
     console.warn(`ask: falling back from ${entry.provider} to the next configured provider`);
   }
   // Report the whole trail so "everything failed" is distinguishable from "one bad key".
-  return { ...last, reason: tried.join(' -> ') };
+  return { ...last, reason: tried.join(' -> '), shapes };
 }
 
 /* Sends a real, minimal completion to prove the configured provider actually works.
@@ -280,6 +321,9 @@ export async function probeProvider() {
     status: result.status || null,
     sample: result.answer ? String(result.answer).slice(0, 40) : null,
     durationMs: Date.now() - started,
+    // Present on failure: the shape of the upstream response, so an empty 200 is diagnosable
+    // without access to the function's logs. Key names and lengths only, never values.
+    ...(result.shapes ? { shapes: result.shapes } : {}),
   };
 }
 
