@@ -2485,9 +2485,11 @@ body.overlay-open .content {
     padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
   }
 
+  /* 40px rather than the desktop 36px: a measured 34x38 target was below the comfortable
+     minimum for a thumb, and these sit shoulder to shoulder in a crowded top bar. */
   .topbar .icon-btn {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
   }
 
   .search-wrap {
@@ -3019,9 +3021,11 @@ body.overlay-open .content {
     padding-right: max(10px, env(safe-area-inset-right));
   }
 
+  /* 40x40 rather than 34x38, which a 390px audit measured as too small to tap reliably.
+     The 2px gain comes out of the topbar gap, so the search field keeps its width. */
   .topbar .icon-btn {
-    width: 34px;
-    height: 38px;
+    width: 40px;
+    height: 40px;
   }
 
   .topbar .avatar {

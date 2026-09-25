@@ -81,6 +81,66 @@ await check('401 is not retried elsewhere and reports an actionable reason', asy
   assert.equal(seen.length, 1, 'a bad key must not be retried on another provider');
 });
 
+/* Regression guard for the live bug the probe exposed: Groq returned HTTP 200 with an empty
+   `content` because GPT-OSS is a reasoning model and the token budget went to `reasoning`.
+   The old parser read only `content`, so a successful call was reported as "groq:empty". */
+await check('a reasoning model that spends its budget returns a usable answer', async () => {
+  setEnv({ GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = () => ({
+    status: 200,
+    body: { choices: [{ message: { role: 'assistant', content: '', reasoning: 'The user wants ok.' } }] },
+  });
+  const r = await complete({ prompt: 'q', maxTokens: 64 });
+  assert.ok(r.answer, 'the reasoning text must be used when content is empty');
+  assert.match(r.answer, /ok/);
+  assert.equal(seen.length, 1, 'an answer found in reasoning must not trigger a fallback');
+});
+
+await check('the parser handles every known response shape', async () => {
+  setEnv({ GROQ_API_KEY: 'k' });
+  const shape = async (body) => {
+    seen = [];
+    handler = () => ({ status: 200, body });
+    const r = await complete({ prompt: 'q' });
+    return r.answer || '';
+  };
+  assert.equal(await shape({ choices: [{ message: { content: 'direct' } }] }), 'direct', 'plain content');
+  assert.equal(await shape({ choices: [{ message: { content: '', reasoning: 'thought' } }] }), 'thought', 'reasoning fallback');
+  assert.equal(await shape({ choices: [{ text: 'legacy' }] }), 'legacy', 'legacy completions shape');
+  assert.equal(await shape({ choices: [{ delta: { content: 'streamed' } }] }), 'streamed', 'delta shape');
+  assert.equal(await shape({ choices: [{ message: { content: '   ', reasoning: 'thought' } }] }), 'thought', 'blank content');
+  // A genuinely empty response stays empty so the fallback logic still runs.
+  assert.equal(await shape({ choices: [{ message: { content: '', reasoning: '' } }] }), '', 'truly empty stays empty');
+  // Non-string content must not throw or stringify into "[object Object]".
+  assert.equal(await shape({ choices: [{ message: { content: null, reasoning: 'safe' } }] }), 'safe', 'null content');
+});
+
+await check('GPT-OSS models request light reasoning so the budget survives', async () => {
+  setEnv({ GROQ_API_KEY: 'k' });
+  seen = [];
+  let sent = '';
+  try {
+    globalThis.fetch = async (url, init) => {
+      seen.push(String(url));
+      sent = String(init.body || '');
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+    };
+    await complete({ prompt: 'q' });
+    const body = JSON.parse(sent);
+    assert.equal(body.model, 'openai/gpt-oss-120b');
+    assert.equal(body.reasoning_effort, 'low', 'a GPT-OSS model must be asked for light reasoning');
+
+    // A non-reasoning model must not receive the parameter, which some providers reject.
+    setEnv({ GROQ_API_KEY: 'k', GROQ_MODEL: 'llama-3.3-70b-versatile' });
+    sent = '';
+    await complete({ prompt: 'q' });
+    assert.equal(JSON.parse(sent).reasoning_effort, undefined, 'non-reasoning models must not get reasoning_effort');
+  } finally {
+    installMockFetch();
+  }
+});
+
 await check('a successful but empty completion is treated as failure and retried', async () => {
   setEnv({ GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
   seen = [];
@@ -171,19 +231,26 @@ await check('the probe stays cheap and sends no user data', async () => {
   setEnv({ GROQ_API_KEY: 'k' });
   seen = [];
   let sentBody = '';
-  globalThis.fetch = async (url, init) => {
-    seen.push(String(url));
-    sentBody = init && init.body ? String(init.body) : '';
-    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
-  };
-  await probeProvider();
-  const body = JSON.parse(sentBody);
-  assert.equal(body.max_tokens, 8, 'the probe must request the minimum output');
-  assert.equal(body.messages.length, 1, 'the probe must be a single fixed request');
-  assert.match(body.messages[0].content, /single word/, 'the probe prompt must be the fixed ping');
-  assert.doesNotMatch(sentBody, /invoice|manoj|capture|household/i, 'the probe must not carry user data');
-  // Restore the shared mock so later scenarios still see the configured handler.
-  installMockFetch();
+  // try/finally: if an assertion below throws, the shared transport must still be restored,
+  // or the failure leaks into every later test and hides the real cause.
+  try {
+    globalThis.fetch = async (url, init) => {
+      seen.push(String(url));
+      sentBody = init && init.body ? String(init.body) : '';
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+    };
+    await probeProvider();
+    const body = JSON.parse(sentBody);
+    // 64 leaves room for a reasoning model's hidden tokens; a 200 with an empty body would
+    // otherwise be indistinguishable from a broken provider.
+    assert.equal(body.max_tokens, 64, 'the probe must request a small but usable budget');
+    assert.ok(body.max_tokens <= 128, 'the probe must stay cheap');
+    assert.equal(body.messages.length, 1, 'the probe must be a single fixed request');
+    assert.match(body.messages[0].content, /single word/, 'the probe prompt must be the fixed ping');
+    assert.doesNotMatch(sentBody, /invoice|manoj|capture|household/i, 'the probe must not carry user data');
+  } finally {
+    installMockFetch();
+  }
 });
 
 await check('an explicit AI_PROVIDER pins the primary', async () => {

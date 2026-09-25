@@ -101,6 +101,10 @@ export function aiStatus() {
   };
 }
 
+/* Reasoning models (the GPT-OSS family on Groq) emit a `reasoning` field before `content`, and
+   with a tight token budget every token can land in `reasoning`, leaving `content` empty. Reading
+   only `content` therefore reported a successful 200 as a failure ("groq:empty"). Fall back
+   through the other places a response can carry text before giving up. */
 function extractText(provider, data) {
   if (provider === 'gemini') {
     return (data?.candidates?.[0]?.content?.parts || []).map((part) => part?.text || '').join('').trim();
@@ -108,7 +112,19 @@ function extractText(provider, data) {
   if (provider === 'anthropic') {
     return (data?.content || []).map((block) => block?.text || '').join('').trim();
   }
-  return String(data?.choices?.[0]?.message?.content || '').trim();
+  const choice = data?.choices?.[0];
+  const candidates = [
+    choice?.message?.content,
+    choice?.message?.reasoning,
+    choice?.text,
+    choice?.delta?.content,
+  ];
+  for (const value of candidates) {
+    // Some providers send null or a block array rather than a string.
+    const text = typeof value === 'string' ? value : '';
+    if (text.trim()) return text.trim();
+  }
+  return '';
 }
 
 function callGemini({ key, model, prompt, maxTokens, signal }) {
@@ -148,15 +164,21 @@ function callOpenAiCompatible({ provider, key, model, prompt, maxTokens, signal 
     headers['HTTP-Referer'] = 'https://everything-app-zeta.vercel.app';
     headers['X-Title'] = 'Everything';
   }
+  // Reasoning models (GPT-OSS) spend the token budget on hidden reasoning before answering, so a
+  // short budget can be exhausted before `content` appears. Ask for the lightest reasoning
+  // setting to keep a grounded answer affordable.
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    temperature: 0.2,
+    messages: [{ role: 'user', content: prompt }],
+  };
+  if (/gpt-oss/i.test(model)) body.reasoning_effort = 'low';
+
   return fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      temperature: 0.2,
-      messages: [{ role: 'user', content: prompt }],
-    }),
+    body: JSON.stringify(body),
     signal,
   });
 }
@@ -246,7 +268,9 @@ export async function probeProvider() {
   const started = Date.now();
   const result = await complete({
     prompt: 'Reply with the single word: ok',
-    maxTokens: 8,
+    // A reasoning model needs headroom before it produces any visible text; a tiny budget
+    // returns 200 with an empty body and would look like a failure.
+    maxTokens: 64,
   });
   return {
     ok: Boolean(result.answer),
@@ -289,7 +313,7 @@ export default async function handler(req, res) {
 
   const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${query}`;
 
-  const result = await complete({ prompt });
+  const result = await complete({ prompt, maxTokens: 600 });
   if (result.error) {
     // `reason` is a short provider/status trail (e.g. "groq:429 -> gemini:timeout").
     return res.status(result.status || 500).json({ error: result.error, reason: result.reason });
