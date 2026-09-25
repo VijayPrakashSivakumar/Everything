@@ -10,7 +10,7 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - `sw.js` — service worker (offline shell + push notifications)
 - `api/ask.js` — AI search endpoint (`/api/ask`)
 - `api/send-due-notifications.js` — cron/API that pushes due reminders to closed apps
-- `api/check-vapid.mjs` — verifies a VAPID key pair matches `script.js` (`npm run check:vapid`)
+- `scripts/check-vapid.mjs` — verifies a VAPID key pair matches `script.js` (`cd Everything/api && npm run check:vapid`)
 - `vercel.json` — declares that cron (also kept in `api/vercel.json`; see *Cron cadence*)
 
 ## Features
@@ -69,7 +69,7 @@ whether this device is registered, whether it is online, and the last deliveries
 ```bash
 cd Everything/api
 node node_modules/web-push/src/cli.js generate-vapid-keys --json   # npx is blocked by the PowerShell execution policy
-node check-vapid.mjs --public <new public key> --private <new private key>
+node ../scripts/check-vapid.mjs --public <new public key> --private <new private key>
 ```
 
    `check:vapid` fails when the two keys do not belong together, or do not match `script.js` —

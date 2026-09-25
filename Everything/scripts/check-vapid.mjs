@@ -1,10 +1,10 @@
 /* Confirms the VAPID keys belong together and that the public key matches the one the
    browser subscribes with (Everything/script.js → VAPID_PUBLIC_KEY).
 
-   Usage:  node check-vapid.mjs
+   Usage:  node scripts/check-vapid.mjs
            → pastes the two keys when asked (nothing to quote on the command line)
-           node check-vapid.mjs --public <key> --private <key>
-           VAPID_PUBLIC_KEY=… VAPID_PRIVATE_KEY=… node check-vapid.mjs
+           node scripts/check-vapid.mjs --public <key> --private <key>
+           VAPID_PUBLIC_KEY=… VAPID_PRIVATE_KEY=… node scripts/check-vapid.mjs
            Also reads api/.env.local or api/.env if you ran `vercel env pull`.
 
    A mismatch is the usual reason a push is rejected by the browser's push service. */
@@ -60,8 +60,10 @@ function envFileKeys() {
   const candidates = [
     path.join(moduleDir, '.env.local'),
     path.join(moduleDir, '.env'),
-    path.join(moduleDir, '..', '..', '.env.local'),
-    path.join(moduleDir, '..', '..', '.env')
+    path.join(moduleDir, '..', 'api', '.env.local'),
+    path.join(moduleDir, '..', 'api', '.env'),
+    path.join(moduleDir, '..', '.env.local'),
+    path.join(moduleDir, '..', '.env')
   ];
 
   for (const candidate of candidates) {
