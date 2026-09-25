@@ -99,8 +99,11 @@ export default async function handler(req, res) {
     aiAvailable: ai.configured,
     aiProvider: ai.provider,
     aiModel: ai.model,
+    aiFallbacks: ai.fallbacks,
     aiMessage: ai.configured
-      ? `Ask / Search uses ${ai.provider} (${ai.model}).`
+      ? ai.fallbacks.length
+        ? `Ask / Search uses ${ai.provider} (${ai.model}), falling back to ${ai.fallbacks.join(', ')}.`
+        : `Ask / Search uses ${ai.provider} (${ai.model}).`
       : ai.missingKeyVar
         ? `Ask / Search is off: set ${ai.missingKeyVar}, then redeploy.`
         : 'Ask / Search is off: set one of GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. Search still works with offline keyword matching.',

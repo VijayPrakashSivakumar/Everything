@@ -176,10 +176,24 @@ caveats worth knowing before choosing:
   expect to ask questions with a lot of history.
 
 `OPENAI_BASE_URL` overrides the base URL for any provider, so any OpenAI-compatible host
-also works. If `AI_PROVIDER` is unset, the first provider that has a key is used.
-`GET /api/health` reports `aiAvailable`, `aiProvider`, `aiModel`, and a plain-language
-`aiMessage` (never any key value). With no key configured, Ask shows your matching items
-plus a one-line note, instead of an error.
+also works. `GET /api/health` reports `aiAvailable`, `aiProvider`, `aiModel`, `aiFallbacks`,
+and a plain-language `aiMessage` (never any key value). With no key configured, Ask shows
+your matching items plus a one-line note, instead of an error.
+
+### Automatic fallback
+If you configure **more than one** key, Ask walks them in order and moves to the next one
+whenever the current provider is rate limited (429), out of quota (402), timing out, or
+returning an empty answer. `AI_PROVIDER` pins the *primary* but does not disable the
+fallbacks — being rate limited is no reason to break Ask. Bad keys (401/403) and malformed
+requests (400) are never retried, because they would fail identically everywhere.
+
+Each attempt is capped at 8 seconds so two sequential calls cannot exceed the serverless
+function budget, and a successful answer is returned as soon as it arrives — there is no
+extra latency when the primary works. `/api/ask` also returns `provider` and `model` so you
+can see which one actually answered.
+
+> Fallback only covers *provider* failures. If you exceed a token limit on every configured
+> provider, Ask falls back to local keyword results.
 
 ## Note on multi-user / private items / AI search
 The live multi-user sync, private-per-person data, and AI-powered search

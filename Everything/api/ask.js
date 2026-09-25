@@ -27,27 +27,69 @@ const PROVIDERS = {
 
 const PROVIDER_NAMES = Object.keys(PROVIDERS);
 
+// Statuses worth retrying on a different provider: rate limits (429), exhausted quota (402),
+// and upstream/server errors. 400/401/403 are NOT retried — a malformed request or a bad key
+// will fail identically everywhere, so retrying just wastes the user's time.
+const FALLBACK_STATUSES = new Set([402, 429, 500, 502, 503, 504]);
+
+// A single provider attempt is capped so two sequential attempts cannot exceed the
+// serverless function budget. The abort makes a hung provider fail fast.
+const ATTEMPT_TIMEOUT_MS = 8000;
+
+// An explicit AI_PROVIDER pins the *primary* only. It still falls back to the other
+// configured providers, because being rate limited is no reason to break Ask.
+function providerOrder() {
+  const requested = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
+  if (!PROVIDER_NAMES.includes(requested)) return PROVIDER_NAMES;
+  return [requested, ...PROVIDER_NAMES.filter((name) => name !== requested)];
+}
+
+function withTimeout(promise, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(new Error(`timeout after ${ms}ms`)));
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+// The provider list to try, in order: only ones that actually have a key, so a fallback
+// never burns a request on an unconfigured provider.
+function providerChain() {
+  return providerOrder()
+    .filter((name) => process.env[PROVIDERS[name].keyVar])
+    .map((name) => ({
+      provider: name,
+      model: process.env[PROVIDERS[name].modelVar] || PROVIDERS[name].defaultModel,
+      key: process.env[PROVIDERS[name].keyVar],
+    }));
+}
+
 // An explicit AI_PROVIDER always wins, so a key left over from a previous setup can never
 // silently take over. Without it, the first configured provider is used.
 function resolveProvider() {
-  const requested = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
-  const explicit = PROVIDER_NAMES.includes(requested);
-  const ordered = explicit ? [requested] : PROVIDER_NAMES;
+  const [first] = providerChain();
+  if (first) return { provider: first.provider, model: first.model };
 
-  for (const name of ordered) {
-    if (process.env[PROVIDERS[name].keyVar]) {
-      return { provider: name, model: process.env[PROVIDERS[name].modelVar] || PROVIDERS[name].defaultModel };
-    }
+  const requested = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
+  if (PROVIDER_NAMES.includes(requested)) {
+    return { provider: requested, model: PROVIDERS[requested].defaultModel, missingKey: true };
   }
-  if (explicit) return { provider: requested, model: PROVIDERS[requested].defaultModel, missingKey: true };
   return null;
 }
 
 export function aiStatus() {
+  const chain = providerChain();
   const resolved = resolveProvider();
-  if (!resolved) return { configured: false, provider: 'none', model: null };
+  if (!resolved) return { configured: false, provider: 'none', model: null, fallbacks: [] };
   return {
     configured: !resolved.missingKey,
+    provider: resolved.provider,
+    model: resolved.model,
+    // Every other configured provider that can take over when the primary is rate limited.
+    fallbacks: chain.slice(1).map((entry) => `${entry.provider}/${entry.model}`),
     provider: resolved.provider,
     model: resolved.model,
     missingKeyVar: resolved.missingKey ? PROVIDERS[resolved.provider].keyVar : null,
@@ -111,36 +153,62 @@ function callOpenAiCompatible({ provider, key, model, prompt, maxTokens }) {
   });
 }
 
-// Returns { answer } or { error, status }. Never throws, so the route handler stays trivial.
-// Exported so the provider adapter can be unit-tested without an authenticated request.
-export async function complete({ prompt, maxTokens = 300 }) {
-  const resolved = resolveProvider();
-  if (!resolved) return { status: 503, error: 'AI search is not configured. Add a model provider API key.' };
-  if (resolved.missingKey) {
-    return { status: 503, error: `AI search is not configured: ${PROVIDERS[resolved.provider].keyVar} is not set.` };
-  }
-
-  const { provider, model } = resolved;
-  const key = process.env[PROVIDERS[provider].keyVar];
+// One attempt against a single provider. Returns { answer } or { error, retryable, status }.
+async function attempt(entry, { prompt, maxTokens }) {
+  const { provider, model, key } = entry;
   try {
-    const response =
+    const request =
       provider === 'gemini'
-        ? await callGemini({ key, model, prompt, maxTokens })
+        ? callGemini({ key, model, prompt, maxTokens })
         : provider === 'anthropic'
-          ? await callAnthropic({ key, model, prompt, maxTokens })
-          : await callOpenAiCompatible({ provider, key, model, prompt, maxTokens });
+          ? callAnthropic({ key, model, prompt, maxTokens })
+          : callOpenAiCompatible({ provider, key, model, prompt, maxTokens });
 
+    const response = await withTimeout(request, ATTEMPT_TIMEOUT_MS);
     const data = await response.json().catch(() => ({}));
+
     if (!response.ok) {
-      console.error(`ask: ${provider}/${model} failed:`, data?.error?.message || data?.message || `HTTP ${response.status}`);
-      return { status: 502, error: 'AI search is temporarily unavailable.' };
+      const detail = data?.error?.message || data?.message || `HTTP ${response.status}`;
+      console.error(`ask: ${provider}/${model} failed:`, detail);
+      return {
+        status: 502,
+        error: 'AI search is temporarily unavailable.',
+        retryable: FALLBACK_STATUSES.has(response.status),
+        upstreamStatus: response.status,
+      };
     }
+
     const answer = extractText(provider, data);
-    return answer ? { answer } : { status: 502, error: 'The model returned an empty answer.' };
+    return answer
+      ? { answer, provider, model }
+      : { status: 502, error: 'The model returned an empty answer.', retryable: true };
   } catch (err) {
+    // Timeouts and transport failures are always worth retrying elsewhere.
     console.error(`ask: ${provider}/${model} request failed:`, err?.message || err);
-    return { status: 500, error: 'AI request failed' };
+    return { status: 502, error: 'AI search is temporarily unavailable.', retryable: true };
   }
+}
+
+// Walks the configured providers in order and returns the first usable answer.
+// Never throws, so the route handler stays trivial.
+export async function complete({ prompt, maxTokens = 300 }) {
+  const chain = providerChain();
+  if (!chain.length) {
+    const resolved = resolveProvider();
+    return resolved?.missingKey
+      ? { status: 503, error: `AI search is not configured: ${PROVIDERS[resolved.provider].keyVar} is not set.` }
+      : { status: 503, error: 'AI search is not configured. Add a model provider API key.' };
+  }
+
+  let last = { status: 502, error: 'AI search is temporarily unavailable.' };
+  for (const entry of chain) {
+    const result = await attempt(entry, { prompt, maxTokens });
+    if (result.answer) return result;
+    last = result;
+    if (!result.retryable) break;
+    console.warn(`ask: falling back from ${entry.provider} to the next configured provider`);
+  }
+  return last;
 }
 
 // Free tiers (Groq in particular) cap input tokens per minute, so the context is bounded
@@ -175,5 +243,5 @@ export default async function handler(req, res) {
 
   const result = await complete({ prompt });
   if (result.error) return res.status(result.status || 500).json({ error: result.error });
-  return res.status(200).json({ answer: result.answer });
+  return res.status(200).json({ answer: result.answer, provider: result.provider, model: result.model });
 }
