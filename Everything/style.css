@@ -1433,6 +1433,125 @@ h1.page-title {
   font-family: inherit;
 }
 
+.capture-hint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.capture-smart-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.capture-smart-toggle input {
+  accent-color: var(--accent);
+}
+
+.capture-smart-toggle svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.capture-clear-suggestions {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.capture-clear-suggestions:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.capture-hint {
+  min-height: 18px;
+  margin: 6px 0 0;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.capture-hint svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.14em;
+}
+
+.capture-duplicate-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 11px;
+  border: 1px solid #e6c56a;
+  border-radius: 9px;
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+}
+
+.capture-duplicate-warning[hidden] {
+  display: none;
+}
+
+.capture-duplicate-warning > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.capture-duplicate-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.capture-duplicate-copy strong {
+  display: block;
+  font-size: 12.5px;
+}
+
+.capture-duplicate-copy p {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.capture-duplicate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.capture-duplicate-actions .btn {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.voice-dictation-status {
+  width: 100%;
+  min-height: 17px;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .modal-actions {
   display: flex;
   flex-shrink: 0;
@@ -2663,8 +2782,18 @@ body.overlay-open .content {
     min-width: 0;
   }
 
+  #voiceCaptureUI {
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+
   #voiceCaptureUI .btn {
+    flex: 1 1 145px;
     max-width: 100%;
+  }
+
+  #voiceDictationStatus {
+    flex-basis: 100%;
   }
 
   #voiceTimer {

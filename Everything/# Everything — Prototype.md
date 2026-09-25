@@ -14,8 +14,9 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - `vercel.json` — declares that cron (also kept in `api/vercel.json`; see *Cron cadence*)
 
 ## Features
-- **Capture** — text, voice, image, file and link captures, with type detection and
-  natural-language extraction ("call Ravi tomorrow at 5pm" fills person, due date and type).
+- **Capture** — text, voice (recording or browser dictation), image, file and link captures,
+  with editable smart suggestions for type, date, person, priority, recurrence and project,
+  plus duplicate-capture protection.
 - **Views** — Today, Inbox, Tasks, Schedule (week/month), Memory, People, Projects,
   Goals, Reports and Insights.
 - **Ask / Search** — `Ctrl/⌘ + K` or `/` opens search, which answers questions via
@@ -136,13 +137,12 @@ Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, 
 | `004_reminder_delivery.sql` | `items.reminder_at/notified_at/snoozed_until`, `push_subscriptions`, `notification_log` |
 | `005_idempotent_client_ids.sql` | Stable client IDs, authenticated API persistence, and structured-record RLS |
 | `006_task_workflow.sql` | Task workflow statuses, checklist steps, and stable recurrence keys on `items` and structured `tasks` |
+| `007_smart_capture.sql` | Smart-capture source text, extraction metadata, and duplicate fingerprints on `items` |
 
 `supabase/reminder-cron.sql` is **not** a migration — it is the optional minute-level trigger
 described under *Cron cadence*, and only needs running if the project stays on Vercel Hobby.
 
-The client probes for `items.completed_at` at sign-in and only sends it when the column
-exists, so the app keeps working on a database that hasn't been migrated yet (Reports
-then falls back to a per-device completion log in `localStorage`).
+The client probes for `items.completed_at` and the Phase 3 smart-capture columns at sign-in, and only sends those fields when the columns exist, so the app remains usable on a database that has not yet run the latest migration.
 
 The household API is used first during sign-in to find or create the current workspace.
 The browser still falls back to direct Supabase household access when the API is not

@@ -129,6 +129,18 @@ function queueStructuredOperation(operation) {
   return queued;
 }
 
+function normaliseCaptureMetadata(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch (error) {
+      return {};
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 function itemSnapshot(item) {
   return {
     id: item.id,
@@ -154,6 +166,10 @@ function itemSnapshot(item) {
     snoozedUntil: item.snoozedUntil || null,
     mediaUrl: item.mediaUrl || "",
     completedAt: item.completedAt || null,
+    sourceType: item.sourceType || "manual",
+    rawText: item.rawText || item.title || "",
+    captureMetadata: normaliseCaptureMetadata(item.captureMetadata),
+    captureFingerprint: item.captureFingerprint || null,
   };
 }
 
@@ -619,6 +635,12 @@ let hasReminderColumns = false;
 let hasChecklistColumn = false;
 let hasRecurrenceKeyColumn = false;
 let hasArchivedAtColumn = false;
+const smartCaptureColumns = {
+  sourceType: false,
+  rawText: false,
+  metadata: false,
+  fingerprint: false,
+};
 
 function itemToRow(item) {
   const row = {
@@ -644,6 +666,10 @@ function itemToRow(item) {
   if (hasChecklistColumn) row.checklist = normaliseChecklist(item.checklist);
   if (hasRecurrenceKeyColumn) row.recurrence_key = item.recurrenceKey || null;
   if (hasArchivedAtColumn) row.archived_at = item.archivedAt ? new Date(item.archivedAt).toISOString() : null;
+  if (smartCaptureColumns.sourceType) row.source_type = item.sourceType || "manual";
+  if (smartCaptureColumns.rawText) row.raw_text = item.rawText || item.title || "";
+  if (smartCaptureColumns.metadata) row.capture_metadata = normaliseCaptureMetadata(item.captureMetadata);
+  if (smartCaptureColumns.fingerprint) row.capture_fingerprint = item.captureFingerprint || null;
   // Only sent once the completed_at migration has been applied — see supabase/migrations.
   if (hasCompletedAt)
     row.completed_at = item.completedAt
@@ -688,6 +714,10 @@ function rowToItem(row) {
     snoozedUntil: row.snoozed_until ? new Date(row.snoozed_until).getTime() : "",
     mediaUrl: row.media_url,
     completedAt: row.completed_at ? new Date(row.completed_at).getTime() : "",
+    sourceType: row.source_type || "manual",
+    rawText: row.raw_text || row.title || "",
+    captureMetadata: normaliseCaptureMetadata(row.capture_metadata),
+    captureFingerprint: row.capture_fingerprint || null,
   };
 }
 
@@ -742,6 +772,25 @@ async function detectArchivedAtColumn() {
   }
 }
 
+async function detectSmartCaptureColumns() {
+  const columns = [
+    ["sourceType", "source_type"],
+    ["rawText", "raw_text"],
+    ["metadata", "capture_metadata"],
+    ["fingerprint", "capture_fingerprint"],
+  ];
+  await Promise.all(
+    columns.map(async ([key, column]) => {
+      try {
+        const { error } = await sb.from("items").select(column).limit(1);
+        smartCaptureColumns[key] = !error;
+      } catch (error) {
+        smartCaptureColumns[key] = false;
+      }
+    }),
+  );
+}
+
 function isPrivateStructuredRow(row) {
   return row?.visibility === "private" || row?.scope === "private" || row?.metadata?.scope === "private";
 }
@@ -776,6 +825,7 @@ async function startSupabaseSync(userId) {
   hasChecklistColumn = await detectChecklistColumn();
   hasRecurrenceKeyColumn = await detectRecurrenceKeyColumn();
   hasArchivedAtColumn = await detectArchivedAtColumn();
+  await detectSmartCaptureColumns();
   const { data, error } = await sb
     .from("items")
     .select("*")
@@ -1859,10 +1909,10 @@ function buildEntryDraftFromItem(item) {
     household_id: currentHouseholdId || null,
     user_id: sbUser || currentUserId || null,
     kind: item.kind || "text",
-    source_type: "manual",
+    source_type: item.sourceType || "manual",
     title: item.title || "",
     description: item.sub || "",
-    raw_text: item.title || "",
+    raw_text: item.rawText || item.title || "",
     status,
     visibility: item.scope === "private" ? "private" : "shared",
     due_at: item.dueDate || null,
@@ -1878,6 +1928,10 @@ function buildEntryDraftFromItem(item) {
       scope: item.scope || "shared",
       originalKind: item.kind || "text",
       originalId: item.id,
+      sourceType: item.sourceType || "manual",
+      rawText: item.rawText || item.title || "",
+      captureMetadata: normaliseCaptureMetadata(item.captureMetadata),
+      captureFingerprint: item.captureFingerprint || null,
       checklist: normaliseChecklist(item.checklist),
       recurrenceKey: item.recurrenceKey || null,
       archivedAt: item.archivedAt || null,
@@ -1913,6 +1967,10 @@ function buildTaskDraftFromItem(item, entryId) {
       client_id: item.id,
       originalId: item.id,
       scope: item.scope || "shared",
+      sourceType: item.sourceType || "manual",
+      rawText: item.rawText || item.title || "",
+      captureMetadata: normaliseCaptureMetadata(item.captureMetadata),
+      captureFingerprint: item.captureFingerprint || null,
       checklist: normaliseChecklist(item.checklist),
       recurrenceKey: item.recurrenceKey || null,
       archivedAt: item.archivedAt || null,
@@ -3773,7 +3831,105 @@ function setVoiceRecordLabel(label, icon) {
   refreshIcons();
 }
 
+function setVoiceDictateLabel(label, icon) {
+  const btn = document.getElementById("voiceDictateBtn");
+  if (!btn) return;
+  btn.innerHTML = `<i data-lucide="${icon || "audio-lines"}" aria-hidden="true"></i><span id="voiceDictateLabel">${label}</span>`;
+  refreshIcons();
+}
+
+function setVoiceDictationStatus(message) {
+  const status = document.getElementById("voiceDictationStatus");
+  if (status) status.textContent = message || "";
+}
+
+function stopVoiceDictation() {
+  const recognition = captureVoiceRecognition;
+  captureVoiceRecognition = null;
+  captureVoiceActive = false;
+  if (recognition) {
+    try {
+      recognition.onend = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.stop();
+    } catch (error) {
+      // Recognition may already be stopped by the browser.
+    }
+  }
+  setVoiceDictateLabel("Dictate text", "audio-lines");
+}
+
+function toggleVoiceDictation() {
+  if (captureVoiceActive) {
+    stopVoiceDictation();
+    setVoiceDictationStatus("Dictation stopped.");
+    return;
+  }
+
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    setVoiceDictationStatus("Dictation is not supported in this browser. You can still record audio or type the note.");
+    return;
+  }
+
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+  const input = document.getElementById("captureText");
+  const base = input.value.trim();
+  const recognition = new Recognition();
+  captureVoiceRecognition = recognition;
+  captureVoiceActive = true;
+  captureVoiceFinal = "";
+  captureVoiceBase = base;
+  recognition.lang = navigator.language || "en-US";
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.onstart = () => {
+    setVoiceDictateLabel("Stop dictation", "square");
+    setVoiceDictationStatus("Listening… speak your capture.");
+  };
+  recognition.onresult = (event) => {
+    let interim = "";
+    let final = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const transcript = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) final += `${transcript} `;
+      else interim += transcript;
+    }
+    captureVoiceFinal = `${captureVoiceFinal}${final}`.trim();
+    const spoken = `${captureVoiceFinal} ${interim}`.trim();
+    input.value = [captureVoiceBase, spoken].filter(Boolean).join(" ");
+    onCaptureInput();
+  };
+  recognition.onerror = (event) => {
+    const message = event.error === "not-allowed"
+      ? "Microphone permission was denied."
+      : event.error === "no-speech"
+        ? "No speech was detected. Try again."
+        : "Dictation could not start. You can type or record audio instead.";
+    setVoiceDictationStatus(message);
+  };
+  recognition.onend = () => {
+    if (captureVoiceRecognition === recognition) {
+      captureVoiceRecognition = null;
+      captureVoiceActive = false;
+      setVoiceDictateLabel("Dictate text", "audio-lines");
+      if (captureVoiceFinal) setVoiceDictationStatus("Dictation added. Review it before saving.");
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (error) {
+    captureVoiceRecognition = null;
+    captureVoiceActive = false;
+    setVoiceDictateLabel("Dictate text", "audio-lines");
+    setVoiceDictationStatus("Dictation could not start in this browser.");
+  }
+}
+
 async function toggleVoiceRecording() {
+  if (captureVoiceActive) stopVoiceDictation();
   if (mediaRecorder && mediaRecorder.state === "recording") {
     mediaRecorder.stop();
     return;
@@ -3839,6 +3995,16 @@ async function uploadPendingBlob() {
 }
 let captureAutoDetected = false;
 let captureScope = "shared";
+let captureSmartEnabled = true;
+let captureExtraction = null;
+let captureSuggestionFields = {};
+let captureDuplicate = null;
+let captureVoiceRecognition = null;
+let captureVoiceActive = false;
+let captureVoiceFinal = "";
+let captureVoiceBase = "";
+let captureSaveInFlight = false;
+
 function pickScope(scope) {
   captureScope = scope;
   document
@@ -3851,6 +4017,13 @@ function openCapture() {
     toggleSidebar();
   captureAutoDetected = false;
   captureScope = "shared";
+  captureSmartEnabled = true;
+  captureExtraction = null;
+  captureSuggestionFields = {};
+  captureDuplicate = null;
+  captureVoiceFinal = "";
+  captureVoiceBase = "";
+  stopVoiceDictation();
   pickScope("shared");
   const row = document.getElementById("typeRow");
   row.innerHTML = CAPTURE_TYPES.map(
@@ -3859,7 +4032,12 @@ function openCapture() {
   ).join("");
   refreshIcons();
   document.getElementById("captureText").value = "";
+  document.getElementById("captureText").placeholder = "What's on your mind?";
   document.getElementById("captureHint").textContent = "";
+  document.getElementById("captureDuplicateWarning").hidden = true;
+  document.getElementById("clearCaptureSuggestionsBtn").disabled = true;
+  const smartToggle = document.getElementById("captureSmartEnabled");
+  if (smartToggle) smartToggle.checked = true;
   populateProjectSelect();
   document.getElementById("captureModal").classList.add("open");
   lockPageScroll(true);
@@ -3876,6 +4054,10 @@ function openCapture() {
   document.getElementById("imagePreview").style.display = "none";
   document.getElementById("fileNamePreview").textContent = "";
   document.getElementById("linkUrlInput").value = "";
+  document.getElementById("imageFileInput").value = "";
+  document.getElementById("genericFileInput").value = "";
+  document.getElementById("voiceDictationStatus").textContent = "";
+  setVoiceDictateLabel("Dictate text", "audio-lines");
   pendingBlob = null;
   pendingBlobExt = null;
   if (mediaRecorder && mediaRecorder.state === "recording")
@@ -3902,15 +4084,22 @@ function pickType(id, manual) {
     .forEach((el) => el.classList.toggle("active", el.dataset.type === id));
 
   document.getElementById("voiceCaptureUI").style.display =
-    id === "voice" ? "block" : "none";
+    id === "voice" ? "flex" : "none";
   document.getElementById("imageCaptureUI").style.display =
     id === "image" ? "block" : "none";
   document.getElementById("fileCaptureUI").style.display =
     id === "file" ? "block" : "none";
   document.getElementById("linkCaptureUI").style.display =
     id === "link" ? "block" : "none";
-  document.getElementById("captureText").style.display =
-    id === "voice" ? "none" : "block";
+  document.getElementById("captureText").style.display = "block";
+  if (id === "voice") {
+    document.getElementById("captureText").placeholder = "Type or dictate a note…";
+  } else if (id === "link") {
+    document.getElementById("captureText").placeholder = "Optional note about this link…";
+  } else {
+    document.getElementById("captureText").placeholder = "What's on your mind?";
+  }
+  if (manual) updateCaptureDuplicate(id, captureInputValue());
 }
 function detectType(text) {
   const t = text.toLowerCase();
@@ -3930,15 +4119,143 @@ function detectType(text) {
   return "memory";
 }
 let extractDebounce = null;
+
+function captureInputValue() {
+  if (captureType === "link") return document.getElementById("linkUrlInput").value.trim();
+  return document.getElementById("captureText").value.trim();
+}
+
+function toDateTimeLocalValue(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const pad = (number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function normaliseCaptureFingerprint(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/https?:\/\//g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function captureFingerprintFor(kind, title) {
+  const normalized = normaliseCaptureFingerprint(title);
+  return normalized ? `${kind || "text"}:${normalized}` : "";
+}
+
+const CAPTURE_GENERIC_TITLES = new Set(["file", "image", "voice note", "voice", "memory"]);
+
+function findCaptureDuplicate(kind, title) {
+  const storedKind = kind === "text" ? "memory" : kind;
+  const fingerprint = captureFingerprintFor(storedKind, title);
+  if (!fingerprint) return null;
+  const normalizedTitle = normaliseCaptureFingerprint(title);
+  if (CAPTURE_GENERIC_TITLES.has(normalizedTitle)) return null;
+  const cutoff = Date.now() - 30 * 86400000;
+  return state.items.find((item) => {
+    if (!item || isArchived(item) || (item.created || 0) < cutoff) return false;
+    if (item.scope && item.scope !== captureScope) return false;
+    if (item.kind !== storedKind) return false;
+    const itemFingerprint = item.captureFingerprint || captureFingerprintFor(item.kind, item.title);
+    return itemFingerprint === fingerprint || normaliseCaptureFingerprint(item.title) === normalizedTitle;
+  }) || null;
+}
+
+function updateCaptureDuplicate(kind, title) {
+  const duplicate = findCaptureDuplicate(kind, title);
+  captureDuplicate = duplicate;
+  const warning = document.getElementById("captureDuplicateWarning");
+  if (warning) warning.hidden = !duplicate;
+  const message = document.getElementById("captureDuplicateText");
+  if (message && duplicate) {
+    const age = duplicate.created ? timeAgo(duplicate.created) : "recently";
+    message.textContent = `“${duplicate.title}” was captured ${age}. Open it or save this as a separate item.`;
+  }
+  const saveButton = document.getElementById("captureSaveBtn");
+  if (saveButton && !saveButton.disabled) saveButton.textContent = duplicate ? "Review duplicate" : "Save";
+  return duplicate;
+}
+
+function clearCaptureDuplicate() {
+  captureDuplicate = null;
+  const warning = document.getElementById("captureDuplicateWarning");
+  if (warning) warning.hidden = true;
+  const message = document.getElementById("captureDuplicateText");
+  if (message) message.textContent = "";
+  const saveButton = document.getElementById("captureSaveBtn");
+  if (saveButton) saveButton.textContent = "Save";
+}
+
+function openCaptureDuplicate() {
+  if (!captureDuplicate) return;
+  const id = captureDuplicate.id;
+  closeCapture();
+  openPanel(id);
+}
+
+function onCaptureSmartToggle() {
+  captureSmartEnabled = Boolean(document.getElementById("captureSmartEnabled")?.checked);
+  if (!captureSmartEnabled) {
+    clearTimeout(extractDebounce);
+    document.getElementById("captureHint").textContent = "Smart suggestions are off. You can still edit every field manually.";
+    return;
+  }
+  if (captureInputValue()) onCaptureInput();
+  else document.getElementById("captureHint").textContent = "";
+}
+
+function clearCaptureSuggestions() {
+  const entries = Object.entries(captureSuggestionFields);
+  entries.forEach(([field, record]) => {
+    if (!record) return;
+    const element = document.getElementById(record.elementId);
+    if (element && element.value === record.applied) element.value = record.previous || "";
+  });
+  if (captureSuggestionFields.kind && captureType === captureSuggestionFields.kind.appliedKind) {
+    pickType(captureSuggestionFields.kind.previous || "text", false);
+    captureAutoDetected = false;
+  }
+  captureExtraction = null;
+  captureSuggestionFields = {};
+  const clearButton = document.getElementById("clearCaptureSuggestionsBtn");
+  if (clearButton) clearButton.disabled = true;
+  document.getElementById("captureHint").textContent = "Suggestions cleared. Edit the fields or type again.";
+}
+
+function onLinkInput() {
+  const value = document.getElementById("linkUrlInput").value.trim();
+  const hint = document.getElementById("captureHint");
+  if (!value) {
+    if (hint) hint.textContent = "";
+    clearCaptureDuplicate();
+    return;
+  }
+  try {
+    const url = new URL(value.match(/^https?:\/\//i) ? value : `https://${value}`);
+    if (hint) hint.innerHTML = `${icon("link")} Link ready: ${escapeHtml(url.hostname)}`;
+  } catch (error) {
+    if (hint) hint.textContent = "Enter a valid URL, for example https://example.com.";
+  }
+  updateCaptureDuplicate("link", value);
+}
+
 function onCaptureInput() {
   const text = document.getElementById("captureText").value;
+  captureExtraction = null;
+  updateCaptureDuplicate(captureType, text);
+  if (!captureSmartEnabled) return;
   document.getElementById("captureHint").textContent = "";
   if (!text.trim()) {
     captureAutoDetected = false;
     return;
   }
 
-  if (!captureAutoDetected) {
+  if (!captureAutoDetected && captureType !== "voice" && captureType !== "image" && captureType !== "file" && captureType !== "link") {
     const guessed = detectType(text);
     if (guessed !== captureType) pickType(guessed, false);
   }
@@ -3980,36 +4297,59 @@ async function extractWithAI(text) {
   applyExtraction(result);
 }
 function applyExtraction(data) {
-  if (data.kind && !captureAutoDetected) pickType(data.kind, false);
-
-  const prioEl = document.getElementById("capturePriority");
-  if (data.priority && !prioEl.value) prioEl.value = data.priority;
-
-  const dueEl = document.getElementById("captureDueDate");
-  if (data.dueDate && !dueEl.value) {
-    dueEl.value = data.dueDate.slice(0, 16);
+  data = data && typeof data === "object" ? data : {};
+  const previousKind = captureType;
+  if (
+    data.kind &&
+    !captureAutoDetected &&
+    !["voice", "image", "file", "link"].includes(captureType) &&
+    data.kind !== captureType
+  ) {
+    captureSuggestionFields.kind = { appliedKind: data.kind, previous: previousKind };
+    pickType(data.kind, false);
   }
 
-  const personEl = document.getElementById("capturePerson");
-  if (data.person && !personEl.value) personEl.value = data.person;
+  const applyField = (id, value) => {
+    if (value === undefined || value === null || value === "") return;
+    const element = document.getElementById(id);
+    if (!element || element.value) return;
+    const previous = element.value;
+    element.value = value;
+    captureSuggestionFields[id] = { elementId: id, previous, applied: value };
+  };
 
-  const projEl = document.getElementById("captureProject");
-  if (data.project && !projEl.value) {
-    const match = [...projEl.options].find((o) => o.value === data.project);
-    if (match) projEl.value = data.project;
+  applyField("capturePriority", data.priority);
+  applyField("captureDueDate", toDateTimeLocalValue(data.dueDate));
+  applyField("capturePerson", data.person);
+  applyField("captureRecurrence", data.recurrence !== "none" ? data.recurrence : "");
+  if (data.project && !document.getElementById("captureProject").value) {
+    const projectSelect = document.getElementById("captureProject");
+    const match = [...projectSelect.options].find((option) => option.value === data.project);
+    if (match) {
+      const previous = projectSelect.value;
+      projectSelect.value = data.project;
+      captureSuggestionFields.captureProject = { elementId: "captureProject", previous, applied: data.project };
+    }
   }
 
-  const recEl = document.getElementById("captureRecurrence");
-  if (data.recurrence && data.recurrence !== "none" && recEl.value === "none")
-    recEl.value = data.recurrence;
-
+  captureExtraction = {
+    ...data,
+    source: "smart-capture",
+    appliedKind: previousKind,
+  };
   const parts = [];
   if (data.kind) parts.push(data.kind);
   if (data.dueDate) parts.push("due " + formatDueDisplay(data.dueDate));
   if (data.person) parts.push("person: " + data.person);
+  if (data.priority) parts.push(data.priority + " priority");
+  if (data.recurrence && data.recurrence !== "none") parts.push(data.recurrence);
+  const clearButton = document.getElementById("clearCaptureSuggestionsBtn");
+  if (clearButton) clearButton.disabled = parts.length === 0;
   document.getElementById("captureHint").innerHTML = parts.length
-    ? `${icon("sparkles")} AI detected: ${escapeHtml(parts.join(", "))} — edit any field to override.`
+    ? `${icon("sparkles")} Suggestions: ${escapeHtml(parts.join(", "))} — edit any field to override.`
     : "";
+  const currentText = captureInputValue();
+  if (currentText) updateCaptureDuplicate(captureType, currentText);
 }
 
 const DAY_NAMES = [
@@ -4143,10 +4483,13 @@ function extractLocally(text) {
   return result;
 }
 function closeCapture() {
+  stopVoiceDictation();
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
   document.getElementById("captureModal").classList.remove("open");
   lockPageScroll(false);
 }
-async function saveCapture() {
+async function saveCapture(forceSave = false) {
+  if (captureSaveInFlight) return false;
   const kind = captureType;
   const isMediaType = ["voice", "image", "file"].includes(kind);
   const isLink = kind === "link";
@@ -4154,58 +4497,72 @@ async function saveCapture() {
     ? document.getElementById("linkUrlInput").value.trim()
     : document.getElementById("captureText").value.trim();
 
-  if (isMediaType && !pendingBlob) return closeCapture();
-  if (!isMediaType && !text) return closeCapture();
+  if (kind === "voice" && !pendingBlob && !text) {
+    setVoiceDictationStatus("Record audio or dictate a note before saving.");
+    return false;
+  }
+  if (["image", "file"].includes(kind) && !pendingBlob) {
+    setVoiceDictationStatus("Choose a file before saving.");
+    return false;
+  }
+  if (!isMediaType && !text) return false;
 
-  let mediaUrl = null;
-  if (isMediaType) {
-    mediaUrl = await uploadPendingBlob();
+  if (isLink) {
+    try {
+      const url = new URL(text.match(/^https?:\/\//i) ? text : `https://${text}`);
+      if (!/^https?:$/.test(url.protocol)) throw new Error("Unsupported protocol");
+    } catch (error) {
+      const hint = document.getElementById("captureHint");
+      if (hint) hint.textContent = "Enter a valid http or https link before saving.";
+      document.getElementById("linkUrlInput")?.focus();
+      return false;
+    }
   }
 
-  const project = document.getElementById("captureProject").value;
-  const dueVal = document.getElementById("captureDueDate").value;
-  const dueISO = dueVal ? new Date(dueVal).toISOString() : "";
-  const recurrence = document.getElementById("captureRecurrence").value;
-  const priority =
-    document.getElementById("capturePriority").value ||
-    (kind === "task" ? "medium" : "");
-  const person = document.getElementById("capturePerson").value.trim();
+  const realKind = kind === "text" ? "memory" : kind;
+  const candidateTitle = isMediaType
+    ? kind === "voice"
+      ? text || "Voice note"
+      : kind === "image"
+        ? text || pendingBlob?.name || "Image"
+        : pendingBlob?.name || "File"
+    : isLink
+      ? text
+      : text;
+  if (!forceSave && updateCaptureDuplicate(realKind, candidateTitle)) {
+    document.getElementById("captureDuplicateWarning")?.scrollIntoView({ block: "nearest" });
+    return false;
+  }
 
-  const captionText = document.getElementById("captureText").value.trim();
-  const titles = {
-    voice: "Voice note",
-    image: captionText || "Image",
-    file: pendingBlob ? pendingBlob.name : "File",
-    link: text,
-  };
-  const subs = {
-    voice: "Voice",
-    image: captionText ? "Image" : "",
-    file: "File",
-    link: text,
-  };
+  captureSaveInFlight = true;
+  const saveButton = document.getElementById("captureSaveBtn");
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.textContent = "Saving…";
+  }
+  try {
+    let mediaUrl = null;
+    if (isMediaType && pendingBlob) mediaUrl = await uploadPendingBlob();
 
-  const kindMap = {
-    text: "memory",
-    task: "task",
-    event: "event",
-    memory: "memory",
-    waiting: "waiting",
-    openloop: "openloop",
-    voice: "voice",
-    image: "image",
-    file: "file",
-    link: "link",
-  };
-  const realKind = kindMap[kind] || "memory";
-
-  const newItem = {
-    id: cid(),
-    kind: realKind,
-    title: isMediaType || isLink ? titles[kind] : text,
-    sub:
-      isMediaType || isLink
-        ? subs[kind] || ""
+    const project = document.getElementById("captureProject").value;
+    const dueVal = document.getElementById("captureDueDate").value;
+    const dueISO = dueVal ? new Date(dueVal).toISOString() : "";
+    const recurrence = document.getElementById("captureRecurrence").value;
+    const priority =
+      document.getElementById("capturePriority").value ||
+      (kind === "task" ? "medium" : "");
+    const person = document.getElementById("capturePerson").value.trim();
+    const captionText = document.getElementById("captureText").value.trim();
+    const sourceType = isLink ? "link" : isMediaType ? kind : "manual";
+    const title = candidateTitle;
+    const sub = isMediaType
+      ? kind === "voice"
+        ? captionText ? "Voice note" : "Voice"
+        : kind === "image"
+          ? captionText ? "Image" : ""
+          : "File"
+      : isLink
+        ? captionText || "Link"
         : kind === "task"
           ? "Captured task"
           : kind === "event"
@@ -4214,26 +4571,54 @@ async function saveCapture() {
               ? "Waiting for"
               : kind === "openloop"
                 ? "Open loop"
-                : "Memory",
-    priority,
-    person,
-    due: dueISO ? formatDueDisplay(dueISO) : kind === "task" ? "Today" : "",
-    dueDate: dueISO,
-    recurrence,
-    status: kind === "task" ? "today" : "",
-    project,
-    created: Date.now(),
-    done: false,
-    scope: captureScope,
-    mediaUrl: mediaUrl || "",
-  };
+                : "Memory";
+    const captureMetadata = {
+      ...(captureExtraction || {}),
+      smartEnabled: captureSmartEnabled,
+      source: captureExtraction?.source || "manual",
+      transcript: kind === "voice" && captureVoiceFinal ? captureVoiceFinal : undefined,
+      mediaName: pendingBlob?.name || undefined,
+    };
+    Object.keys(captureMetadata).forEach((key) => captureMetadata[key] === undefined && delete captureMetadata[key]);
+    const newItem = {
+      id: cid(),
+      ownerId: sbUser || currentUserId || null,
+      kind: realKind,
+      title,
+      sub,
+      priority,
+      person,
+      due: dueISO ? formatDueDisplay(dueISO) : kind === "task" ? "Today" : "",
+      dueDate: dueISO,
+      recurrence,
+      status: kind === "task" ? "today" : "inbox",
+      project,
+      created: Date.now(),
+      done: false,
+      scope: captureScope,
+      mediaUrl: mediaUrl || "",
+      sourceType,
+      rawText: text || title,
+      captureMetadata,
+      captureFingerprint: CAPTURE_GENERIC_TITLES.has(normaliseCaptureFingerprint(title)) ? null : captureFingerprintFor(realKind, title),
+    };
 
-  if (realKind === "task" && !newItem.status) newItem.status = "today";
-  if (realKind !== "task" && !newItem.status) newItem.status = "inbox";
-
-  state.items.unshift(newItem);
-  closeCapture();
-  await dbSaveItem(newItem);
+    state.items.unshift(newItem);
+    closeCapture();
+    await dbSaveItem(newItem);
+    return true;
+  } catch (error) {
+    console.error("Capture save failed:", error);
+    const hint = document.getElementById("captureHint");
+    if (hint) hint.textContent = "Could not save this capture. Please try again.";
+    return false;
+  } finally {
+    captureSaveInFlight = false;
+    if (saveButton) {
+      saveButton.disabled = false;
+      saveButton.textContent = "Save";
+    }
+  }
 }
 async function quickCapture() {
   const input = document.getElementById("quickRemember");

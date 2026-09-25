@@ -23,6 +23,7 @@ export default async function handler(req, res) {
   let databaseReady = false;
   let reminderSchemaReady = false;
   let taskWorkflowSchemaReady = false;
+  let smartCaptureSchemaReady = false;
   const supabase = getSupabaseServerClient();
   if (supabase) {
     try {
@@ -49,22 +50,31 @@ export default async function handler(req, res) {
     } catch (error) {
       taskWorkflowSchemaReady = false;
     }
+    try {
+      const smartColumns = 'source_type,raw_text,capture_metadata,capture_fingerprint';
+      const { error } = await supabase.from('items').select(smartColumns).limit(1);
+      smartCaptureSchemaReady = !error;
+    } catch (error) {
+      smartCaptureSchemaReady = false;
+    }
   }
 
   const backendReady =
     envStatus.SUPABASE_URL &&
     envStatus.SUPABASE_SERVICE_ROLE_KEY &&
     databaseReady;
-  const ready = backendReady && taskWorkflowSchemaReady;
+  const ready = backendReady && taskWorkflowSchemaReady && smartCaptureSchemaReady;
 
   return res.status(200).json({
     ok: true,
     app: 'Everything',
-    phase: 'phase-2',
+    phase: 'phase-3',
     message: backendReady
-      ? taskWorkflowSchemaReady
-        ? 'Phase 2 task workflow is ready. AI search is optional.'
-        : 'Foundation backend is ready. Run migration 006 to enable task workflows.'
+      ? taskWorkflowSchemaReady && smartCaptureSchemaReady
+        ? 'Phase 3 smart capture is ready. AI search is optional.'
+        : taskWorkflowSchemaReady
+          ? 'Task workflow is ready. Run migration 007 to enable smart-capture metadata.'
+          : 'Foundation backend is ready. Run migration 006 to enable task workflows.'
       : 'Supabase backend configuration is incomplete.',
     envStatus,
     ready,
@@ -72,6 +82,7 @@ export default async function handler(req, res) {
     databaseReady,
     reminderSchemaReady,
     taskWorkflowSchemaReady,
+    smartCaptureSchemaReady,
     pushReady,
     notifications: !pushReady
       ? 'Closed-app push is off: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY, then redeploy.'
