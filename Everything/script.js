@@ -4777,15 +4777,105 @@ function enableDashboardDragging() {
 }
 
 /* ---------- Ask / Search ---------- */
-function openAsk() {
+/* Two entry points share one search engine:
+     - the header input, which streams results into a dropdown (what tapping search does now)
+     - the full-screen overlay, still reachable via Ctrl+K / "/" for keyboard users
+   Both render from the same helpers so results and the AI answer never drift apart. */
+
+function searchMatches(q) {
+  const ql = q.toLowerCase();
+  return state.items.filter(
+    (i) =>
+      !isArchived(i) &&
+      (i.title + " " + (i.sub || "") + " " + (i.person || ""))
+        .toLowerCase()
+        .includes(ql),
+  );
+}
+
+let searchDropDebounce = null;
+let searchDropQuery = "";
+
+function openSearch() {
+  const dd = document.getElementById("searchDropdown");
+  if (!dd) return;
+  dd.hidden = false;
+  document.getElementById("searchInput")?.setAttribute("aria-expanded", "true");
+  if (!dd.dataset.touched) {
+    dd.innerHTML =
+      '<p class="empty">Start typing to search your captures, tasks and notes.</p>';
+  }
+}
+
+function closeSearch() {
+  const dd = document.getElementById("searchDropdown");
+  const input = document.getElementById("searchInput");
+  if (!dd) return;
+  dd.hidden = true;
+  delete dd.dataset.touched;
+  input?.setAttribute("aria-expanded", "false");
+}
+
+/* Enter opens the full overlay pre-filled, so a typed question can be expanded and reviewed.
+   Escape leaves the field, matching normal combobox behaviour. */
+function searchKeydown(e) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const q = document.getElementById("searchInput").value.trim();
+    closeSearch();
+    document.getElementById("searchInput").blur();
+    openAsk(q);
+  } else if (e.key === "Escape") {
+    closeSearch();
+    document.getElementById("searchInput").blur();
+  }
+}
+
+function runSearch(q) {
+  searchDropQuery = q;
+  const dd = document.getElementById("searchDropdown");
+  if (!dd) return;
+  dd.dataset.touched = "1";
+
+  if (!q.trim()) {
+    dd.innerHTML =
+      '<p class="empty">Start typing to search your captures, tasks and notes.</p>';
+    return;
+  }
+
+  const matches = searchMatches(q);
+  // The AI answer is appended to its own slot so re-rendering it never disturbs the hit list.
+  dd.innerHTML =
+    (matches.length
+      ? matches
+          .slice(0, 8)
+          .map(
+            (m) =>
+              `<div class="search-hit" onclick="closeSearch();document.getElementById('searchInput').value='';openPanel('${m.id}')"><b>${escapeHtml(m.title)}</b><br><span class="search-hit-sub">${escapeHtml(m.sub || "")}</span></div>`,
+          )
+          .join("")
+      : '<p class="empty">No matches found.</p>') +
+    '<div class="search-ask" id="searchAskSlot"></div>';
+
+  // Ask is a debounced AI call, so it must not run on every keystroke here.
+  clearTimeout(searchDropDebounce);
+  searchDropDebounce = setTimeout(() => {
+    if (searchDropQuery === q) {
+      askAI(q, { mount: document.getElementById("searchAskSlot"), extra: "search-ask" });
+    }
+  }, 650);
+}
+
+function openAsk(prefill = "") {
   if (document.getElementById("sidebar")?.classList.contains("open"))
     closeSidebar();
   document.getElementById("askOverlay").classList.add("open");
   lockPageScroll(true);
-  document.getElementById("askInput").value = "";
+  document.getElementById("askInput").value = prefill;
   document.getElementById("askResults").innerHTML =
     '<p class="empty">Start typing to search your captures, tasks and notes.</p>';
   setTimeout(() => document.getElementById("askInput").focus(), 50);
+  if (prefill) runAsk(prefill);
 }
 function closeAsk() {
   document.getElementById("askOverlay").classList.remove("open");
@@ -4802,13 +4892,7 @@ function runAsk(q) {
       '<p class="empty">Start typing to search your captures, tasks and notes.</p>';
     return;
   }
-  const ql = q.toLowerCase();
-  const matches = state.items.filter((i) =>
-    !isArchived(i) &&
-    (i.title + " " + (i.sub || "") + " " + (i.person || ""))
-      .toLowerCase()
-      .includes(ql),
-  );
+  const matches = searchMatches(q);
   let html = `<div id="aiAnswerSlot"></div>`;
   html += matches.length
     ? matches
@@ -4826,46 +4910,42 @@ function runAsk(q) {
   }, 550);
 }
 
-async function askAI(q) {
-  const slot = document.getElementById("aiAnswerSlot");
+/* Renders the AI answer for `q`. `opts.mount` is the element results are drawn into: the overlay's
+   slot by default, or the header dropdown when the inline search box is the entry point. */
+async function askAI(q, opts = {}) {
+  const extra = opts.extra || "";
+  const slot = opts.mount || document.getElementById("aiAnswerSlot");
   if (!slot) return;
   slot.innerHTML = `<div class="ask-answer">Thinking…</div>`;
 
-  const ql = q.toLowerCase();
-  const contextItems = state.items.filter((i) =>
-    !isArchived(i) &&
-    (i.title + " " + (i.sub || "") + " " + (i.person || ""))
-      .toLowerCase()
-      .includes(ql),
-  );
+  const contextItems = searchMatches(q);
   const contextPool = contextItems.length
     ? contextItems
     : state.items.filter((item) => !isArchived(item)).slice(0, 20);
 
-  let sample;
-  try {
-    sample = await window.claude?.use("sample");
-  } catch (e) {
-    sample = null;
-  }
-
+  // Results already listed by the caller should not be repeated above the AI answer.
   const buildSourcesHtml = () =>
     contextPool.length
       ? `
-    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-      <div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-bottom:6px;">SOURCES</div>
+    <div class="ask-sources">
+      <div class="ask-sources-label">SOURCES</div>
       ${contextPool
         .slice(0, 5)
         .map(
-          (
-            i,
-          ) => `<div onclick="closeAsk();openPanel('${i.id}')" style="display:flex;align-items:center;gap:6px;padding:5px 0;cursor:pointer;font-size:12.5px;">
-        <span>${kindIcon(i.kind)}</span><span style="color:var(--accent);">${escapeHtml(i.title)}</span>
+          (i) => `<div class="ask-source" onclick="${extra === "search-ask" ? "closeSearch()" : "closeAsk()"};openPanel('${i.id}')">
+        <span>${kindIcon(i.kind)}</span><span class="ask-source-title">${escapeHtml(i.title)}</span>
       </div>`,
         )
         .join("")}
     </div>`
       : "";
+
+  let sample = null;
+  try {
+    sample = window.claude ? await window.claude.use("sample") : null;
+  } catch (e) {
+    sample = null;
+  }
 
   const renderFallback = (note) => {
     const body = contextItems.length
@@ -4877,9 +4957,11 @@ async function askAI(q) {
         )}.`
       : "No matching items in your captures.";
     const hint = note
-      ? `<div style="margin-top:6px;font-size:11.5px;color:var(--muted)">${escapeHtml(note)}</div>`
+      ? `<div class="ask-hint">${escapeHtml(note)}</div>`
       : "";
-    slot.innerHTML = `<div class="ask-answer">${body}${hint}${buildSourcesHtml()}</div>`;
+    // The dropdown already lists the matching items, so sources there would just repeat them.
+    const sources = extra === "search-ask" ? "" : buildSourcesHtml();
+    slot.innerHTML = `<div class="ask-answer">${body}${hint}${sources}</div>`;
   };
 
   if (sample) {
@@ -4975,6 +5057,77 @@ function isTypingTarget(el) {
 
 /* Modals and the Ask overlay block the single-letter shortcuts; the item slide-over
    does not — a quick capture from there just closes it first. */
+/* ---------- Mobile back gesture ----------
+   Android's back swipe arrives as a popstate. This app never navigates, so an unguarded back
+   walks the browser out to whatever was open before it.
+
+   A history entry is pushed only while a dismissible layer is open, and popped as soon as that
+   layer closes. Back therefore always closes the top layer (sheet, panel, menu, search) and,
+   once nothing is open, the browser is back at its real entry and exits the app normally.
+
+   A web page cannot close its own tab, so "back closes the app" is the browser's own behaviour
+   at the root of history. Holding a permanent guard instead would trap the user on the site
+   with no way out, which is worse than the problem. */
+let backLayerDepth = 0;
+
+function pushBackLayer() {
+  if (backLayerDepth > 0) return;
+  try {
+    history.pushState({ everythingLayer: true }, "");
+    backLayerDepth = 1;
+  } catch (e) {
+    /* No history available (private mode, sandboxed frame) — back keeps its default behaviour. */
+  }
+}
+
+/* Consumes the guard entry without closing a layer, e.g. when a layer closed itself by button. */
+function popBackLayer() {
+  if (backLayerDepth === 0) return;
+  backLayerDepth = 0;
+  try {
+    history.back();
+  } catch (e) {
+    /* Ignore: the entry simply stays and the next back closes a layer. */
+  }
+}
+
+function initBackNavigation() {
+  const LAYER_SELECTOR =
+    ".modal-overlay.open, .ask-overlay.open, #panel.open, #sidebar.open, #searchDropdown:not([hidden])";
+  const anyLayerOpen = () => !!document.querySelector(LAYER_SELECTOR);
+
+  // Keep the guard in step with what is actually on screen: push when a layer appears, pop it
+  // when the last one closes. Doing this by observation means every existing open/close path
+  // (buttons, Escape, save-and-close, the item slide-over) is covered without touching them.
+  const observer = new MutationObserver(() => {
+    if (anyLayerOpen()) pushBackLayer();
+    else popBackLayer();
+  });
+  observer.observe(document.body, {
+    attributes: true,
+    subtree: true,
+    childList: true,
+    attributeFilter: ["class", "hidden"],
+  });
+
+  window.addEventListener("popstate", () => {
+    // The browser consumed the guard entry; it must not be re-pushed for this same press.
+    backLayerDepth = 0;
+    // Close the top layer. If nothing was open, the app is already at its real history entry,
+    // so the browser handles the rest (backgrounding the app rather than showing another site).
+    closeTopmostOverlay();
+  });
+
+  // Tapping outside the search field dismisses its dropdown.
+  document.addEventListener("pointerdown", (e) => {
+    const dd = document.getElementById("searchDropdown");
+    if (!dd || dd.hidden) return;
+    if (dd.contains(e.target)) return;
+    if (e.target.closest("#searchBox")) return;
+    closeSearch();
+  });
+}
+
 function isBlockingOverlayOpen() {
   return (
     !!document.querySelector(".modal-overlay.open") ||
@@ -4998,6 +5151,11 @@ function closeTopmostOverlay() {
 
   if (document.getElementById("sidebar")?.classList.contains("open")) {
     closeSidebar();
+    return true;
+  }
+
+  if (document.getElementById("searchDropdown") && !document.getElementById("searchDropdown").hidden) {
+    closeSearch();
     return true;
   }
 
@@ -5975,6 +6133,7 @@ restoreNudge();
 restoreDashboardLayout();
 enableDashboardDragging();
 initShortcuts();
+initBackNavigation();
 applyLaunchShortcut();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker

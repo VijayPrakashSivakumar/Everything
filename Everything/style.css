@@ -570,9 +570,14 @@ textarea {
   display: none;
 }
 
-.search-box {
+/* The wrapper is the positioning context so the dropdown aligns to the field, not the topbar. */
+.search-wrap {
+  position: relative;
   flex: 1 1 220px;
   min-width: 0;
+}
+
+.search-box {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -581,7 +586,12 @@ textarea {
   border-radius: 9px;
   padding: 9px 14px;
   color: var(--muted);
-  cursor: pointer;
+  cursor: text;
+}
+
+.search-box:focus-within {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px var(--blue-bg);
 }
 
 .search-box input {
@@ -589,8 +599,10 @@ textarea {
   background: transparent;
   outline: none;
   flex: 1;
+  /* 16px stops iOS Safari zooming the viewport when the field gains focus. */
+  font-size: 16px;
+  min-width: 0;
   color: var(--text);
-  font-size: 14px;
 }
 
 .search-box > svg,
@@ -1786,6 +1798,94 @@ h1.page-title {
   color: var(--text);
 }
 
+/* Sources list, shared by the overlay and the header search dropdown. */
+.ask-sources {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.ask-sources-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.ask-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.ask-source-title {
+  color: var(--accent);
+}
+
+.ask-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* Header search dropdown — results stream under the field instead of opening a new panel. */
+.search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: min(60vh, 460px);
+  max-height: min(60dvh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  z-index: 70;
+}
+
+.search-dropdown[hidden] {
+  display: none;
+}
+
+.search-dropdown .empty {
+  margin: 10px 8px;
+}
+
+.search-hit {
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+
+.search-hit:hover,
+.search-hit:active {
+  background: var(--bg);
+}
+
+.search-hit-sub {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* The AI answer sits below the hits, separated so it reads as a distinct answer. */
+.search-ask:not(:empty) {
+  margin: 6px 4px 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.search-ask .ask-answer {
+  margin-bottom: 6px;
+}
+
 .ask-result-item {
   padding: 10px 8px;
   border-radius: 8px;
@@ -2385,14 +2485,26 @@ body.overlay-open .content {
     height: 36px;
   }
 
-  .search-box {
+  .search-wrap {
     flex: 1 1 auto;
     min-width: 0;
   }
 
+  /* The input is real and focusable now, so it must keep its width on mobile. */
   .search-box input {
-    width: 0;
+    width: 100%;
     min-width: 0;
+    font-size: 16px;
+  }
+
+  .search-box {
+    padding: 9px 12px;
+  }
+
+  /* Stays anchored under the field; the topbar's stacking context keeps it above content. */
+  .search-dropdown {
+    max-height: 52vh;
+    max-height: 52dvh;
   }
 
   #notifPanel,
@@ -2731,19 +2843,21 @@ body.overlay-open .content {
   }
 
   .modal {
+    /* Narrower than the old 560px so the sheet does not span a 393px-wide phone, and capped
+       against both the viewport height and the on-screen keyboard. */
     width: 100%;
-    max-width: 560px;
-    max-height: min(82vh, 680px);
-    max-height: min(82dvh, 680px);
-    margin-top: auto;
-    border-radius: 18px 18px 8px 8px;
+    max-width: 420px;
+    max-height: min(78vh, 620px);
+    max-height: min(78dvh, 620px);
+    margin: 0 auto;
+    border-radius: 18px 18px 10px 10px;
     padding: 18px 16px;
     padding-bottom: calc(18px + env(safe-area-inset-bottom));
   }
 
   .modal-capture {
-    max-height: min(82vh, 680px);
-    max-height: min(82dvh, 680px);
+    max-height: min(78vh, 620px);
+    max-height: min(78dvh, 620px);
   }
 
   .modal-capture textarea {
@@ -2942,13 +3056,14 @@ body.overlay-open .content {
   }
 
   .modal-overlay {
-    padding-left: max(6px, env(safe-area-inset-left));
-    padding-right: max(6px, env(safe-area-inset-right));
+    /* More side inset so the sheet reads as a card rather than a full-bleed panel. */
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
   }
 
   .modal {
     width: 100%;
-    max-width: 560px;
+    max-width: 400px;
     scrollbar-gutter: auto;
     padding-left: 14px;
     padding-right: 14px;

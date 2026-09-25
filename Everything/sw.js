@@ -1,4 +1,6 @@
-const CACHE_NAME = 'everything-shell-v11';
+// Bump whenever a shell file (index.html / style.css / script.js) changes, otherwise returning
+// phones keep serving the previous cached version and the new UI appears not to work.
+const CACHE_NAME = 'everything-shell-v12';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed

@@ -116,14 +116,42 @@ the background, and catches up on anything missed the next time it runs.
 ## Running it locally
 This is a static site — no build step needed.
 
-```bash
-# Option 1: just open it
-open index.html
+**Open it over HTTP, not `file://`.** Browsers block `fetch("/api/...")` on the `file:`
+protocol, so a double-clicked `index.html` silently loses login, sync, AI Ask, and notifications
+while the rest of the UI keeps working — which makes the breakage easy to misread as a server
+problem. Ask now says "Opened from a file" when this is the cause.
 
-# Option 2: serve it (recommended, avoids browser file:// restrictions)
+```bash
+# Recommended: serve the folder and open http://localhost:8000
 python3 -m http.server 8000
-# then visit http://localhost:8000
 ```
+
+## Search
+Tapping the header search field searches **in place**: matches stream into a dropdown beneath
+the field, and the AI answer appears below them once the typing settles. Press `Enter` to open
+the full-screen Ask overlay pre-filled with what you typed, or `Escape` to dismiss. `Ctrl+K`
+(⌘K on Mac) and `/` still open the overlay directly.
+
+The dropdown and the overlay share one `searchMatches()` helper, so the two can never disagree
+about what matches.
+
+## Back gesture on mobile
+A history entry is pushed while a dismissible layer is open (Capture sheet, Ask overlay, item
+panel, sidebar, or the search dropdown) and popped when it closes, so Android's back swipe
+always closes the top layer rather than walking out to the previous page. With nothing open,
+back is left to the browser, which backgrounds the app. A page cannot close its own tab, and
+holding a permanent guard would trap the user on the site, so that is deliberately not done.
+
+## Tests
+The suites run offline — no API key, no login, no network:
+
+```bash
+node Everything/tests/ask-adapter.test.mjs   # provider fallback, shared budget, reason trail
+node Everything/tests/ui-structure.test.mjs  # search wiring, mobile layout, back guard
+```
+
+They live in `Everything/tests/`, deliberately outside `api/`, because every file in `api/` is
+built as a Vercel function and the project is already at the Hobby plan's 12-function limit.
 
 ## Database
 Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, or

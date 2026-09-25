@@ -306,10 +306,32 @@
               />
             </svg>
           </button>
-          <div class="search-box" onclick="openAsk()">
-            <i data-lucide="search" aria-hidden="true"></i>
-            <input readonly placeholder="Search anything or ask a question…" />
-            <span class="kbd" id="searchKbdHint">Ctrl K</span>
+          <!--
+            The search box is itself the input. It used to be a click target that opened a
+            full-screen overlay, which felt disjointed on touch: you tapped a field in the
+            header and a different panel appeared. Now it expands in place and streams results
+            underneath, so search happens where you tapped. The overlay is still reachable via
+            Ctrl+K / "/" for keyboard users.
+          -->
+          <div class="search-wrap">
+            <div class="search-box" id="searchBox">
+              <i data-lucide="search" aria-hidden="true"></i>
+              <input
+                id="searchInput"
+                placeholder="Search anything or ask a question…"
+                autocomplete="off"
+                spellcheck="false"
+                role="combobox"
+                aria-expanded="false"
+                aria-controls="searchDropdown"
+                aria-label="Search your captures or ask a question"
+                onfocus="openSearch()"
+                oninput="runSearch(this.value)"
+                onkeydown="searchKeydown(event)"
+              />
+              <span class="kbd" id="searchKbdHint">Ctrl K</span>
+            </div>
+            <div class="search-dropdown" id="searchDropdown" hidden></div>
           </div>
           <button
             class="icon-btn theme-toggle"
