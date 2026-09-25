@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-25.6" />
+    <meta name="everything-build" content="2026-09-25.7" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -1651,6 +1651,9 @@
           id="captureHint"
           aria-live="polite"
         ></p>
+
+        <!-- Missing-value questions: the assistant asks instead of inventing an uncertain value. -->
+        <div class="capture-question" id="captureQuestion" hidden></div>
 
         <div
           class="capture-duplicate-warning"

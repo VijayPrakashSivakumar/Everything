@@ -46,7 +46,7 @@ function setEnv(next) {
   Object.assign(process.env, next);
 }
 
-const { complete, aiStatus, probeProvider } = await import('../api/ask.js');
+const { complete, aiStatus, probeProvider, parseExtraction, buildExtractionPrompt } = await import('../api/ask.js');
 
 await check('primary success returns the answer and calls nothing else', async () => {
   setEnv({ GROQ_API_KEY: 'k' });
@@ -305,6 +305,52 @@ await check('an explicit AI_PROVIDER pins the primary', async () => {
   const r = await complete({ prompt: 'q' });
   assert.equal(r.provider, 'gemini');
   assert.equal(r.answer, 'Pinned.');
+});
+
+/* ---------- Smart-capture extraction ----------
+   The capture sheet writes this straight into the form, so a hallucinated kind, a bogus date or
+   an unexpected priority must be rejected rather than rendered. */
+await check('capture extraction reads a clean JSON reply', async () => {
+  const parsed = parseExtraction('{"kind":"task","title":"Call Ravi about the quote","dueDate":"2026-09-26T10:00:00.000Z","person":"Ravi","project":"Atlas","priority":"high","recurrence":"none","confidence":"high","ambiguous":""}');
+  assert.equal(parsed.kind, 'task');
+  assert.equal(parsed.title, 'Call Ravi about the quote');
+  assert.equal(parsed.person, 'Ravi');
+  assert.equal(parsed.priority, 'high');
+  assert.equal(parsed.recurrence, 'none');
+  assert.equal(parsed.confidence, 'high');
+});
+
+await check('capture extraction survives code fences and surrounding prose', async () => {
+  const parsed = parseExtraction('Sure! Here you go:\n```json\n{"kind":"waiting","title":"Drawings from Ravi","dueDate":"","person":"Ravi","project":"","priority":"","recurrence":"none","confidence":"medium","ambiguous":"Which project?"}\n```\nHope that helps.');
+  assert.equal(parsed.kind, 'waiting', 'a fenced reply must still parse');
+  assert.equal(parsed.ambiguous, 'Which project?');
+  // A missing field must become a known-safe value, never undefined.
+  assert.equal(parsed.dueDate, '');
+  assert.equal(parsed.priority, '');
+});
+
+await check('capture extraction rejects values the form cannot represent', async () => {
+  const parsed = parseExtraction('{"kind":"spaceship","title":"x","priority":"catastrophic","recurrence":"fortnightly","confidence":"certain","dueDate":12345}');
+  assert.equal(parsed.kind, '', 'an unknown kind must be dropped, not passed through');
+  assert.equal(parsed.priority, '', 'an unknown priority must be dropped');
+  assert.equal(parsed.recurrence, 'none', 'an unknown recurrence falls back to none');
+  assert.equal(parsed.confidence, 'medium', 'an unknown confidence falls back to medium');
+  assert.equal(parsed.dueDate, '', 'a non-string date must be dropped');
+});
+
+await check('capture extraction rejects unusable replies without throwing', async () => {
+  for (const bad of ['', '   ', 'not json at all', '{ "kind": "task"', '[1,2,3]', 'null', '"a string"']) {
+    assert.equal(parseExtraction(bad), null, `must be null for: ${JSON.stringify(bad)}`);
+  }
+});
+
+await check('the extraction prompt refuses to invent a date and carries the date', async () => {
+  const prompt = buildExtractionPrompt('Maybe Friday about the quote', 'Friday, September 25, 2026');
+  assert.match(prompt, /Friday, September 25, 2026/, 'the current date must reach the model');
+  assert.match(prompt, /Never invent a date/i, 'the prompt must forbid inventing a date');
+  assert.match(prompt, /Maybe Friday about the quote/, 'the sentence must be included');
+  assert.match(prompt, /waiting/, 'the prompt must explain the non-task kinds');
+  assert.match(prompt, /openloop/, 'the prompt must explain open loops');
 });
 
 for (const k of ENV_KEYS) {

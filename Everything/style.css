@@ -1502,6 +1502,53 @@ h1.page-title {
   vertical-align: -0.14em;
 }
 
+/* Missing-value question. Reads as an assistant asking something — not as an error, and not as
+   a form the person has to complete. It sits under the suggestions and never blocks Save. */
+.capture-question {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.capture-question[hidden] {
+  display: none;
+}
+
+.capture-question-text {
+  margin: 0 0 9px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.capture-question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.capture-question-actions .btn {
+  padding: 7px 11px;
+  font-size: 12.5px;
+}
+
+.capture-question-skip {
+  padding: 7px 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.capture-question-skip:hover {
+  color: var(--text);
+}
+
 .capture-duplicate-warning {
   display: flex;
   align-items: flex-start;

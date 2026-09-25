@@ -382,6 +382,80 @@ check('the OCR language picker is styled and reset with the capture sheet', () =
   assert.match(js, /imageOcrText = "";[\s\S]{0,200}?renderOcrLanguages\(\);/, 'OCR state must reset when the sheet opens');
 });
 
+check('smart capture is no longer regex-only, and the local rules still run first', () => {
+  // The old path only tried window.claude (which never exists on Vercel) and then fell back to
+  // regex, so capture never actually used the model even though /api/ask worked.
+  assert.match(js, /async function requestModelExtraction\(text\)/, 'the model extraction call is missing');
+  assert.match(js, /action: "extract"/, 'the extract action is never sent');
+  assert.doesNotMatch(js, /window\.claude\?\.use\("sample"\)/, 'the dead artifact path is still the AI path');
+  // Local first, so a plain capture stays instant and free.
+  const fn = js.slice(js.indexOf('async function extractWithAI'));
+  const localAt = fn.indexOf('extractLocally(text)');
+  const modelAt = fn.indexOf('requestModelExtraction(text)');
+  assert.ok(localAt > -1, 'the local rules must still run');
+  assert.ok(modelAt > localAt, 'the local result must be applied before the model is asked');
+  assert.match(fn, /if \(ai\) applyExtraction/, 'a model failure must leave the local result standing');
+  assert.match(js, /if \(document\.getElementById\("captureText"\)\.value !== text\) return;/,
+    'a stale model reply must be discarded');
+  // The model must not be called for a capture the rules already read confidently.
+  assert.match(js, /function captureNeedsModelHelp\(text, local\)/, 'the help gate is missing');
+  assert.match(js, /local\?\.confidence !== "high"/, 'a confident local read must not call the model');
+  assert.match(js, /splitCaptureClauses\(text\)\.length > 1/, 'a multi-clause sentence must reach the model');
+});
+
+check('the local rules report how confident they are', () => {
+  assert.match(js, /const VAGUE_TIME_RE =/, 'the vague-time pattern is missing');
+  assert.match(js, /const COMMITMENT_RE =/, 'the commitment pattern is missing');
+  assert.match(js, /result\.confidence = "low";/, 'a vague time must lower confidence');
+  assert.match(js, /result\.confidence = "high";/, 'a date plus a kind must be high confidence');
+  assert.match(js, /function mergeExtractions\(local, ai\)/, 'the merge helper is missing');
+  // A confident local read must never be overwritten by the model.
+  assert.match(js, /const preferModel = local\.confidence !== "high";/, 'the model must not win on a confident read');
+});
+
+check('a stated fact about someone is a memory, not a task', () => {
+  // "email"/"call" are task verbs, so "Ravi prefers WhatsApp instead of email" used to be read
+  // as work. Misfiling knowledge as a task is the one kind error a memory engine must not make.
+  const kind = js.slice(js.indexOf('function extractLocally'), js.indexOf('function captureNeedsModelHelp'));
+  assert.match(kind, /prefers\?\|likes\?/,
+    'a stated preference or fact must win over the task verbs');
+  assert.match(kind, /result\.kind = "memory"/,
+    'a preference must be classified as a memory');
+  // It must be checked after waiting/openloop so those stronger signals are not displaced.
+  const waiting = kind.indexOf('result.kind = "waiting"');
+  const openloop = kind.indexOf('result.kind = "openloop"');
+  const memory = kind.indexOf('result.kind = "memory"');
+  assert.ok(waiting > -1 && openloop > -1 && memory > -1, 'all three rules must exist');
+  assert.ok(memory > openloop && openloop > waiting, 'waiting and open loop must take precedence over memory');
+});
+
+check('an uncertain value is asked about, never invented', () => {
+  assert.match(html, /id="captureQuestion"/, 'the question card is missing from the capture sheet');
+  assert.match(js, /function buildCaptureQuestions\(text, data\)/, 'the question builder is missing');
+  assert.match(js, /id: "vague-date"/, 'a vague date must raise a question');
+  assert.match(js, /id: "commitment"/, 'a promise must raise a question');
+  // One at a time, and never blocking: both are core product promises.
+  assert.match(js, /const question = captureQuestions\[0\];/, 'questions must be shown one at a time');
+  // The card is built in script.js, so the dismiss control is asserted there rather than in the
+  // markup, which only holds the empty container.
+  assert.match(js, /onclick="dismissCaptureQuestion\(\)"/, 'a question must be dismissible');
+  assert.match(js, /function dismissCaptureQuestion\(\)/, 'dismissCaptureQuestion is missing');
+  assert.match(js, /dismissCaptureQuestion\(\);[\s\S]{0,80}Suggestions cleared/, 'clearing suggestions must also drop the question');
+  // A decision the person made must survive "Clear suggestions".
+  assert.match(js, /captureSuggestionFields\.captureDueDate = null;/, 'an answered date must not be cleared');
+  // The card must be hidden by default so it never appears as an empty box.
+  assert.match(html, /id="captureQuestion"[^>]*hidden/, 'the question card must start hidden');
+  assert.match(css, /\.capture-question\[hidden\]\s*\{[\s\S]*?display:\s*none/, 'a hidden question card must not take up space');
+});
+
+check('capture is never blocked by the AI being unavailable', () => {
+  // A failed model call must resolve to null rather than rejecting into the capture flow.
+  const fn = js.slice(js.indexOf('async function requestModelExtraction'));
+  assert.match(fn, /if \(!res\.ok\) return null;/, 'a non-OK response must not throw');
+  assert.match(fn, /catch \(error\) \{\s*return null;/, 'a network failure must not throw');
+  assert.match(js, /if \(isFileProtocol\(\)\) return null;/, 'a file:// page must not attempt the call');
+});
+
 check('the Ask overlay still has an entry point for keyboard users', () => {
   assert.match(js, /openAsk\(\);\s*\n\s*return;/, 'Ctrl+K no longer opens the overlay');
   assert.match(html, /id="askInput"/, 'the overlay input was removed');

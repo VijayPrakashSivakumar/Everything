@@ -353,11 +353,112 @@ export function buildContextLine(item) {
   return `- ${label} ${title}${sub}${meta.length ? ` (${meta.join(', ')})` : ''}`;
 }
 
+/* ---------- Structured capture extraction ----------
+   Smart capture used to be regex-only in the browser, so one sentence carrying several
+   things ("ring the shop about the quote tomorrow, and remind me to pay the invoice")
+   was classified by pattern matching alone and the second half was lost.
+
+   This asks the same configured model for a structured read. It lives inside this route
+   rather than as a second function because the project is already at Vercel Hobby's
+   12-function limit. The browser still applies its own local rules first and only calls
+   this when those rules are unsure, so ordinary captures stay instant and cost nothing. */
+const EXTRACTION_KINDS = ['task', 'event', 'memory', 'waiting', 'openloop'];
+const EXTRACTION_RECURRENCE = ['none', 'daily', 'weekly', 'monthly'];
+const EXTRACTION_PRIORITY = ['high', 'medium', 'low'];
+const EXTRACTION_CONFIDENCE = ['high', 'medium', 'low'];
+
+const oneOf = (value, allowed, fallback) => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return allowed.includes(raw) ? raw : fallback;
+};
+
+export function buildExtractionPrompt(text, today) {
+  return `You turn one captured sentence into structured data for a personal productivity app called Everything. Today is ${today}.
+
+Rules:
+- One sentence often carries more than one thing (a task plus a promise, a date plus a follow-up). Put the thing the person must act on in the title.
+- Never invent a date. If the wording is vague ("maybe Friday", "sometime next week"), leave dueDate empty and put the question in ambiguous.
+- "waiting for X" is a waiting item, not a task.
+- An undecided question ("need to decide which laptop") is an openloop.
+- A fact or preference about a person is a memory.
+- A fixed time with someone ("call Ravi at 10") is an event.
+
+Respond with ONLY raw JSON, no prose and no code fence:
+{"kind":"task|event|memory|waiting|openloop","title":"short imperative title","dueDate":"ISO 8601 datetime or empty string","person":"name or empty string","project":"name or empty string","priority":"high|medium|low or empty string","recurrence":"none|daily|weekly|monthly","confidence":"high|medium|low","ambiguous":"one short question if something is genuinely unclear, otherwise empty string"}
+
+Sentence: ${text}`;
+}
+
+/* Tolerant reader for a model reply: strips code fences and any prose around the object, then
+   validates every field against the allowed values. Validation matters because the result is
+   written straight into the capture form — a hallucinated kind or date must not be able to
+   put the sheet into a state the UI cannot represent. */
+export function parseExtraction(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced ? fenced[1] : text).trim();
+  const start = candidate.indexOf('{');
+  const end = candidate.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(candidate.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+  const str = (value) => (typeof value === 'string' ? value.trim() : '');
+  return {
+    kind: oneOf(parsed.kind, EXTRACTION_KINDS, ''),
+    title: str(parsed.title).slice(0, 200),
+    dueDate: str(parsed.dueDate).slice(0, 40),
+    person: str(parsed.person).slice(0, 80),
+    project: str(parsed.project).slice(0, 80),
+    priority: oneOf(parsed.priority, EXTRACTION_PRIORITY, ''),
+    recurrence: oneOf(parsed.recurrence, EXTRACTION_RECURRENCE, 'none'),
+    confidence: oneOf(parsed.confidence, EXTRACTION_CONFIDENCE, 'medium'),
+    ambiguous: str(parsed.ambiguous).slice(0, 200),
+  };
+}
+
 export default async function handler(req, res) {
   const auth = await requireUser(req, res);
   if (!auth) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const { query, items, today } = req.body || {};
+  const body = req.body || {};
+  const { query, items, today } = body;
+  // The browser knows the user's real local date; the server clock may be UTC. Preferring the
+  // client value is what lets "today" and "this week" be answered correctly.
+  const currentDate = String(today || '').slice(0, 60) || new Date().toDateString();
+
+  // Smart capture. A failure here is never fatal to the capture sheet: the browser keeps the
+  // local rule-based result and simply saves without the model's refinement.
+  if (body.action === 'extract') {
+    const text = String(body.text || '').trim().slice(0, 2000);
+    if (!text) return res.status(400).json({ error: 'Missing text' });
+
+    const result = await complete({
+      prompt: buildExtractionPrompt(text, currentDate),
+      // A reasoning model needs headroom before it emits visible text; too small a budget
+      // returns 200 with an empty body, which is what made this look like a failure.
+      maxTokens: 400,
+    });
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error, reason: result.reason });
+    }
+    const extraction = parseExtraction(result.answer);
+    if (!extraction) {
+      return res.status(502).json({
+        error: 'The model did not return a usable result.',
+        reason: `${result.provider}:unparsable`,
+      });
+    }
+    return res.status(200).json({ extraction, provider: result.provider, model: result.model });
+  }
+
   if (!query || !query.trim()) return res.status(400).json({ error: 'Missing query' });
 
   const context = (items || [])
@@ -366,9 +467,6 @@ export default async function handler(req, res) {
     .map(buildContextLine)
     .join('\n');
 
-  // The browser knows the user's real local date; the server clock may be UTC. Preferring the
-  // client value is what lets "today" and "this week" be answered correctly.
-  const currentDate = String(today || '').slice(0, 60) || new Date().toDateString();
   const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Today is ${currentDate}. Be concise (2-4 sentences), specific, and reference relevant items by name. Use the status and due fields to judge what is current, overdue or still open. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context || '(none)'}\n\nQuestion: ${query}`;
 
   const result = await complete({ prompt, maxTokens: 600 });

@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-25.6";
+const APP_BUILD = "2026-09-25.7";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -4241,6 +4241,7 @@ let captureSmartEnabled = true;
 let captureExtraction = null;
 let captureSuggestionFields = {};
 let captureDuplicate = null;
+let captureQuestions = [];
 let captureVoiceRecognition = null;
 let captureVoiceActive = false;
 let captureVoiceFinal = "";
@@ -4276,6 +4277,12 @@ function openCapture() {
   document.getElementById("captureText").value = "";
   document.getElementById("captureText").placeholder = "What's on your mind?";
   document.getElementById("captureHint").textContent = "";
+  captureQuestions = [];
+  const questionCard = document.getElementById("captureQuestion");
+  if (questionCard) {
+    questionCard.hidden = true;
+    questionCard.innerHTML = "";
+  }
   document.getElementById("captureDuplicateWarning").hidden = true;
   document.getElementById("clearCaptureSuggestionsBtn").disabled = true;
   const smartToggle = document.getElementById("captureSmartEnabled");
@@ -4473,6 +4480,7 @@ function clearCaptureSuggestions() {
   captureSuggestionFields = {};
   const clearButton = document.getElementById("clearCaptureSuggestionsBtn");
   if (clearButton) clearButton.disabled = true;
+  dismissCaptureQuestion();
   document.getElementById("captureHint").textContent = "Suggestions cleared. Edit the fields or type again.";
 }
 
@@ -4515,37 +4523,36 @@ function onCaptureInput() {
   extractDebounce = setTimeout(() => extractWithAI(text), 700);
 }
 
+/* Smart capture, in two beats.
+
+   First the local rules run: instant, free, offline, and good enough for a plain
+   "call Ravi tomorrow". Their result is applied immediately so the sheet never feels slow.
+
+   The model is then asked for a second opinion, but only when the rules are not confident —
+   a vague time, a promise, a multi-clause sentence, or a half-read. A failure there is silent:
+   the local result stands, which is why this can never block saving. */
 async function extractWithAI(text) {
-  let result = null;
-
-  // Free path: Claude artifact's built-in sample capability (no cost)
-  let sample;
-  try {
-    sample = await window.claude?.use("sample");
-  } catch (e) {
-    sample = null;
-  }
-  if (sample) {
-    const now = new Date().toISOString();
-    const projectList = state.projects.map((p) => p.name).join(", ") || "none";
-    const prompt = `You extract structured data from a quick personal note for a productivity app. Current date/time: ${now}. Known projects: ${projectList}.\n\nNote: "${text}"\n\nRespond with ONLY raw JSON:\n{"kind":"task|event|memory|waiting|openloop","priority":"high|medium|low|","dueDate":"ISO 8601 datetime or empty string","person":"name or empty string","project":"one of the known projects if it clearly matches, else empty string","recurrence":"none|daily|weekly|monthly"}`;
-    try {
-      const res = await sample(prompt, { modelTier: "quick" });
-      result = JSON.parse(res.text.replace(/```json|```/g, "").trim());
-    } catch (e) {
-      result = null;
-    }
-  }
-
-  // Free path: local rule-based extraction (no API, no cost) — used on the live Vercel site
-  if (!result) {
-    result = extractLocally(text);
-  }
-
+  const local = extractLocally(text);
   if (document.getElementById("captureText").value !== text) return;
-  applyExtraction(result);
+  applyExtraction(local, text);
+
+  if (!captureSmartEnabled) return;
+  if (!captureNeedsModelHelp(text, local)) return;
+
+  setCaptureHint(icon("sparkles") + " Reading more carefully…");
+  const ai = await requestModelExtraction(text);
+  // The person kept typing while the request was in flight; the answer is now stale.
+  if (document.getElementById("captureText").value !== text) return;
+  if (ai) applyExtraction(mergeExtractions(local, ai), text);
 }
-function applyExtraction(data) {
+
+/* Progress line under the smart-suggestions toggle. Extracted so the reading steps can never
+   overwrite each other out of order. */
+function setCaptureHint(html) {
+  const hint = document.getElementById("captureHint");
+  if (hint) hint.innerHTML = html || "";
+}
+function applyExtraction(data, text) {
   data = data && typeof data === "object" ? data : {};
   const previousKind = captureType;
   if (
@@ -4594,9 +4601,145 @@ function applyExtraction(data) {
   if (data.recurrence && data.recurrence !== "none") parts.push(data.recurrence);
   const clearButton = document.getElementById("clearCaptureSuggestionsBtn");
   if (clearButton) clearButton.disabled = parts.length === 0;
-  document.getElementById("captureHint").innerHTML = parts.length
-    ? `${icon("sparkles")} Suggestions: ${escapeHtml(parts.join(", "))} — edit any field to override.`
-    : "";
+  // Say when the model was involved, so a better reading is visibly better rather than magic.
+  const byline = data.aiUsed ? " (read by AI)" : "";
+  setCaptureHint(
+    parts.length
+      ? `${icon("sparkles")} Suggestions${byline}: ${escapeHtml(parts.join(", "))} — edit any field to override.`
+      : "",
+  );
+  renderCaptureQuestions(text, data);
+  const currentText = captureInputValue();
+  if (currentText) updateCaptureDuplicate(captureType, currentText);
+}
+
+/* ---------- Missing-value questions ----------
+   The product rule from the spec: the assistant must not invent what an uncertain phrase means.
+   "Maybe Friday" is not a date, so instead of silently guessing it, the sheet asks.
+
+   Deliberately restrained. It asks at most one question at a time, only for the two cases that
+   genuinely change what gets saved (an unreliable date, a promise that needs following up), and
+   it never blocks saving — every question can be ignored. "Suggestions, not pressure." */
+function renderCaptureQuestions(text, data) {
+  const card = document.getElementById("captureQuestion");
+  if (!card) return;
+  const questions = buildCaptureQuestions(text, data || {});
+  if (!questions.length) {
+    card.hidden = true;
+    card.innerHTML = "";
+    captureQuestions = [];
+    return;
+  }
+  captureQuestions = questions;
+  renderCaptureQuestion();
+}
+
+function buildCaptureQuestions(text, data) {
+  const body = String(text || "");
+  const questions = [];
+
+  // A promise the person made. Worth one tap: a reminder for it is the difference between
+  // keeping a commitment and quietly missing it.
+  if (COMMITMENT_RE.test(body)) {
+    questions.push({
+      id: "commitment",
+      question: "This sounds like something you promised. Shall I keep it as a task?",
+      options: [
+        { label: "Yes, make it a task", value: "task" },
+        { label: "Save as a note", value: "note" },
+      ],
+    });
+  }
+
+  // A time the wording does not actually pin down.
+  const vague = body.match(VAGUE_TIME_RE);
+  if (vague && (data.dueDate || /\b(friday|monday|tuesday|wednesday|thursday|saturday|sunday|week|month)\b/i.test(body))) {
+    questions.push({
+      id: "vague-date",
+      question: data.dueDate
+        ? `I read "${escapeHtml(vague[0])}" as ${escapeHtml(formatDueDisplay(data.dueDate))}. Keep that, or pick another day?`
+        : `"${escapeHtml(vague[0])}" is not a specific day. Add one?`,
+      options: data.dueDate
+        ? [
+            { label: "Keep it", value: "keep" },
+            { label: "Pick another day", value: "pick" },
+            { label: "No date", value: "clear" },
+          ]
+        : [
+            { label: "Pick a day", value: "pick" },
+            { label: "No date", value: "clear" },
+          ],
+    });
+  }
+
+  return questions;
+}
+
+/* Shows one question at a time so the sheet never turns into a form to fill in. */
+function renderCaptureQuestion() {
+  const card = document.getElementById("captureQuestion");
+  if (!card) return;
+  const question = captureQuestions[0];
+  if (!question) {
+    card.hidden = true;
+    card.innerHTML = "";
+    return;
+  }
+  card.hidden = false;
+  card.innerHTML = `
+    <p class="capture-question-text">${question.question}</p>
+    <div class="capture-question-actions">
+      ${question.options
+        .map(
+          (option) =>
+            `<button type="button" class="btn" onclick="answerCaptureQuestion('${escapeHtml(option.value)}')">${escapeHtml(option.label)}</button>`,
+        )
+        .join("")}
+      <button type="button" class="capture-question-skip" onclick="dismissCaptureQuestion()">Dismiss</button>
+    </div>`;
+}
+
+function dismissCaptureQuestion() {
+  captureQuestions = [];
+  const card = document.getElementById("captureQuestion");
+  if (card) {
+    card.hidden = true;
+    card.innerHTML = "";
+  }
+}
+
+/* Applies an answer. A choice the person makes is no longer a suggestion, so it is recorded as
+   an empty entry in captureSuggestionFields — "Clear suggestions" must not undo a decision. */
+function answerCaptureQuestion(value) {
+  const question = captureQuestions[0];
+  if (!question) return;
+
+  if (question.id === "commitment") {
+    if (value === "task") {
+      // Never override a type the person chose themselves.
+      if (!captureAutoDetected && !["voice", "image", "file", "link"].includes(captureType)) {
+        captureSuggestionFields.kind = { appliedKind: "task", previous: captureType };
+        pickType("task", false);
+      }
+    }
+  }
+
+  if (question.id === "vague-date") {
+    const field = document.getElementById("captureDueDate");
+    if (value === "clear") {
+      if (field) field.value = "";
+      captureSuggestionFields.captureDueDate = null;
+    } else if (value === "pick") {
+      field?.focus();
+      field?.showPicker?.();
+    } else {
+      // "Keep it" — protect the existing suggestion from being cleared.
+      if (field?.value) captureSuggestionFields.captureDueDate = null;
+    }
+  }
+
+  captureQuestions.shift();
+  renderCaptureQuestion();
   const currentText = captureInputValue();
   if (currentText) updateCaptureDuplicate(captureType, currentText);
 }
@@ -4670,6 +4813,26 @@ function parseLocalDate(text, now) {
   return d;
 }
 
+/* Words that make a time unreliable rather than known. The product rule is that the assistant
+   must not invent what a vague phrase means — it asks instead. "Maybe Friday" is not a date. */
+const VAGUE_TIME_RE =
+  /\b(maybe|perhaps|probably|some\s?time|soon|later|next week|this week|one day|eventually|whenever|any day|or so|ish|approximately|around)\b/i;
+
+/* A promise the person made. The spec calls these out as one of the most useful things the app
+   can notice, because an unfulfilled promise is easy to forget. */
+const COMMITMENT_RE =
+  /\b(i'?ll|i will|i promise|i said i'?d|we'?ll|we will|remind me to|don'?t forget to|i need to remember to)\b/i;
+
+/* Splits a sentence into clauses. More than one clause usually means more than one thing — a
+   task plus a promise, a date plus a follow-up — and the single-value local rules can only
+   ever report the first match. That is the main reason to call the model. */
+function splitCaptureClauses(text) {
+  return String(text || "")
+    .split(/[.;!?\n]+|\b(?:and then|also|plus|then)\b/i)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 2);
+}
+
 function extractLocally(text) {
   const result = {
     kind: "",
@@ -4678,6 +4841,9 @@ function extractLocally(text) {
     person: "",
     project: "",
     recurrence: "none",
+    // How much the rules actually know. Anything below "high" is a signal to ask the model.
+    confidence: "low",
+    ambiguous: "",
   };
 
   // Date/time via chrono-node (loaded from a CDN in index.html)
@@ -4728,8 +4894,86 @@ function extractLocally(text) {
   if (/\bwaiting (on|for)\b/i.test(text)) result.kind = "waiting";
   else if (/\b(need to decide|undecided|not sure yet)\b/i.test(text))
     result.kind = "openloop";
+  // A stated preference or fact about someone is knowledge, not work: "Ravi prefers WhatsApp".
+  // Without this the "email"/"call" verbs below read it as a task, which is the one kind error a
+  // memory engine must never make.
+  else if (/\b(prefers?|likes?|dislikes|hates?|uses|is a|works (at|with)|lives? in|knows?)\b/i.test(text))
+    result.kind = "memory";
+
+  // How much do the rules actually know? A vague phrase is a reason to ask, not to guess.
+  if (VAGUE_TIME_RE.test(text)) {
+    result.confidence = "low";
+  } else if (result.dueDate && result.kind) {
+    result.confidence = "high";
+  } else if (result.dueDate || result.kind) {
+    result.confidence = "medium";
+  }
 
   return result;
+}
+
+/* Decides whether the local rules are enough. They are for a plain "call Ravi tomorrow"; they
+   are not for a sentence carrying a promise and a date, for a vague time, or for anything they
+   only half-read. Calling the model costs a request, so it is reserved for those cases. */
+function captureNeedsModelHelp(text, local) {
+  if (VAGUE_TIME_RE.test(text)) return true;
+  if (COMMITMENT_RE.test(text)) return true;
+  if (local?.confidence !== "high") return true;
+  return splitCaptureClauses(text).length > 1;
+}
+
+/* Asks the configured model for a structured read of the sentence. Returns null on any failure
+   or when no provider is configured — the local result is already applied, so a failure here
+   costs the refinement and nothing else. */
+async function requestModelExtraction(text) {
+  if (isFileProtocol()) return null;
+  try {
+    const res = await apiFetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "extract",
+        text: String(text).slice(0, 2000),
+        today: new Date().toLocaleDateString(undefined, {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }),
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.extraction || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/* Folds the model's reading into the local one. The model only wins on fields it actually
+   filled and only when the rules were unsure; a confident local read is never overwritten,
+   and a value the model left empty never erases one the rules found. */
+function mergeExtractions(local, ai) {
+  const merged = { ...local };
+  const preferModel = local.confidence !== "high";
+  for (const field of [
+    "kind",
+    "dueDate",
+    "person",
+    "project",
+    "priority",
+    "recurrence",
+    "ambiguous",
+  ]) {
+    const value = ai?.[field];
+    if (value === undefined || value === null || value === "") continue;
+    if (preferModel || !merged[field]) merged[field] = value;
+  }
+  merged.confidence = ai?.confidence || local.confidence;
+  // A clear title from the model is the single biggest readability win, so use it when present.
+  if (ai?.title && (preferModel || !merged.title)) merged.title = ai.title;
+  merged.aiUsed = true;
+  return merged;
 }
 function closeCapture() {
   stopVoiceDictation();

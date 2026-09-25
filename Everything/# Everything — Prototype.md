@@ -135,6 +135,44 @@ the full-screen Ask overlay pre-filled with what you typed, or `Escape` to dismi
 The dropdown and the overlay share one `searchMatches()` helper, so the two can never disagree
 about what matches. Memory view search uses it too, instead of a private copy of the matcher.
 
+## Smart capture: analyse, then ask
+
+Capture used to be regex-only. `extractWithAI()` first tried `window.claude`, which exists only
+inside a Claude artifact and **never on the deployed site**, so in practice every capture fell
+through to pattern matching and the model was never consulted.
+
+Capture now reads in two beats:
+
+1. **Local rules first** — instant, free, offline, and right for a plain "call Ravi tomorrow".
+   They also report a **confidence**: an explicit date plus a detected kind is `high`.
+2. **The model second, only when needed** — a vague time, a promise, a multi-clause sentence, or
+   anything the rules only half-read. The request goes to `/api/ask` with `action: "extract"`,
+   reusing the same configured provider (and the same route, because the project is at Vercel
+   Hobby's 12-function limit).
+
+The merge is deliberately asymmetric: **a confident local read is never overwritten by the
+model**, and a model that fills nothing never erases what the rules found. A failed or
+unconfigured model costs the refinement and nothing else — capture always saves.
+
+### Asking instead of inventing
+
+The product rule is that the assistant must not invent what an uncertain phrase means. "Maybe
+Friday" is not a date, so the sheet asks rather than guessing:
+
+| You type | Everything does |
+| --- | --- |
+| `call Ravi tomorrow at 10am about the quote` | task, due tomorrow 10:00 — **no AI call**, instant |
+| `maybe friday about the quotation` | asks: *"I read 'maybe' as <date>. Keep that, or pick another day?"* |
+| `I'll send the drawings tomorrow` | asks: *"This sounds like something you promised. Shall I keep it as a task?"* |
+| `Ravi prefers WhatsApp instead of email` | **memory**, not a task (the verbs say "email") |
+| `ring the shop about the quote tomorrow, and remind me to pay the invoice` | AI reads the second clause the single-value rules would drop |
+
+Questions are shown **one at a time**, always dismissible, and never block Save — "suggestions,
+not pressure". An answer the person gives is no longer a suggestion, so *Clear suggestions* will
+not undo it.
+
+Type, voice and image all end up in the same pipeline, so all three get the same reading.
+
 ## Voice and image capture
 
 **Dictation language** — the picker in the Voice capture decides which language the browser
