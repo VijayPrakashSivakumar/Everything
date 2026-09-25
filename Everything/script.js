@@ -4859,14 +4859,20 @@ async function askAI(q) {
     </div>`
       : "";
 
-  const fallbackAnswer = contextItems.length
-    ? `Based on what you've captured — ${escapeHtml(
-        contextItems
-          .slice(0, 3)
-          .map((m) => m.title)
-          .join("; "),
-      )}.`
-    : "Couldn't reach the AI right now.";
+  const renderFallback = (note) => {
+    const body = contextItems.length
+      ? `Based on what you've captured — ${escapeHtml(
+          contextItems
+            .slice(0, 3)
+            .map((m) => m.title)
+            .join("; "),
+        )}.`
+      : "No matching items in your captures.";
+    const hint = note
+      ? `<div style="margin-top:6px;font-size:11.5px;color:var(--muted)">${escapeHtml(note)}</div>`
+      : "";
+    slot.innerHTML = `<div class="ask-answer">${body}${hint}${buildSourcesHtml()}</div>`;
+  };
 
   if (sample) {
     const context = contextPool
@@ -4897,10 +4903,35 @@ async function askAI(q) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: q, items: contextPool }),
     });
+    // The server returns a short, user-safe reason for 503 (no key configured) and 502
+    // (upstream problem). Anything else is unexpected, so stay quiet and use local results.
+    if (!res.ok) return renderFallback(await readAskError(res));
     const data = await res.json();
-    slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer || data.error || fallbackAnswer)}${buildSourcesHtml()}</div>`;
+    if (data.answer) {
+      slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer)}${buildSourcesHtml()}</div>`;
+      return;
+    }
+    renderFallback();
   } catch (err) {
-    slot.innerHTML = `<div class="ask-answer">${fallbackAnswer}${buildSourcesHtml()}</div>`;
+    renderFallback("Search is offline right now — showing your matching items.");
+  }
+}
+
+/* Turns an /api/ask error response into one short line, and never throws. */
+async function readAskError(res) {
+  try {
+    const data = await res.json();
+    if (res.status === 503) {
+      return "AI answers are off — add a model API key in Vercel to enable them.";
+    }
+    if (res.status === 502) {
+      return "The AI provider is unavailable right now — showing your matching items.";
+    }
+    return typeof data?.error === "string" && data.error.length < 120
+      ? data.error
+      : "Showing your matching items.";
+  } catch (e) {
+    return "Showing your matching items.";
   }
 }
 
