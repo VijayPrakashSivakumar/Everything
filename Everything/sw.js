@@ -1,4 +1,4 @@
-const CACHE_NAME = 'everything-shell-v8';
+const CACHE_NAME = 'everything-shell-v10';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed

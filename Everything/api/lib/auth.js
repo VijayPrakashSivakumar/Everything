@@ -70,16 +70,21 @@ export function bodyClientId(body = {}) {
   return body.client_id || body.clientId || metadata.originalId || metadata.original_id || metadata.client_id || null;
 }
 
-const clientIdSupport = new Map();
+const columnSupport = new Map();
 
-export async function hasClientIdColumn(supabase, table) {
-  if (clientIdSupport.get(table) === true) return true;
-  const { error } = await supabase.from(table).select('client_id').limit(1);
+export async function hasColumn(supabase, table, column) {
+  const key = `${table}.${column}`;
+  if (columnSupport.get(key) === true) return true;
+  const { error } = await supabase.from(table).select(column).limit(1);
   const supported = !error && !isMissingColumn(error);
   // Keep a false result uncached so a deployment can pick up a newly applied
   // migration without requiring a long-lived server process to restart.
-  if (supported) clientIdSupport.set(table, true);
+  if (supported) columnSupport.set(key, true);
   return supported;
+}
+
+export async function hasClientIdColumn(supabase, table) {
+  return hasColumn(supabase, table, 'client_id');
 }
 
 export async function findByClientId(supabase, table, householdId, clientId) {

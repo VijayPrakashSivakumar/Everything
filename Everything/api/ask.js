@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   const { query, items } = req.body || {};
   if (!query || !query.trim()) return res.status(400).json({ error: 'Missing query' });
 
-  const context = (items || []).slice(0, 60)
+  const context = (items || []).filter((item) => !item.archivedAt && !item.archived_at).slice(0, 60)
     .map(i => `- [${i.kind}${i.priority ? '/' + i.priority : ''}] ${i.title}${i.sub ? ': ' + i.sub : ''}${i.person ? ' (person: ' + i.person + ')' : ''}${i.due ? ' (due: ' + i.due + ')' : ''}`)
     .join('\n');
 

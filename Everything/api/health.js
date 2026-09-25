@@ -22,6 +22,7 @@ export default async function handler(req, res) {
 
   let databaseReady = false;
   let reminderSchemaReady = false;
+  let taskWorkflowSchemaReady = false;
   const supabase = getSupabaseServerClient();
   if (supabase) {
     try {
@@ -31,31 +32,46 @@ export default async function handler(req, res) {
       databaseReady = false;
     }
 
-    // migration 004 — without it reminders still work, only closed-app push is skipped
+    // migrations 004 and 006 — reminder push and task workflow fields
     try {
       const { error } = await supabase.from('push_subscriptions').select('id').limit(1);
       reminderSchemaReady = !error;
     } catch (error) {
       reminderSchemaReady = false;
     }
+    try {
+      const taskColumns = 'checklist,recurrence_key,archived_at';
+      const itemResult = await supabase.from('items').select(taskColumns).limit(1);
+      if (itemResult.error) throw itemResult.error;
+      const taskResult = await supabase.from('tasks').select(taskColumns).limit(1);
+      if (taskResult.error) throw taskResult.error;
+      taskWorkflowSchemaReady = true;
+    } catch (error) {
+      taskWorkflowSchemaReady = false;
+    }
   }
 
-  const ready =
+  const backendReady =
     envStatus.SUPABASE_URL &&
     envStatus.SUPABASE_SERVICE_ROLE_KEY &&
     databaseReady;
+  const ready = backendReady && taskWorkflowSchemaReady;
 
   return res.status(200).json({
     ok: true,
     app: 'Everything',
-    phase: 'foundation',
-    message: ready
-      ? 'Foundation backend is ready. AI search is optional.'
+    phase: 'phase-2',
+    message: backendReady
+      ? taskWorkflowSchemaReady
+        ? 'Phase 2 task workflow is ready. AI search is optional.'
+        : 'Foundation backend is ready. Run migration 006 to enable task workflows.'
       : 'Supabase backend configuration is incomplete.',
     envStatus,
     ready,
+    backendReady,
     databaseReady,
     reminderSchemaReady,
+    taskWorkflowSchemaReady,
     pushReady,
     notifications: !pushReady
       ? 'Closed-app push is off: set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY, then redeploy.'

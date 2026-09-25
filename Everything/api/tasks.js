@@ -1,4 +1,4 @@
-import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
+import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, hasColumn, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
 
 const STATUS = ['inbox', 'planned', 'today', 'in_progress', 'waiting', 'completed', 'cancelled', 'someday'];
 const PRIORITY = ['low', 'normal', 'high', 'urgent'];
@@ -9,13 +9,33 @@ const priority = (v, f = 'normal') => {
   if (raw === 'medium') return 'normal';
   return pick(raw, PRIORITY, f);
 };
+const normaliseChecklist = (value) => {
+  let list = value;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { list = []; }
+  }
+  if (!Array.isArray(list)) return [];
+  return list.map((step, index) => {
+    if (typeof step === 'string') step = { text: step, done: false };
+    if (!step || typeof step !== 'object') return null;
+    const text = String(step.text || step.title || '').trim();
+    if (!text) return null;
+    const done = step.done === true || step.done === 1 || String(step.done).toLowerCase() === 'true';
+    return { id: String(step.id || `step_${index + 1}`), text, done };
+  }).filter(Boolean).slice(0, 100);
+};
 const isPrivate = (row) => row?.visibility === 'private' || row?.metadata?.scope === 'private';
 const fail = (res, code, error) => res.status(code).json({ error: error || 'Request failed.' });
 
 async function saveTask(supabase, householdId, userId, body, existing) {
   const clientId = existing?.client_id || bodyClientId(body) || null;
   const supportsClientId = clientId ? await hasClientIdColumn(supabase, 'tasks') : false;
-  const metadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : (existing?.metadata || {});
+  const supportsChecklist = await hasColumn(supabase, 'tasks', 'checklist');
+  const supportsRecurrenceKey = await hasColumn(supabase, 'tasks', 'recurrence_key');
+  const supportsArchivedAt = await hasColumn(supabase, 'tasks', 'archived_at');
+  const metadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+    ? { ...body.metadata }
+    : (existing?.metadata || {});
   const payload = {
     entry_id: body.entry_id !== undefined ? (body.entry_id || body.entryId || null) : (existing?.entry_id || null),
     household_id: householdId,
@@ -34,6 +54,33 @@ async function saveTask(supabase, householdId, userId, body, existing) {
     completed_at: body.completed_at !== undefined ? (body.completed_at || body.completedAt || null) : (existing?.completed_at || null),
     metadata,
   };
+  if (supportsChecklist) {
+    payload.checklist = normaliseChecklist(
+      body.checklist !== undefined
+        ? body.checklist
+        : body.metadata?.checklist !== undefined
+          ? body.metadata.checklist
+          : (existing?.checklist || metadata.checklist || []),
+    );
+  }
+  if (supportsRecurrenceKey && (body.recurrence_key !== undefined || body.recurrenceKey !== undefined || existing?.recurrence_key)) {
+    payload.recurrence_key = body.recurrence_key ?? body.recurrenceKey ?? existing?.recurrence_key ?? null;
+  }
+  if (supportsArchivedAt && (body.archived_at !== undefined || body.archivedAt !== undefined || existing?.archived_at)) {
+    payload.archived_at = body.archived_at ?? body.archivedAt ?? existing?.archived_at ?? null;
+  }
+  if (body.checklist !== undefined || body.metadata?.checklist !== undefined) {
+    metadata.checklist = supportsChecklist
+      ? payload.checklist
+      : normaliseChecklist(body.checklist ?? body.metadata?.checklist);
+  }
+  if (body.recurrence_key !== undefined || body.recurrenceKey !== undefined) {
+    metadata.recurrenceKey = payload.recurrence_key || body.recurrence_key || body.recurrenceKey || null;
+  }
+  if (body.archived_at !== undefined || body.archivedAt !== undefined) {
+    metadata.archivedAt = payload.archived_at || body.archived_at || body.archivedAt || null;
+  }
+  payload.metadata = metadata;
   applyClientIdentity(payload, body, clientId, supportsClientId);
   if (!payload.title) return { error: 'Task title is required.' };
   if (existing) {

@@ -845,6 +845,7 @@ h1.page-title {
 .checkbox {
   width: 18px;
   height: 18px;
+  padding: 0;
   border-radius: 5px;
   border: 2px solid var(--border);
   flex-shrink: 0;
@@ -852,6 +853,7 @@ h1.page-title {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  background: transparent;
 }
 
 .checkbox.checked {
@@ -2841,5 +2843,258 @@ body.overlay-open .content {
 
   .panel-snooze .btn {
     flex: 1 1 calc(50% - 8px);
+  }
+}
+
+/* ---------- Phase 2 task workflow ---------- */
+.task-only[hidden] {
+  display: none !important;
+}
+
+.task-status-badge.planned {
+  background: var(--blue-bg);
+  color: var(--blue-fg);
+}
+
+.task-status-badge.today {
+  background: var(--accent);
+  color: #fff;
+}
+
+.task-status-badge.in-progress {
+  background: var(--purple-bg);
+  color: var(--purple-fg);
+}
+
+.task-status-badge.waiting {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+}
+
+.task-status-badge.someday {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.task-status-badge.completed {
+  background: var(--green-bg);
+  color: var(--green-fg);
+}
+
+.task-row.archived {
+  opacity: 0.78;
+}
+
+.task-row.archived .task-title {
+  color: var(--muted);
+}
+
+.badge.archived {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.checklist-toggle:disabled,
+.checklist-remove:disabled,
+.task-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.task-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.task-progress svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+
+.task-select {
+  width: min(190px, 100%);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.task-select:focus-visible,
+.checklist-toggle:focus-visible,
+.checklist-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.task-workflow {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.task-workflow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.task-workflow-head h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.task-workflow-head > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.checklist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checklist-empty {
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.checklist-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.checklist-row.done .checklist-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.checklist-toggle,
+.checklist-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.checklist-toggle {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-radius: 5px;
+}
+
+.checklist-toggle.checked {
+  border-color: var(--green-fg);
+  background: var(--green-fg);
+  color: #fff;
+}
+
+.checklist-toggle svg,
+.checklist-remove svg {
+  width: 13px;
+  height: 13px;
+}
+
+.checklist-toggle svg {
+  stroke-width: 3;
+}
+
+.checklist-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.checklist-remove {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.checklist-remove:hover {
+  background: var(--red-bg);
+  color: var(--red-fg);
+}
+
+.checklist-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.checklist-add .capture-input {
+  margin-bottom: 0;
+}
+
+.checklist-add .btn {
+  min-height: 40px;
+}
+
+.panel-actions {
+  flex-wrap: wrap;
+}
+
+.panel-actions .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .panel-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel-actions .btn {
+    width: 100%;
+  }
+
+  .checklist-add {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .panel-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel-actions .btn:last-child {
+    grid-column: auto;
+  }
+
+  .task-select {
+    width: 100%;
   }
 }

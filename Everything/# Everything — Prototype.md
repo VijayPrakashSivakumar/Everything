@@ -22,6 +22,7 @@ inbox, calendar, projects, goals, and AI-assisted search.
   `/api/ask` (Claude) and falls back to keyword matching offline.
 - **Quick reschedule** — open any item and use *Reschedule* (Tomorrow 9 AM, +1 day,
   +1 week, clear) instead of editing the date by hand.
+- **Task workflow** — tasks support Planned, Today, In progress, Waiting, Someday, and Completed states, with a Priority view, persisted checklist steps, quick conversion, duplication, rescheduling, priority-aware ordering, and reversible Archive/Restore.
 - **Reports** — 14-day chart of captures vs completions (completions are logged locally).
 - **Backup** — Settings → Account → *Export backup* / *Import backup* (JSON round-trip).
 - **Keyboard shortcuts** — `Ctrl/⌘ + K` search, `C` quick capture, `/` focus search,
@@ -133,6 +134,8 @@ Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, 
 | `002_foundation_entry_model.sql` | Entries, tasks, people, projects, and goals |
 | `003_household_workspace.sql` | Households and household memberships |
 | `004_reminder_delivery.sql` | `items.reminder_at/notified_at/snoozed_until`, `push_subscriptions`, `notification_log` |
+| `005_idempotent_client_ids.sql` | Stable client IDs, authenticated API persistence, and structured-record RLS |
+| `006_task_workflow.sql` | Task workflow statuses, checklist steps, and stable recurrence keys on `items` and structured `tasks` |
 
 `supabase/reminder-cron.sql` is **not** a migration — it is the optional minute-level trigger
 described under *Cron cadence*, and only needs running if the project stays on Vercel Hobby.

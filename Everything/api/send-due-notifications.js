@@ -207,7 +207,7 @@ function reminderTimeOf(item) {
 /* One reminder per item, unless the user snoozed it — that is the only way a delivered
    reminder may surface again. This is what keeps push and local delivery from duplicating. */
 function shouldDeliver(item, now) {
-  if (item.done) return false;
+  if (item.done || item.archived_at) return false;
   if (item.notified !== true) return true;
 
   const snoozeUntil = item.snoozed_until ? new Date(item.snoozed_until).getTime() : 0;

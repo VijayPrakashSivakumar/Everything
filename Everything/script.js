@@ -142,7 +142,10 @@ function itemSnapshot(item) {
     due: item.due || "",
     dueDate: item.dueDate || null,
     recurrence: item.recurrence || "none",
-    status: item.status || "inbox",
+    status: item.kind === "task" ? taskStatusFromItem(item) : item.status || "inbox",
+    checklist: normaliseChecklist(item.checklist),
+    recurrenceKey: item.recurrenceKey || null,
+    archivedAt: item.archivedAt || null,
     project: item.project || "",
     created: item.created || Date.now(),
     done: Boolean(item.done),
@@ -613,6 +616,9 @@ let structuredChannels = [];
 let syncReadyPromise = null;
 let hasCompletedAt = false;
 let hasReminderColumns = false;
+let hasChecklistColumn = false;
+let hasRecurrenceKeyColumn = false;
+let hasArchivedAtColumn = false;
 
 function itemToRow(item) {
   const row = {
@@ -627,7 +633,7 @@ function itemToRow(item) {
     due: item.due || "",
     due_date: item.dueDate || null,
     recurrence: item.recurrence || "none",
-    status: item.status || "",
+    status: item.kind === "task" ? taskStatusFromItem(item) : item.status || "",
     project: item.project || "",
     created: item.created,
     done: !!item.done,
@@ -635,6 +641,9 @@ function itemToRow(item) {
     household_id: currentHouseholdId,
     media_url: item.mediaUrl || "",
   };
+  if (hasChecklistColumn) row.checklist = normaliseChecklist(item.checklist);
+  if (hasRecurrenceKeyColumn) row.recurrence_key = item.recurrenceKey || null;
+  if (hasArchivedAtColumn) row.archived_at = item.archivedAt ? new Date(item.archivedAt).toISOString() : null;
   // Only sent once the completed_at migration has been applied — see supabase/migrations.
   if (hasCompletedAt)
     row.completed_at = item.completedAt
@@ -667,7 +676,10 @@ function rowToItem(row) {
     due: row.due,
     dueDate: row.due_date,
     recurrence: row.recurrence,
-    status: row.status,
+    status: row.kind === "task" ? taskStatusFromItem(row) : row.status,
+    checklist: normaliseChecklist(row.checklist),
+    recurrenceKey: row.recurrence_key || null,
+    archivedAt: row.archived_at ? new Date(row.archived_at).getTime() : 0,
     project: row.project,
     created: Number(row.created),
     done: row.done,
@@ -697,6 +709,33 @@ async function detectCompletedAtColumn() {
 async function detectReminderColumns() {
   try {
     const { error } = await sb.from("items").select("reminder_at").limit(1);
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function detectChecklistColumn() {
+  try {
+    const { error } = await sb.from("items").select("checklist").limit(1);
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function detectRecurrenceKeyColumn() {
+  try {
+    const { error } = await sb.from("items").select("recurrence_key").limit(1);
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function detectArchivedAtColumn() {
+  try {
+    const { error } = await sb.from("items").select("archived_at").limit(1);
     return !error;
   } catch (e) {
     return false;
@@ -734,6 +773,9 @@ async function startSupabaseSync(userId) {
   sbUser = userId;
   hasCompletedAt = await detectCompletedAtColumn();
   hasReminderColumns = await detectReminderColumns();
+  hasChecklistColumn = await detectChecklistColumn();
+  hasRecurrenceKeyColumn = await detectRecurrenceKeyColumn();
+  hasArchivedAtColumn = await detectArchivedAtColumn();
   const { data, error } = await sb
     .from("items")
     .select("*")
@@ -1377,6 +1419,140 @@ let state = null;
 let currentItemId = null;
 let captureType = "text";
 
+function isArchived(item) {
+  return Boolean(item?.archivedAt || item?.archived_at);
+}
+
+const TASK_STATUS_OPTIONS = [
+  { value: "planned", label: "Planned" },
+  { value: "today", label: "Today" },
+  { value: "in_progress", label: "In progress" },
+  { value: "waiting", label: "Waiting" },
+  { value: "someday", label: "Someday" },
+  { value: "completed", label: "Completed" },
+];
+
+const TASK_STATUS_ALIASES = {
+  inbox: "planned",
+  todo: "planned",
+  open: "planned",
+  doing: "in_progress",
+  "in progress": "in_progress",
+  "in-progress": "in_progress",
+  inprogress: "in_progress",
+  blocked: "waiting",
+  complete: "completed",
+  done: "completed",
+  cancelled: "someday",
+};
+
+function normalizeTaskStatus(value, fallback = "planned") {
+  const raw = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!raw) return fallback;
+  if (TASK_STATUS_OPTIONS.some((option) => option.value === raw)) return raw;
+  if (TASK_STATUS_ALIASES[raw]) return TASK_STATUS_ALIASES[raw];
+  const underscored = raw.replace(/[ -]+/g, "_");
+  if (TASK_STATUS_OPTIONS.some((option) => option.value === underscored)) return underscored;
+  return fallback;
+}
+
+function taskStatusLabel(value) {
+  const status = normalizeTaskStatus(value);
+  return TASK_STATUS_OPTIONS.find((option) => option.value === status)?.label || "Planned";
+}
+
+function taskStatusClass(value) {
+  return normalizeTaskStatus(value).replace(/_/g, "-");
+}
+
+function normaliseChecklist(value) {
+  let list = value;
+  if (typeof list === "string") {
+    try {
+      list = JSON.parse(list);
+    } catch (err) {
+      list = [];
+    }
+  }
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((step, index) => {
+      if (typeof step === "string") step = { text: step, done: false };
+      if (!step || typeof step !== "object") return null;
+      const text = String(step.text || step.title || "").trim();
+      if (!text) return null;
+      const done = step.done === true || step.done === 1 || String(step.done).toLowerCase() === "true";
+      return {
+        // Keep legacy steps stable across refreshes instead of generating a new id
+        // every time an older checklist is normalised.
+        id: String(step.id || `step_${index + 1}`),
+        text,
+        done,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 100);
+}
+
+function checklistProgress(item) {
+  const checklist = normaliseChecklist(item?.checklist);
+  const completed = checklist.filter((step) => step.done).length;
+  return { total: checklist.length, completed };
+}
+
+function isTaskToday(item) {
+  if (isArchived(item)) return false;
+  const due = item?.dueDate || item?.due_date;
+  return !item?.done && (normalizeTaskStatus(item?.status) === "today" || isToday(due));
+}
+
+async function changePanelTaskStatus(value) {
+  if (currentItemId) await setTaskStatus(currentItemId, value);
+}
+
+async function convertCurrentToTask() {
+  const item = state.items.find((i) => i.id === currentItemId);
+  if (!item || item.kind === "task") return;
+  const id = item.id;
+  item.kind = "task";
+  item.status = isTaskToday(item) ? "today" : "planned";
+  item.done = false;
+  item.completedAt = "";
+  item.checklist = normaliseChecklist(item.checklist);
+  await dbSaveItem(item);
+  closePanel();
+  switchView("tasks");
+  openPanel(id);
+}
+
+async function duplicateCurrentTask() {
+  const item = state.items.find((i) => i.id === currentItemId);
+  if (!item || item.kind !== "task") return;
+  const copy = {
+    ...item,
+    id: cid(),
+    ownerId: sbUser || currentUserId || item.ownerId || null,
+    title: `${item.title} (copy)`,
+    status: isTaskToday(item) ? "today" : "planned",
+    checklist: normaliseChecklist(item.checklist).map((step) => ({ ...step, done: false })),
+    done: false,
+    completedAt: "",
+    notified: false,
+    notifiedAt: "",
+    snoozedUntil: "",
+    archivedAt: 0,
+    backendEntryId: null,
+    backendTaskId: null,
+    recurrenceKey: null,
+    created: Date.now(),
+  };
+  state.items.unshift(copy);
+  await dbSaveItem(copy);
+  closePanel();
+  switchView("tasks");
+  openPanel(copy.id);
+}
+
 function seedData() {
   return {
     items: [],
@@ -1445,10 +1621,29 @@ function formatDueDisplay(iso) {
 }
 function nextOccurrence(iso, recurrence) {
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
   if (recurrence === "daily") d.setDate(d.getDate() + 1);
   else if (recurrence === "weekly") d.setDate(d.getDate() + 7);
-  else if (recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+  else if (recurrence === "monthly") {
+    // Date#setMonth overflows (Jan 31 -> Mar 3). Clamp to the last valid day
+    // of the target month so monthly tasks remain predictable.
+    const day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, lastDay));
+  }
   return d.toISOString();
+}
+
+function taskRecurrenceKey(item) {
+  return item?.recurrenceKey || `series_${item?.id || "unknown"}`;
+}
+
+function recurringOccurrenceId(seriesKey, dueDate) {
+  const safeSeries = String(seriesKey).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const stamp = new Date(dueDate).getTime();
+  return `occ_${safeSeries}_${Number.isFinite(stamp) ? stamp : Date.now()}`;
 }
 function isToday(dueDate) {
   if (!dueDate) return false;
@@ -1456,6 +1651,7 @@ function isToday(dueDate) {
 }
 function isOverdue(item) {
   return (
+    !isArchived(item) &&
     !!item.dueDate &&
     !item.done &&
     new Date(item.dueDate).getTime() < Date.now() &&
@@ -1650,22 +1846,15 @@ function itemCollectionFor(item) {
 function taskStatusFromItem(item) {
   if (!item || item.kind !== "task") return "inbox";
   if (item.done) return "completed";
-
-  const raw = (item.status || "").toLowerCase().trim();
-  if (!raw) return "inbox";
-  if (raw === "today") return "today";
-  if (raw === "in progress") return "in_progress";
-  if (raw === "in_progress") return "in_progress";
-  if (raw === "waiting") return "waiting";
-  if (raw === "completed") return "completed";
-  if (raw === "cancelled") return "cancelled";
-  if (raw === "someday") return "someday";
-  if (raw === "planned") return "planned";
-  return raw.replace(/\s+/g, "_");
+  return normalizeTaskStatus(item.status, isTaskToday(item) ? "today" : "planned");
 }
 
 function buildEntryDraftFromItem(item) {
-  const status = item.done ? "completed" : item.status || "inbox";
+  const status = item.kind === "task"
+    ? taskStatusFromItem(item)
+    : item.done
+      ? "completed"
+      : item.status || "inbox";
   return {
     household_id: currentHouseholdId || null,
     user_id: sbUser || currentUserId || null,
@@ -1689,6 +1878,9 @@ function buildEntryDraftFromItem(item) {
       scope: item.scope || "shared",
       originalKind: item.kind || "text",
       originalId: item.id,
+      checklist: normaliseChecklist(item.checklist),
+      recurrenceKey: item.recurrenceKey || null,
+      archivedAt: item.archivedAt || null,
       backendEntryId: item.backendEntryId || null,
       backendTaskId: item.backendTaskId || null,
     },
@@ -1704,6 +1896,9 @@ function buildTaskDraftFromItem(item, entryId) {
     title: item.title || "",
     description: item.sub || "",
     status: taskStatusFromItem(item),
+    checklist: normaliseChecklist(item.checklist),
+    recurrence_key: item.recurrenceKey || null,
+    archived_at: item.archivedAt ? new Date(item.archivedAt).toISOString() : null,
     priority: item.priority || "normal",
     due_at: item.dueDate || null,
     start_at: null,
@@ -1718,6 +1913,9 @@ function buildTaskDraftFromItem(item, entryId) {
       client_id: item.id,
       originalId: item.id,
       scope: item.scope || "shared",
+      checklist: normaliseChecklist(item.checklist),
+      recurrenceKey: item.recurrenceKey || null,
+      archivedAt: item.archivedAt || null,
     },
     client_id: item.id,
   };
@@ -1726,6 +1924,11 @@ function buildTaskDraftFromItem(item, entryId) {
 async function dbSaveItem(item) {
   if (syncReadyPromise) await syncReadyPromise;
   if (!item.scope) item.scope = "shared";
+  if (item.kind === "task" && item.recurrence && item.recurrence !== "none" && !item.recurrenceKey) {
+    item.recurrenceKey = taskRecurrenceKey(item);
+  } else if (item.kind === "task" && (!item.recurrence || item.recurrence === "none")) {
+    item.recurrenceKey = null;
+  }
   const col = itemCollectionFor(item);
   if (col) {
     await col.doc(item.id).set(item);
@@ -1865,9 +2068,9 @@ function renderNav() {
     const el = document.createElement("div");
     el.className = "nav-item" + (item.id === activeView ? " active" : "");
     let badge = "";
-    if (item.id === "inbox") badge = state.items.length;
+    if (item.id === "inbox") badge = state.items.filter((i) => !isArchived(i)).length;
     if (item.id === "tasks")
-      badge = state.items.filter((i) => i.kind === "task" && !i.done).length;
+      badge = state.items.filter((i) => i.kind === "task" && !i.done && !isArchived(i)).length;
     el.innerHTML = `<div class="left"><span class="nav-icon"><i data-lucide="${item.icon}"></i></span><span class="nav-label">${item.label}</span></div>${badge ? `<span class="nav-badge">${badge}</span>` : ""}`;
     el.onclick = () => switchView(item.id);
     nav.appendChild(el);
@@ -2037,8 +2240,10 @@ function renderToday() {
     .filter(
       (i) =>
         !i.done &&
-        ((i.kind === "task" || i.kind === "event" || i.kind === "waiting") &&
-          (i.dueDate || i.due === "Today" || i.kind === "waiting")),
+        !isArchived(i) &&
+        ((i.kind === "task" && isTaskToday(i)) ||
+          (i.kind === "event" && i.dueDate) ||
+          i.kind === "waiting"),
     )
     .sort((a, b) => {
       if (a.dueDate && b.dueDate)
@@ -2049,7 +2254,7 @@ function renderToday() {
     })
     .slice(0, 8);
   document.getElementById("statTasks").textContent = state.items.filter(
-    (i) => i.kind === "task" && !i.done,
+    (i) => i.kind === "task" && !i.done && !isArchived(i),
   ).length;
   document.getElementById("statEvents").textContent = state.items.filter(
     (i) => i.kind === "event",
@@ -2070,6 +2275,7 @@ function renderToday() {
   const recent = document.getElementById("recentList");
   recent.innerHTML = "";
   [...state.items]
+    .filter((item) => !isArchived(item))
     .sort((a, b) => b.created - a.created)
     .slice(0, 4)
     .forEach((item) => {
@@ -2095,11 +2301,12 @@ function renderToday() {
     insights.innerHTML || '<p class="empty">Nothing to show yet.</p>';
   const statsEl = document.getElementById("insightsStats");
   if (statsEl) {
-    const totalItems = state.items.length;
-    const completedCount = state.items.filter((i) => i.done).length;
-    const activeDays = new Set(
-      state.items.map((i) => new Date(i.created).toDateString()),
-    ).size;
+  const activeItems = state.items.filter((i) => !isArchived(i));
+  const totalItems = activeItems.length;
+  const completedCount = activeItems.filter((i) => i.done).length;
+  const activeDays = new Set(
+    activeItems.map((i) => new Date(i.created).toDateString()),
+  ).size;
     statsEl.innerHTML = `
       <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${totalItems}</div><div class="stat-label">Total captured</div></div></div>
       <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${completedCount}</div><div class="stat-label">Completed</div></div></div>
@@ -2112,7 +2319,7 @@ function renderToday() {
 function getInsights() {
   const arr = [];
   const openLoops = state.items.filter(
-    (i) => i.kind === "openloop" || i.kind === "waiting",
+    (i) => !isArchived(i) && (i.kind === "openloop" || i.kind === "waiting"),
   );
   if (openLoops.length)
     arr.push({
@@ -2127,7 +2334,7 @@ function getInsights() {
   // Most active project
   const projectCounts = {};
   state.items.forEach((i) => {
-    if (i.project)
+    if (!isArchived(i) && i.project)
       projectCounts[i.project] = (projectCounts[i.project] || 0) + 1;
   });
   const topProject = Object.entries(projectCounts).sort(
@@ -2143,7 +2350,7 @@ function getInsights() {
   // Most mentioned person
   const personCounts = {};
   state.items.forEach((i) => {
-    if (i.person) personCounts[i.person] = (personCounts[i.person] || 0) + 1;
+    if (!isArchived(i) && i.person) personCounts[i.person] = (personCounts[i.person] || 0) + 1;
   });
   const topPerson = Object.entries(personCounts).sort((a, b) => b[1] - a[1])[0];
   if (topPerson)
@@ -2156,7 +2363,7 @@ function getInsights() {
   // Busiest day of week (by creation)
   const dayCounts = [0, 0, 0, 0, 0, 0, 0];
   state.items.forEach((i) => {
-    dayCounts[new Date(i.created).getDay()]++;
+    if (!isArchived(i)) dayCounts[new Date(i.created).getDay()]++;
   });
   const maxDay = dayCounts.indexOf(Math.max(...dayCounts));
   if (Math.max(...dayCounts) > 0) {
@@ -2209,31 +2416,67 @@ function getInsights() {
   return arr;
 }
 
+function taskPriorityRank(item) {
+  const priority = String(item?.priority || "").trim().toLowerCase();
+  return { urgent: 0, high: 1, medium: 2, normal: 2, low: 3 }[priority] ?? 4;
+}
+
+function taskStatusBadge(item) {
+  const status = taskStatusFromItem(item);
+  const badge = document.createElement("span");
+  badge.className = `badge task-status-badge ${taskStatusClass(status)}`;
+  badge.textContent = taskStatusLabel(status);
+  return badge;
+}
+
 function taskRow(item) {
   const row = document.createElement("div");
-  row.className = "task-row" + (item.done ? " done" : "");
+  row.className = "task-row" + (item.done ? " done" : "") + (isArchived(item) ? " archived" : "");
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
   row.onclick = (e) => {
-    if (e.target.closest(".checkbox")) return;
+    if (e.target.closest(".checkbox, button")) return;
     openPanel(item.id);
   };
-  const check = document.createElement("div");
+  row.onkeydown = (e) => {
+    if (e.target !== row) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openPanel(item.id);
+    }
+  };
+  const check = document.createElement("button");
+  check.type = "button";
   check.className = "checkbox" + (item.done ? " checked" : "");
+  check.setAttribute("role", "checkbox");
+  check.setAttribute("aria-checked", String(Boolean(item.done)));
+  check.setAttribute("aria-label", item.done ? "Reopen task" : "Complete task");
   check.innerHTML = item.done ? icon("check") : "";
-  check.onclick = () => toggleDone(item.id);
+  check.onclick = () => {
+    if (!isArchived(item)) toggleDone(item.id);
+  };
+  if (isArchived(item)) {
+    check.disabled = true;
+    check.setAttribute("aria-label", "Archived task");
+  }
   row.appendChild(check);
 
   const meta = document.createElement("div");
   meta.className = "task-meta";
   let mediaHtml = "";
   if (item.kind === "voice" && item.mediaUrl)
-    mediaHtml = `<audio controls src="${item.mediaUrl}" style="height:28px;margin-top:4px;"></audio>`;
+    mediaHtml = `<audio controls src="${escapeHtml(item.mediaUrl)}" style="height:28px;margin-top:4px;"></audio>`;
   if (item.kind === "image" && item.mediaUrl)
-    mediaHtml = `<img src="${item.mediaUrl}" style="max-width:120px;border-radius:6px;margin-top:4px;display:block;">`;
+    mediaHtml = `<img src="${escapeHtml(item.mediaUrl)}" style="max-width:120px;border-radius:6px;margin-top:4px;display:block;">`;
   if (item.kind === "file" && item.mediaUrl)
-    mediaHtml = `<a href="${item.mediaUrl}" target="_blank" style="font-size:12.5px;color:var(--accent);">Open file</a>`;
+    mediaHtml = `<a href="${escapeHtml(item.mediaUrl)}" target="_blank" rel="noreferrer" style="font-size:12.5px;color:var(--accent);">Open file</a>`;
   if (item.kind === "link")
-    mediaHtml = `<a href="${escapeHtml(item.title)}" target="_blank" style="font-size:12.5px;color:var(--accent);">${escapeHtml(item.title)}</a>`;
-  meta.innerHTML = `<div class="task-title">${item.scope === "private" ? icon("lock") + " " : ""}${escapeHtml(item.kind === "link" ? "Link" : item.title)}</div><div class="task-sub">${escapeHtml(item.sub || "")}${item.person ? " · <span>" + icon("user") + " " + escapeHtml(item.person) + "</span>" : ""}</div>${mediaHtml}`;
+    mediaHtml = `<a href="${escapeHtml(item.title)}" target="_blank" rel="noreferrer" style="font-size:12.5px;color:var(--accent);">${escapeHtml(item.title)}</a>`;
+  const progress = checklistProgress(item);
+  const progressHtml = progress.total
+    ? `<div class="task-progress">${icon("list-checks")} ${progress.completed}/${progress.total} steps</div>`
+    : "";
+  meta.innerHTML = `<div class="task-title">${item.scope === "private" ? icon("lock") + " " : ""}${escapeHtml(item.kind === "link" ? "Link" : item.title)}</div><div class="task-sub">${escapeHtml(item.sub || "")}${item.person ? ` · <span>${icon("user")} ${escapeHtml(item.person)}</span>` : ""}</div>${progressHtml}${mediaHtml}`;
   row.appendChild(meta);
 
   if (item.due) {
@@ -2244,52 +2487,145 @@ function taskRow(item) {
       escapeHtml(item.due);
     row.appendChild(t);
   }
-  const badgeText = item.priority || item.status || item.kind;
-  if (badgeText) {
-    const b = document.createElement("span");
-    b.className = "badge " + (item.priority || item.kind);
-    b.textContent = item.priority
+  if (item.kind === "task") {
+    row.appendChild(taskStatusBadge(item));
+    if (isArchived(item)) {
+      const archived = document.createElement("span");
+      archived.className = "badge archived";
+      archived.textContent = "Archived";
+      row.appendChild(archived);
+    } else if (item.priority) {
+      const priority = document.createElement("span");
+      const priorityClass = ["low", "medium", "high", "urgent"].includes(String(item.priority).toLowerCase())
+        ? String(item.priority).toLowerCase()
+        : "task";
+      priority.className = `badge ${priorityClass}`;
+      priority.textContent = String(item.priority).charAt(0).toUpperCase() + String(item.priority).slice(1);
+      row.appendChild(priority);
+    }
+  } else {
+    const badge = document.createElement("span");
+    badge.className = "badge " + (item.priority || item.kind);
+    badge.textContent = item.priority
       ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1)
-      : badgeText;
-    row.appendChild(b);
+      : item.status || item.kind;
+    row.appendChild(badge);
   }
   return row;
 }
 
-async function toggleDone(id) {
-  const item = state.items.find((i) => i.id === id);
-  if (!item) return;
-  const reopenStatus = item.status && item.status !== "completed" ? item.status : "inbox";
-  item.done = !item.done;
-  item.completedAt = item.done ? Date.now() : "";
-  item.status = item.done ? "completed" : reopenStatus;
-  logCompletion(item.id, item.done);
+const taskMutationInFlight = new Set();
+
+async function createRecurringOccurrence(item) {
+  if (!item.done || item.kind !== "task" || !item.recurrence || item.recurrence === "none" || !item.dueDate) return;
+  const nextDue = nextOccurrence(item.dueDate, item.recurrence);
+  if (!nextDue) return;
+  const seriesKey = taskRecurrenceKey(item);
+  const nextId = recurringOccurrenceId(seriesKey, nextDue);
+  // Occurrence ids are deterministic, so a retry or a second device converges
+  // on the same row instead of creating another copy.
+  const alreadyQueued = state.items.some(
+    (candidate) => candidate.id === nextId || (
+      candidate.kind === "task" &&
+      candidate.recurrenceKey === seriesKey &&
+      candidate.dueDate === nextDue
+    ),
+  );
+  if (alreadyQueued) return;
+  const next = {
+    ...item,
+    id: nextId,
+    recurrenceKey: seriesKey,
+    ownerId: sbUser || currentUserId || item.ownerId || null,
+    backendEntryId: null,
+    backendTaskId: null,
+    done: false,
+    completedAt: "",
+    checklist: normaliseChecklist(item.checklist).map((step) => ({ ...step, done: false })),
+    notified: false,
+    notifiedAt: "",
+    snoozedUntil: "",
+    archivedAt: 0,
+    dueDate: nextDue,
+    due: formatDueDisplay(nextDue),
+    created: Date.now(),
+    status: isToday(nextDue) ? "today" : "planned",
+  };
+  state.items.unshift(next);
+  await dbSaveItem(next);
+}
+
+async function completeTask(item) {
+  if (!item || item.done) return;
+  item.done = true;
+  item.completedAt = Date.now();
+  item.status = "completed";
+  logCompletion(item.id, true);
   await dbSaveItem(item);
-  if (
-    item.done &&
-    item.recurrence &&
-    item.recurrence !== "none" &&
-    item.dueDate
-  ) {
-    const nextDue = nextOccurrence(item.dueDate, item.recurrence);
-    const next = {
-      ...item,
-      id: cid(),
-      backendEntryId: null,
-      backendTaskId: null,
-      done: false,
-      completedAt: "",
-      notified: false,
-      notifiedAt: "",
-      snoozedUntil: "",
-      dueDate: nextDue,
-      due: formatDueDisplay(nextDue),
-      created: Date.now(),
-      status: "inbox",
-    };
-    state.items.unshift(next);
-    await dbSaveItem(next);
+  await createRecurringOccurrence(item);
+}
+
+async function reopenTask(item) {
+  if (!item || !item.done) return;
+  item.done = false;
+  item.completedAt = "";
+  item.status = isTaskToday(item) ? "today" : "in_progress";
+  item.notified = false;
+  item.notifiedAt = "";
+  item.snoozedUntil = "";
+  forgetNotified(item.id);
+  logCompletion(item.id, false);
+  await dbSaveItem(item);
+}
+
+async function setTaskStatus(id, value) {
+  if (taskMutationInFlight.has(id)) return;
+  const item = state.items.find((i) => i.id === id);
+  if (!item || item.kind !== "task" || isArchived(item)) return;
+  taskMutationInFlight.add(id);
+  try {
+    const nextStatus = normalizeTaskStatus(value, taskStatusFromItem(item));
+    if (nextStatus === "completed") {
+      await completeTask(item);
+    } else {
+      if (item.done) {
+        item.done = false;
+        item.completedAt = "";
+        item.notified = false;
+        item.notifiedAt = "";
+        item.snoozedUntil = "";
+        forgetNotified(item.id);
+        logCompletion(item.id, false);
+      }
+      item.status = nextStatus;
+      await dbSaveItem(item);
+    }
+  } finally {
+    taskMutationInFlight.delete(id);
   }
+  if (currentItemId === id && document.getElementById("panel")?.classList.contains("open")) openPanel(id);
+}
+
+async function toggleDone(id) {
+  if (taskMutationInFlight.has(id)) return;
+  const item = state.items.find((i) => i.id === id);
+  if (!item || isArchived(item)) return;
+  taskMutationInFlight.add(id);
+  try {
+    if (item.kind === "task") {
+      if (item.done) await reopenTask(item);
+      else await completeTask(item);
+    } else {
+      item.done = !item.done;
+      item.completedAt = item.done ? Date.now() : "";
+      item.status = item.done ? "completed" : item.status || "inbox";
+      logCompletion(item.id, item.done);
+      await dbSaveItem(item);
+    }
+  } finally {
+    taskMutationInFlight.delete(id);
+  }
+  if (currentItemId === id && document.getElementById("panel")?.classList.contains("open")) openPanel(id);
 }
 
 function renderInbox(filter) {
@@ -2317,6 +2653,7 @@ function renderInbox(filter) {
   list.innerHTML = "";
   const textKinds = ["task", "event", "memory", "waiting", "openloop"];
   const items = [...state.items]
+    .filter((i) => !isArchived(i))
     .sort((a, b) => b.created - a.created)
     .filter((i) => {
       if (filter === "text") {
@@ -2344,15 +2681,25 @@ function renderInbox(filter) {
   items.forEach((item) => list.appendChild(taskRow(item)));
 }
 
+let activeTaskFilter = "all";
+
 function renderTasks(filter) {
-  filter = filter || "all";
   const tabs = [
     ["all", "All"],
     ["today", "Today"],
+    ["planned", "Planned"],
+    ["in_progress", "In progress"],
+    ["waiting", "Waiting"],
+    ["someday", "Someday"],
+    ["priority", "Priority"],
     ["overdue", "Overdue"],
     ["upcoming", "Upcoming"],
     ["completed", "Completed"],
+    ["archived", "Archived"],
   ];
+  const requestedFilter = filter || activeTaskFilter || "all";
+  filter = tabs.some(([id]) => id === requestedFilter) ? requestedFilter : "all";
+  activeTaskFilter = filter;
   const tabRow = document.getElementById("taskTabs");
   if (tabRow) {
     tabRow.innerHTML = tabs
@@ -2366,8 +2713,22 @@ function renderTasks(filter) {
   const list = document.getElementById("tasksList");
   let tasks = state.items.filter((i) => i.kind === "task");
 
-  if (filter === "today")
-    tasks = tasks.filter((i) => !i.done && isToday(i.dueDate));
+  if (filter === "archived") tasks = tasks.filter((i) => isArchived(i));
+  else tasks = tasks.filter((i) => !isArchived(i));
+  if (filter === "archived") {
+    // Keep both open and completed tasks visible in the archive.
+  } else if (filter === "today")
+    tasks = tasks.filter((i) => isTaskToday(i));
+  else if (filter === "planned")
+    tasks = tasks.filter((i) => !i.done && taskStatusFromItem(i) === "planned");
+  else if (filter === "in_progress")
+    tasks = tasks.filter((i) => !i.done && taskStatusFromItem(i) === "in_progress");
+  else if (filter === "waiting")
+    tasks = tasks.filter((i) => !i.done && taskStatusFromItem(i) === "waiting");
+  else if (filter === "someday")
+    tasks = tasks.filter((i) => !i.done && taskStatusFromItem(i) === "someday");
+  else if (filter === "priority")
+    tasks = tasks.filter((i) => !i.done && taskPriorityRank(i) < 4);
   else if (filter === "overdue") tasks = tasks.filter((i) => isOverdue(i));
   else if (filter === "upcoming")
     tasks = tasks.filter(
@@ -2377,10 +2738,17 @@ function renderTasks(filter) {
   else tasks = tasks.filter((i) => !i.done);
 
   tasks.sort((a, b) => {
+    if (filter === "archived") return (b.archivedAt || 0) - (a.archivedAt || 0);
+    if (filter === "priority") {
+      const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
+      if (priorityDiff) return priorityDiff;
+    }
     if (a.dueDate && b.dueDate)
       return new Date(a.dueDate) - new Date(b.dueDate);
     if (a.dueDate) return -1;
     if (b.dueDate) return 1;
+    const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
+    if (priorityDiff) return priorityDiff;
     return b.created - a.created;
   });
 
@@ -2389,9 +2757,15 @@ function renderTasks(filter) {
     const emptyMsgs = {
       all: "No open tasks — nice work.",
       today: "Nothing due today.",
+      planned: "No planned tasks yet.",
+      in_progress: "Nothing in progress.",
+      waiting: "Nothing is waiting.",
+      someday: "Nothing on the someday list.",
+      priority: "No prioritised tasks yet.",
       overdue: "Nothing overdue.",
       upcoming: "No upcoming tasks scheduled.",
       completed: "Nothing completed yet.",
+      archived: "No archived tasks.",
     };
     list.innerHTML = `<p class="empty">${emptyMsgs[filter] || "No tasks yet. Capture one!"}</p>`;
     return;
@@ -2405,7 +2779,7 @@ function renderMemory() {
   const searchInput = document.getElementById("memorySearchInput");
   const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
 
-  let mem = state.items.filter((i) => i.kind === "memory");
+  let mem = state.items.filter((i) => i.kind === "memory" && !isArchived(i));
   if (query) {
     mem = mem.filter((i) =>
       (i.title + " " + (i.sub || "") + " " + (i.person || ""))
@@ -2463,7 +2837,7 @@ function renderPeople() {
   const el = document.getElementById("peopleList");
   if (!el) return;
   const namesFromItems = [
-    ...new Set(state.items.filter((i) => i.person).map((i) => i.person)),
+    ...new Set(state.items.filter((i) => i.person && !isArchived(i)).map((i) => i.person)),
   ];
   const knownNames = state.people.map((p) => p.name);
   const inferredOnly = namesFromItems.filter((n) => !knownNames.includes(n));
@@ -2486,7 +2860,7 @@ function renderPeople() {
 
   el.innerHTML = rows
     .map((p) => {
-      const count = state.items.filter((i) => i.person === p.name).length;
+      const count = state.items.filter((i) => i.person === p.name && !isArchived(i)).length;
       return `<div class="task-row" onclick="openPersonModal(${p.id ? `'${p.id}'` : "null"}, '${escapeHtml(p.name)}')">
       <div class="avatar" style="width:32px;height:32px;font-size:12px;">${p.name.charAt(0).toUpperCase()}</div>
       <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count !== 1 ? "s" : ""}${p.notes ? " · has notes" : ""}</div></div>
@@ -2502,7 +2876,7 @@ function openPersonModal(id, name) {
   document.getElementById("personNotes").value = person
     ? person.notes || ""
     : "";
-  const items = state.items.filter((i) => i.person === name);
+  const items = state.items.filter((i) => i.person === name && !isArchived(i));
   const list = document.getElementById("personItemsList");
   list.innerHTML = items.length
     ? items
@@ -2569,7 +2943,7 @@ function renderProjects() {
   }
   el.innerHTML = state.projects
     .map((p) => {
-      const items = state.items.filter((i) => i.project === p.name);
+      const items = state.items.filter((i) => i.project === p.name && !isArchived(i));
       const done = items.filter((i) => i.done).length;
       const total = items.length;
       const pct = total ? Math.round((done / total) * 100) : 0;
@@ -2672,15 +3046,16 @@ function renderReports() {
   const statsEl = document.getElementById("reportStats");
   if (!statsEl) return;
   const weekAgo = Date.now() - 7 * 86400000;
-  const allTasks = state.items.filter((i) => i.kind === "task");
+  const allTasks = state.items.filter((i) => i.kind === "task" && !isArchived(i));
   const completedTasks = allTasks.filter((i) => i.done);
-  const completed = state.items.filter((i) => i.done);
-  const createdThisWeek = state.items.filter((i) => i.created >= weekAgo);
+  const completed = state.items.filter((i) => i.done && !isArchived(i));
+  const createdThisWeek = state.items.filter((i) => i.created >= weekAgo && !isArchived(i));
   const completionRate = allTasks.length
     ? Math.round((completedTasks.length / allTasks.length) * 100)
     : 0;
   const byType = {};
   state.items.forEach((i) => {
+    if (isArchived(i)) return;
     byType[i.kind] = (byType[i.kind] || 0) + 1;
   });
 
@@ -2739,6 +3114,7 @@ function renderActivityChart(days) {
   }
 
   state.items.forEach((item) => {
+    if (isArchived(item)) return;
     const capturedAt = indexByDay[new Date(item.created).toDateString()];
     if (capturedAt !== undefined) buckets[capturedAt].captured++;
 
@@ -2776,7 +3152,7 @@ let calViewDate = new Date();
 let calMode = "week";
 
 function getScheduledItems() {
-  return state.items.filter((i) => i.dueDate && !i.done);
+  return state.items.filter((i) => i.dueDate && !i.done && !isArchived(i));
 }
 function getWeekStart(d) {
   const date = new Date(d);
@@ -2939,10 +3315,120 @@ function renderMonthView() {
 }
 
 /* ---------- Task detail panel ---------- */
+function renderChecklist(item) {
+  const container = document.getElementById("panelChecklist");
+  const progressEl = document.getElementById("checklistProgress");
+  if (!container || !progressEl) return;
+  const archived = isArchived(item);
+  document.getElementById("checklistInput").disabled = archived;
+  document.getElementById("checklistAddBtn").disabled = archived;
+  const checklist = normaliseChecklist(item?.checklist);
+  const progress = checklistProgress(item);
+  progressEl.textContent = progress.total ? `${progress.completed}/${progress.total}` : "0/0";
+  container.innerHTML = "";
+  if (!checklist.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty checklist-empty";
+    empty.textContent = "No steps yet. Add the first one below.";
+    container.appendChild(empty);
+    return;
+  }
+  checklist.forEach((step, index) => {
+    const row = document.createElement("div");
+    row.className = "checklist-row" + (step.done ? " done" : "");
+    const check = document.createElement("button");
+    check.type = "button";
+    check.className = "checklist-toggle" + (step.done ? " checked" : "");
+    check.setAttribute("aria-label", step.done ? "Mark step incomplete" : "Mark step complete");
+    check.disabled = archived;
+    check.innerHTML = step.done ? icon("check") : "";
+    check.onclick = () => toggleChecklistItem(item.id, index);
+    const text = document.createElement("span");
+    text.className = "checklist-text";
+    text.textContent = step.text;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "checklist-remove";
+    remove.setAttribute("aria-label", `Remove ${step.text}`);
+    remove.disabled = archived;
+    remove.innerHTML = icon("x");
+    remove.onclick = () => removeChecklistItem(item.id, index);
+    row.append(check, text, remove);
+    container.appendChild(row);
+  });
+}
+
+function refreshTaskPanel(item) {
+  if (!item) return;
+  renderChecklist(item);
+  const statusSelect = document.getElementById("panelStatusSelect");
+  if (statusSelect) statusSelect.value = taskStatusFromItem(item);
+}
+
+async function addChecklistItem() {
+  const item = state.items.find((i) => i.id === currentItemId);
+  const input = document.getElementById("checklistInput");
+  if (!item || item.kind !== "task" || isArchived(item) || !input) return;
+  if (taskMutationInFlight.has(item.id)) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const checklist = normaliseChecklist(item.checklist);
+  if (checklist.length >= 100) return;
+  taskMutationInFlight.add(item.id);
+  try {
+    checklist.push({
+      id: `step_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      text,
+      done: false,
+    });
+    item.checklist = checklist;
+    input.value = "";
+    await dbSaveItem(item);
+    refreshTaskPanel(item);
+    input.focus();
+  } finally {
+    taskMutationInFlight.delete(item.id);
+  }
+}
+
+async function toggleChecklistItem(itemId, index) {
+  const item = state.items.find((i) => i.id === itemId);
+  if (!item || item.kind !== "task" || isArchived(item) || taskMutationInFlight.has(itemId)) return;
+  const checklist = normaliseChecklist(item.checklist);
+  if (!checklist[index]) return;
+  taskMutationInFlight.add(itemId);
+  try {
+    checklist[index].done = !checklist[index].done;
+    item.checklist = checklist;
+    await dbSaveItem(item);
+    refreshTaskPanel(item);
+  } finally {
+    taskMutationInFlight.delete(itemId);
+  }
+}
+
+async function removeChecklistItem(itemId, index) {
+  const item = state.items.find((i) => i.id === itemId);
+  if (!item || item.kind !== "task" || isArchived(item) || taskMutationInFlight.has(itemId)) return;
+  const checklist = normaliseChecklist(item.checklist);
+  if (!checklist[index]) return;
+  taskMutationInFlight.add(itemId);
+  try {
+    checklist.splice(index, 1);
+    item.checklist = checklist;
+    await dbSaveItem(item);
+    refreshTaskPanel(item);
+  } finally {
+    taskMutationInFlight.delete(itemId);
+  }
+}
+
 function openPanel(id) {
   currentItemId = id;
   const item = state.items.find((i) => i.id === id);
   if (!item) return;
+  const isTask = item.kind === "task";
+  const status = isTask ? taskStatusFromItem(item) : "";
   lockPageScroll(true);
   document.getElementById("panelTitle").textContent = item.title;
   document.getElementById("panelDesc").textContent = item.sub || "";
@@ -2954,10 +3440,16 @@ function openPanel(id) {
   document.getElementById("panelPriority").textContent = item.priority
     ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1)
     : "—";
-  document.getElementById("panelStatus").textContent = item.done
-    ? "Complete" +
-      (completedWhen(item) ? " · " + timeAgo(completedWhen(item)) : "")
-    : item.status || "Open";
+  if (isArchived(item)) {
+    document.getElementById("panelStatus").textContent = "Archived";
+  } else {
+    document.getElementById("panelStatus").textContent = item.done
+      ? "Complete" +
+        (completedWhen(item) ? " · " + timeAgo(completedWhen(item)) : "")
+      : isTask
+        ? taskStatusLabel(status)
+        : item.status || "Open";
+  }
   document.getElementById("panelVisibility").innerHTML =
     item.scope === "private"
       ? icon("lock") + " Private (only you)"
@@ -2965,16 +3457,56 @@ function openPanel(id) {
   document.getElementById("panelCreated").textContent = new Date(
     item.created,
   ).toLocaleString();
+
+  const taskStatusRow = document.getElementById("panelTaskStatusRow");
+  const taskWorkflow = document.getElementById("panelTaskWorkflow");
+  const statusSelect = document.getElementById("panelStatusSelect");
+  taskStatusRow.hidden = !isTask;
+  taskWorkflow.hidden = !isTask;
+  if (isTask) {
+    statusSelect.value = status;
+    renderChecklist(item);
+  } else {
+    const checklist = document.getElementById("panelChecklist");
+    const progress = document.getElementById("checklistProgress");
+    const input = document.getElementById("checklistInput");
+    if (checklist) checklist.innerHTML = "";
+    if (progress) progress.textContent = "0/0";
+    if (input) input.value = "";
+  }
+
+  document.getElementById("panelConvertBtn").hidden = isTask;
+  document.getElementById("panelDuplicateBtn").hidden = !isTask;
+  const archiveBtn = document.getElementById("panelArchiveBtn");
+  const completeBtn = document.getElementById("panelCompleteBtn");
+  const snoozePanel = document.getElementById("panelSnooze");
+  const archived = isArchived(item);
+  archiveBtn.hidden = !isTask;
+  archiveBtn.innerHTML = `${icon(archived ? "archive-restore" : "archive")}<span id="panelArchiveLabel">${archived ? "Restore" : "Archive"}</span>`;
+  document.getElementById("panelEditBtn").hidden = archived;
+  completeBtn.hidden = archived;
+  snoozePanel.hidden = archived;
+  statusSelect.disabled = archived || !isTask;
+  const completeLabel = document.getElementById("panelCompleteLabel");
+  if (completeLabel) completeLabel.textContent = item.done ? "Reopen" : "Mark complete";
+
   const badge = document.getElementById("panelBadge");
-  badge.textContent = item.priority
-    ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1)
-    : item.kind;
-  badge.className = "badge " + (item.priority || item.kind);
+  badge.textContent = archived
+    ? "Archived"
+    : item.priority
+      ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1)
+      : isTask
+        ? taskStatusLabel(status)
+        : item.kind;
+  badge.className = archived
+    ? "badge archived"
+    : "badge " + (item.priority || (isTask ? `task-status-badge ${taskStatusClass(status)}` : item.kind));
 
   renderRelatedChips(item);
 
   document.getElementById("overlay").classList.add("open");
   document.getElementById("panel").classList.add("open");
+  refreshIcons();
 }
 
 function renderRelatedChips(item) {
@@ -3000,6 +3532,7 @@ function renderRelatedChips(item) {
     .filter(
       (i) =>
         i.id !== item.id &&
+        !isArchived(i) &&
         ((item.person && i.person === item.person) ||
           (item.project && i.project === item.project)),
     )
@@ -3036,7 +3569,11 @@ function closePanel() {
 function openEditModal() {
   if (!currentItemId) return;
   const item = state.items.find((i) => i.id === currentItemId);
-  if (!item) return;
+  if (!item || isArchived(item)) return;
+  const editStatusRow = document.getElementById("editTaskStatusRow");
+  const editStatus = document.getElementById("editStatus");
+  editStatusRow.hidden = item.kind !== "task";
+  if (item.kind === "task") editStatus.value = taskStatusFromItem(item);
   document.getElementById("editTitle").value = item.title || "";
   document.getElementById("editSub").value = item.sub || "";
   document.getElementById("editPriority").value = item.priority || "";
@@ -3066,6 +3603,11 @@ function closeEditModal() {
 async function saveEdit() {
   const item = state.items.find((i) => i.id === currentItemId);
   if (!item) return closeEditModal();
+  if (isArchived(item)) return closeEditModal();
+  const selectedStatus = item.kind === "task"
+    ? normalizeTaskStatus(document.getElementById("editStatus").value, taskStatusFromItem(item))
+    : "";
+  const statusChanged = item.kind === "task" && selectedStatus !== taskStatusFromItem(item);
   item.title = document.getElementById("editTitle").value.trim() || item.title;
   item.sub = document.getElementById("editSub").value.trim();
   item.priority = document.getElementById("editPriority").value;
@@ -3086,10 +3628,35 @@ async function saveEdit() {
 
   closeEditModal();
   closePanel();
-  await dbSaveItem(item);
+  if (statusChanged) await setTaskStatus(item.id, selectedStatus);
+  else await dbSaveItem(item);
 }
+async function toggleCurrentTaskArchive() {
+  const item = state.items.find((i) => i.id === currentItemId);
+  if (!item || item.kind !== "task" || taskMutationInFlight.has(item.id)) return;
+  taskMutationInFlight.add(item.id);
+  try {
+    if (isArchived(item)) {
+      item.archivedAt = 0;
+      await dbSaveItem(item);
+      closePanel();
+      renderTasks("all");
+    } else {
+      item.archivedAt = Date.now();
+      cancelReminderFor(item.id);
+      await dbSaveItem(item);
+      closePanel();
+      renderTasks("archived");
+    }
+  } finally {
+    taskMutationInFlight.delete(item.id);
+  }
+}
+
 async function completeCurrent() {
   if (!currentItemId) return;
+  const item = state.items.find((i) => i.id === currentItemId);
+  if (isArchived(item)) return;
   await toggleDone(currentItemId);
   closePanel();
 }
@@ -3120,7 +3687,7 @@ function nextNineAm(daysAhead) {
 
 async function snoozeCurrent(mode) {
   const item = state.items.find((i) => i.id === currentItemId);
-  if (!item) return;
+  if (!item || isArchived(item)) return;
 
   if (mode === "tomorrow9") applyDueToItem(item, nextNineAm(1));
   else if (mode === "day")
@@ -3653,7 +4220,7 @@ async function saveCapture() {
     due: dueISO ? formatDueDisplay(dueISO) : kind === "task" ? "Today" : "",
     dueDate: dueISO,
     recurrence,
-    status: kind === "task" ? "Today" : "",
+    status: kind === "task" ? "today" : "",
     project,
     created: Date.now(),
     done: false,
@@ -3661,7 +4228,7 @@ async function saveCapture() {
     mediaUrl: mediaUrl || "",
   };
 
-  if (realKind === "task" && !newItem.status) newItem.status = "Today";
+  if (realKind === "task" && !newItem.status) newItem.status = "today";
   if (realKind !== "task" && !newItem.status) newItem.status = "inbox";
 
   state.items.unshift(newItem);
@@ -3699,7 +4266,7 @@ async function startNudge() {
     priority: "medium",
     person: "",
     due: "Today",
-    status: "Today",
+    status: "today",
     project: "",
     created: Date.now(),
     done: false,
@@ -3844,6 +4411,7 @@ function runAsk(q) {
   }
   const ql = q.toLowerCase();
   const matches = state.items.filter((i) =>
+    !isArchived(i) &&
     (i.title + " " + (i.sub || "") + " " + (i.person || ""))
       .toLowerCase()
       .includes(ql),
@@ -3872,13 +4440,14 @@ async function askAI(q) {
 
   const ql = q.toLowerCase();
   const contextItems = state.items.filter((i) =>
+    !isArchived(i) &&
     (i.title + " " + (i.sub || "") + " " + (i.person || ""))
       .toLowerCase()
       .includes(ql),
   );
   const contextPool = contextItems.length
     ? contextItems
-    : state.items.slice(0, 20);
+    : state.items.filter((item) => !isArchived(item)).slice(0, 20);
 
   let sample;
   try {
@@ -4256,7 +4825,7 @@ function currentItems() {
 /* When should this item remind the user? A snooze always wins, and a delivered reminder
    stays quiet until it is snoozed or re-dated. */
 function itemReminderTime(item) {
-  if (!item || item.done) return null;
+  if (!item || item.done || isArchived(item)) return null;
   if (item.snoozedUntil) return item.snoozedUntil;
   if (item.notified || notifiedIds.has(item.id)) return null;
   if (!item.dueDate) return null;
@@ -4339,6 +4908,7 @@ function getNotificationItems() {
   return state.items.filter(
     (i) =>
       !i.done &&
+      !isArchived(i) &&
       ((i.dueDate && (isToday(i.dueDate) || isOverdue(i))) ||
         i.kind === "waiting"),
   );
