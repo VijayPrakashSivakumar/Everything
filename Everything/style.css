@@ -1564,6 +1564,33 @@ h1.page-title {
   font-size: 12px;
 }
 
+/* Dictation language picker. The chips carry each language in its own script (தமிழ், हिन्दी,
+   తెలుగు…) so the option is readable by the person who speaks it, without a translation. */
+.voice-lang-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.voice-lang-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+#voiceLangRow {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+#voiceLangRow .type-chip {
+  padding: 7px 10px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
 .modal-actions {
   display: flex;
   flex-shrink: 0;

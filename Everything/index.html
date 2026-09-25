@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-25.4" />
+    <meta name="everything-build" content="2026-09-25.5" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -1530,6 +1530,10 @@
             class="voice-dictation-status"
             aria-live="polite"
           ></p>
+          <div class="voice-lang-block">
+            <span class="voice-lang-label">Dictation language</span>
+            <div class="type-row" id="voiceLangRow"></div>
+          </div>
           <audio
             id="voicePreview"
             controls

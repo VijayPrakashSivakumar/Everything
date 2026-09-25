@@ -333,6 +333,30 @@ check('multi-line AI answers keep their line breaks', () => {
   assert.match(style[0], /white-space:\s*pre-wrap/, 'answers collapse into one run-on line without pre-wrap');
 });
 
+check('dictation language is chosen, not inherited from the browser', () => {
+  // navigator.language meant a Tamil or Hindi speaker got English transcription.
+  assert.match(html, /id="voiceLangRow"/, 'the language picker is missing from the capture sheet');
+  assert.match(js, /const VOICE_LANGUAGES = \[/, 'VOICE_LANGUAGES is missing');
+  for (const tag of ['ta-IN', 'hi-IN', 'te-IN', 'kn-IN', 'ml-IN', 'en-IN']) {
+    assert.match(js, new RegExp(tag), `${tag} is not offered`);
+  }
+  // The recogniser must be told which language to use.
+  assert.match(js, /recognition\.lang = captureVoiceLang;/, 'the recogniser ignores the chosen language');
+  assert.doesNotMatch(js, /recognition\.lang = navigator\.language/, 'dictation still falls back to navigator.language');
+  // Rendering the picker on open is what makes it usable.
+  assert.match(js, /function renderVoiceLanguages\(\)/, 'renderVoiceLanguages is missing');
+  assert.match(js, /renderVoiceLanguages\(\);/, 'the language picker is never rendered');
+  // The language is stored with the capture so a transcript can be read back later.
+  assert.match(js, /language: kind === "voice" && captureVoiceLanguage/, 'the dictated language is not saved');
+});
+
+check('the language picker is styled on desktop, not only on phones', () => {
+  // Styles added inside the 900px block would leave the desktop capture sheet unstyled.
+  const base = css.slice(0, css.indexOf('@media (max-width'));
+  assert.match(base, /\.voice-lang-block\s*\{/, '.voice-lang-block must have a base rule');
+  assert.match(base, /#voiceLangRow\s*\{/, '#voiceLangRow must have a base rule');
+});
+
 check('the Ask overlay still has an entry point for keyboard users', () => {
   assert.match(js, /openAsk\(\);\s*\n\s*return;/, 'Ctrl+K no longer opens the overlay');
   assert.match(html, /id="askInput"/, 'the overlay input was removed');

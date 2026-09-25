@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-25.4";
+const APP_BUILD = "2026-09-25.5";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -3878,6 +3878,52 @@ let recordingInterval = null;
 let pendingBlob = null;
 let pendingBlobExt = null;
 
+/* Dictation languages. The browser recogniser only understands one language per session, so this
+   is chosen explicitly instead of inheriting navigator.language — that default meant a Tamil or
+   Hindi speaker got English transcription and a garbled capture.
+
+   `tag` is the BCP-47 code the Web Speech API expects; `label` is shown in the picker.
+   `hint` is a native-script example so the option is recognisable to the person speaking. */
+const VOICE_LANGUAGES = [
+  { tag: "en-IN", label: "English", hint: "English" },
+  { tag: "ta-IN", label: "Tamil", hint: "தமிழ்" },
+  { tag: "hi-IN", label: "Hindi", hint: "हिन्दी" },
+  { tag: "te-IN", label: "Telugu", hint: "తెలుగు" },
+  { tag: "kn-IN", label: "Kannada", hint: "ಕನ್ನಡ" },
+  { tag: "ml-IN", label: "Malayalam", hint: "മലയാളം" },
+];
+
+/* Chosen once per capture and reused, so the recorded audio and the transcript agree. */
+let captureVoiceLang = "";
+/* The language actually used for the last dictation, saved onto the capture. */
+let captureVoiceLanguage = "";
+
+function defaultVoiceLang() {
+  const preferred = String(navigator.language || "").toLowerCase();
+  const exact = VOICE_LANGUAGES.find((entry) => entry.tag.toLowerCase() === preferred);
+  if (exact) return exact.tag;
+  const base = preferred.split("-")[0];
+  const loose = VOICE_LANGUAGES.find((entry) => entry.tag.toLowerCase().split("-")[0] === base);
+  return loose ? loose.tag : "en-IN";
+}
+
+function pickVoiceLang(tag) {
+  captureVoiceLang = VOICE_LANGUAGES.some((entry) => entry.tag === tag) ? tag : defaultVoiceLang();
+  document
+    .querySelectorAll("#voiceLangRow .type-chip")
+    .forEach((el) => el.classList.toggle("active", el.dataset.lang === captureVoiceLang));
+}
+
+function renderVoiceLanguages() {
+  const row = document.getElementById("voiceLangRow");
+  if (!row) return;
+  if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
+  row.innerHTML = VOICE_LANGUAGES.map(
+    (entry) =>
+      `<div class="type-chip ${entry.tag === captureVoiceLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickVoiceLang('${entry.tag}')"><span>${entry.hint}</span></div>`,
+  ).join("");
+}
+
 function setVoiceRecordLabel(label, icon) {
   const btn = document.getElementById("voiceRecordBtn");
   if (!btn) return;
@@ -3935,7 +3981,11 @@ function toggleVoiceDictation() {
   captureVoiceActive = true;
   captureVoiceFinal = "";
   captureVoiceBase = base;
-  recognition.lang = navigator.language || "en-US";
+  // Use the language the person picked. This used to be navigator.language, so anyone whose
+  // browser was not set to English got English transcription of non-English speech.
+  if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
+  captureVoiceLanguage = captureVoiceLang;
+  recognition.lang = captureVoiceLang;
   recognition.continuous = false;
   recognition.interimResults = true;
   recognition.onstart = () => {
@@ -4112,6 +4162,9 @@ function openCapture() {
   document.getElementById("genericFileInput").value = "";
   document.getElementById("voiceDictationStatus").textContent = "";
   setVoiceDictateLabel("Dictate text", "audio-lines");
+  captureVoiceLanguage = "";
+  pickVoiceLang(defaultVoiceLang());
+  renderVoiceLanguages();
   pendingBlob = null;
   pendingBlobExt = null;
   if (mediaRecorder && mediaRecorder.state === "recording")
@@ -4631,6 +4684,8 @@ async function saveCapture(forceSave = false) {
       smartEnabled: captureSmartEnabled,
       source: captureExtraction?.source || "manual",
       transcript: kind === "voice" && captureVoiceFinal ? captureVoiceFinal : undefined,
+      // Which language was actually dictated, so a transcript can be read back correctly later.
+      language: kind === "voice" && captureVoiceLanguage ? captureVoiceLanguage : undefined,
       mediaName: pendingBlob?.name || undefined,
     };
     Object.keys(captureMetadata).forEach((key) => captureMetadata[key] === undefined && delete captureMetadata[key]);
