@@ -205,6 +205,41 @@ check('the Ask overlay still has an entry point for keyboard users', () => {
   assert.match(js, /function openAsk\(prefill = ""\)/, 'openAsk should accept a prefill');
 });
 
+check('the shell never serves a mixed build', () => {
+  const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
+  // Shell files must be network-first: stale CSS/JS beside fresh HTML is what broke the UI.
+  assert.match(sw, /function isShellRequest\(/, 'isShellRequest missing');
+  assert.match(
+    sw,
+    /isNavigationRequest\(request\) \|\| isShellRequest\(request\)[\s\S]{0,120}networkFirst/,
+    'shell requests must go through networkFirst',
+  );
+  assert.match(sw, /type === 'SKIP_WAITING'/, 'the worker must accept a SKIP_WAITING message');
+});
+
+check('a version mismatch repairs itself instead of staying broken', () => {
+  const jsBuild = js.match(/const APP_BUILD = "([^"]+)"/);
+  const htmlBuild = html.match(/<meta name="everything-build" content="([^"]+)"/);
+  assert.ok(jsBuild, 'APP_BUILD missing from script.js');
+  assert.ok(htmlBuild, 'the everything-build meta tag is missing from index.html');
+  assert.equal(
+    htmlBuild[1],
+    jsBuild[1],
+    'index.html and script.js disagree on the build, so every load would self-reload',
+  );
+  assert.match(js, /function repairVersionMismatch\(\)/, 'repairVersionMismatch missing');
+  assert.match(js, /repairVersionMismatch\(\);/, 'the repair is never run at startup');
+  // The reload must be guarded, or a broken deploy would loop forever.
+  assert.match(js, /sessionStorage\.getItem\("everythingBuildRepair"\)/, 'the reload must be guarded by a session flag');
+});
+
+check('the service worker cache is versioned and current', () => {
+  const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
+  const version = sw.match(/CACHE_NAME = 'everything-shell-v(\d+)'/);
+  assert.ok(version, 'the shell cache is not versioned');
+  assert.ok(Number(version[1]) >= 13, `shell cache is v${version[1]}, expected at least v13`);
+});
+
 check('CSS braces are balanced', () => {
   const open = (css.match(/{/g) || []).length;
   const close = (css.match(/}/g) || []).length;

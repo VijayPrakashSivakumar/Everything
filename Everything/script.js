@@ -2,6 +2,33 @@ const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https:/
 const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
+// Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
+const APP_BUILD = "2026-09-25.3";
+
+/* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
+   script.js. The new markup then calls handlers the old script never defined, which looks like a
+   broken app rather than a caching artefact (a collapsed search bar, clicks doing nothing).
+
+   index.html carries the build it expects; if the running script does not match, the page
+   reloads once from the network. Reloading is guarded by a session flag so a genuinely broken
+   deploy cannot loop forever. */
+function repairVersionMismatch() {
+  const meta = document.querySelector('meta[name="everything-build"]');
+  const expected = meta ? meta.getAttribute("content") : null;
+  if (!expected || expected === APP_BUILD) return;
+
+  if (sessionStorage.getItem("everythingBuildRepair") === expected) return;
+  sessionStorage.setItem("everythingBuildRepair", expected);
+  console.warn(
+    `Stale app shell detected (page wants ${expected}, running ${APP_BUILD}). Reloading from the network.`,
+  );
+  // Tell the worker to step aside so it cannot re-serve the stale shell for this navigation.
+  if (navigator.serviceWorker?.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: "SKIP_WAITING" });
+  }
+  location.replace(location.href.split("#")[0] + "?build=" + expected);
+}
+
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* Opening index.html straight from disk runs the app on the file:// protocol, where the
@@ -6147,6 +6174,7 @@ if (window.claude) {
 }
 restoreSidebarCollapse();
 syncSidebarMode();
+repairVersionMismatch();
 refreshIcons();
 updateNotifBtn();
 renderQuote();

@@ -1831,12 +1831,17 @@ h1.page-title {
   color: var(--muted);
 }
 
-/* Header search dropdown — results stream under the field instead of opening a new panel. */
+/* Header search dropdown — results stream under the field instead of opening a new panel.
+   Centred on the field and allowed to grow a little past it, but always capped so there is
+   breathing room on both sides of the screen rather than running edge to edge. */
 .search-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  min-width: 260px;
+  max-width: min(calc(100% + 40px), calc(100vw - 24px));
   max-height: min(60vh, 460px);
   max-height: min(60dvh, 460px);
   overflow-y: auto;

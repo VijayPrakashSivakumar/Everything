@@ -23,13 +23,17 @@ const realFetch = globalThis.fetch;
 let handler = () => ({ status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
 let seen = [];
 
-// Mock transport: records the call and returns whatever the scenario dictates.
-globalThis.fetch = async (url) => {
-  seen.push(String(url));
-  const r = handler(String(url), seen.length);
-  const status = r.status || 200;
-  return { ok: status >= 200 && status < 300, status, json: async () => r.body || {} };
-};
+// Mock transport: records the call and returns whatever the scenario dictates. Exposed as a
+// function so an individual test can swap it out and put the shared one back afterwards.
+function installMockFetch() {
+  globalThis.fetch = async (url) => {
+    seen.push(String(url));
+    const r = handler(String(url), seen.length);
+    const status = r.status || 200;
+    return { ok: status >= 200 && status < 300, status, json: async () => r.body || {} };
+  };
+}
+installMockFetch();
 
 const ENV_KEYS = [
   'AI_PROVIDER', 'GROQ_API_KEY', 'GROQ_MODEL', 'GEMINI_API_KEY', 'GEMINI_MODEL',
@@ -42,7 +46,7 @@ function setEnv(next) {
   Object.assign(process.env, next);
 }
 
-const { complete, aiStatus } = await import('../api/ask.js');
+const { complete, aiStatus, probeProvider } = await import('../api/ask.js');
 
 await check('primary success returns the answer and calls nothing else', async () => {
   setEnv({ GROQ_API_KEY: 'k' });
@@ -122,13 +126,8 @@ await check('a hung provider stays inside the total budget and aborts the socket
   assert.equal(r.status, 502);
   assert.match(r.reason, /timeout|network|budget/, `unexpected reason: ${r.reason}`);
   assert.equal(abortSeen, true, 'the fetch signal must be aborted so the socket is released');
-  // Restore the normal mock so later scenarios are not left with the hanging transport.
-  globalThis.fetch = async (url) => {
-    seen.push(String(url));
-    const res = handler(String(url), seen.length);
-    const status = res.status || 200;
-    return { ok: status >= 200 && status < 300, status, json: async () => res.body || {} };
-  };
+  // Restore the shared mock so later scenarios are not left with the hanging transport.
+  installMockFetch();
 });
 
 await check('aiStatus reports the primary and the configured fallbacks', async () => {
@@ -138,6 +137,53 @@ await check('aiStatus reports the primary and the configured fallbacks', async (
   assert.equal(s.provider, 'groq');
   assert.equal(s.model, 'openai/gpt-oss-120b');
   assert.deepEqual(s.fallbacks, ['gemini/gemini-flash-latest']);
+});
+
+/* The live probe is how a provider is verified for real, rather than trusting that a key exists.
+   A key can be present and still be rejected, which is exactly how a broken provider hid for so
+   long: /api/health reported "ready" while every real completion failed. */
+await check('probeProvider reports a working provider, a failure, and an unconfigured state', async () => {
+  setEnv({ GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = () => ({ status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+  const good = await probeProvider();
+  assert.equal(good.ok, true, 'a successful completion must be reported as ok');
+  assert.equal(good.provider, 'groq');
+  assert.equal(good.model, 'openai/gpt-oss-120b');
+  assert.equal(good.sample, 'ok');
+  assert.equal(typeof good.durationMs, 'number');
+
+  // A rejected key must surface as a failure with a usable reason, never a false "ok".
+  handler = () => ({ status: 401, body: { error: { message: 'Invalid API Key' } } });
+  const bad = await probeProvider();
+  assert.equal(bad.ok, false, 'a 401 must never be reported as a working provider');
+  assert.equal(bad.reason, 'groq:401');
+  assert.equal(bad.sample, null, 'no sample text may be invented on failure');
+
+  // Unconfigured must be distinguishable from a failed call.
+  setEnv({});
+  const none = await probeProvider();
+  assert.equal(none.ok, false);
+  assert.equal(none.reason, 'not-configured');
+});
+
+await check('the probe stays cheap and sends no user data', async () => {
+  setEnv({ GROQ_API_KEY: 'k' });
+  seen = [];
+  let sentBody = '';
+  globalThis.fetch = async (url, init) => {
+    seen.push(String(url));
+    sentBody = init && init.body ? String(init.body) : '';
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+  };
+  await probeProvider();
+  const body = JSON.parse(sentBody);
+  assert.equal(body.max_tokens, 8, 'the probe must request the minimum output');
+  assert.equal(body.messages.length, 1, 'the probe must be a single fixed request');
+  assert.match(body.messages[0].content, /single word/, 'the probe prompt must be the fixed ping');
+  assert.doesNotMatch(sentBody, /invoice|manoj|capture|household/i, 'the probe must not carry user data');
+  // Restore the shared mock so later scenarios still see the configured handler.
+  installMockFetch();
 });
 
 await check('an explicit AI_PROVIDER pins the primary', async () => {

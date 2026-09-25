@@ -238,6 +238,27 @@ export async function complete({ prompt, maxTokens = 300 }) {
   return { ...last, reason: tried.join(' -> ') };
 }
 
+/* Sends a real, minimal completion to prove the configured provider actually works.
+   `aiStatus()` only proves a key exists; a key can be present and still be rejected, which is
+   how a broken provider went unnoticed. This is opt-in via /api/health?probe=1 so ordinary
+   health polling never spends quota, and the answer is a fixed "ping" rather than user data. */
+export async function probeProvider() {
+  const started = Date.now();
+  const result = await complete({
+    prompt: 'Reply with the single word: ok',
+    maxTokens: 8,
+  });
+  return {
+    ok: Boolean(result.answer),
+    provider: result.provider || null,
+    model: result.model || null,
+    reason: result.reason || null,
+    status: result.status || null,
+    sample: result.answer ? String(result.answer).slice(0, 40) : null,
+    durationMs: Date.now() - started,
+  };
+}
+
 // Free tiers (Groq in particular) cap input tokens per minute, so the context is bounded
 // rather than sending every item. Newest items are the useful ones, and each line is
 // truncated so one very long title cannot consume the whole budget.

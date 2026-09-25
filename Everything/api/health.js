@@ -1,5 +1,5 @@
 import { getSupabaseServerClient } from './lib/supabase.js';
-import { aiStatus } from './ask.js';
+import { aiStatus, probeProvider } from './ask.js';
 
 export default async function handler(req, res) {
   if (req.method && req.method !== 'GET') {
@@ -72,6 +72,20 @@ export default async function handler(req, res) {
 
   const ai = aiStatus();
 
+  // `?probe=1` sends one tiny real completion to prove the provider works, not just that a key
+  // exists. It costs a few tokens, so it is opt-in and never runs during ordinary polling.
+  let aiProbe = null;
+  const wantsProbe =
+    String((req.query || {}).probe || '') === '1' ||
+    String((req.query || {}).probe || '').toLowerCase() === 'true';
+  if (wantsProbe) {
+    try {
+      aiProbe = await probeProvider();
+    } catch (error) {
+      aiProbe = { ok: false, reason: `probe-error: ${error?.message || 'unknown'}` };
+    }
+  }
+
   return res.status(200).json({
     ok: true,
     app: 'Everything',
@@ -100,6 +114,8 @@ export default async function handler(req, res) {
     aiProvider: ai.provider,
     aiModel: ai.model,
     aiFallbacks: ai.fallbacks,
+    // Present only for ?probe=1. `ok: true` means a real completion came back from the provider.
+    ...(aiProbe ? { aiProbe } : {}),
     aiMessage: ai.configured
       ? ai.fallbacks.length
         ? `Ask / Search uses ${ai.provider} (${ai.model}), falling back to ${ai.fallbacks.join(', ')}.`

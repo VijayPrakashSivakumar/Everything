@@ -1,6 +1,6 @@
 // Bump whenever a shell file (index.html / style.css / script.js) changes, otherwise returning
 // phones keep serving the previous cached version and the new UI appears not to work.
-const CACHE_NAME = 'everything-shell-v13';
+const CACHE_NAME = 'everything-shell-v14';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed
@@ -117,6 +117,23 @@ async function staleWhileRevalidate(request) {
   return Response.error();
 }
 
+/* The shell's own files must never be served stale.
+
+   index.html is network-first but style.css/script.js used to be stale-while-revalidate, so a
+   deploy produced a mixed build for one load: new markup calling functions the old script did not
+   define, styled by CSS that predated the new classes. The symptoms were a collapsed search bar
+   and dead clicks. Shell files are small and few, so they are always network-first, with the
+   cache kept purely as an offline fallback. */
+const SHELL_PATHS = new Set(SHELL_FILES.map((file) => new URL(file, self.registration.scope).pathname));
+
+function isShellRequest(request) {
+  try {
+    return SHELL_PATHS.has(new URL(request.url).pathname);
+  } catch (e) {
+    return false;
+  }
+}
+
 self.addEventListener('fetch', event => {
   const request = event.request;
 
@@ -124,11 +141,19 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   if (isApiRequest(request)) return;
 
-  event.respondWith(
-    isNavigationRequest(request)
-      ? networkFirst(request)
-      : staleWhileRevalidate(request)
-  );
+  if (isNavigationRequest(request) || isShellRequest(request)) {
+    event.respondWith(networkFirst(request));
+    return;
+  }
+  event.respondWith(staleWhileRevalidate(request));
+});
+
+self.addEventListener('message', event => {
+  // A page that detected a mixed build asks the worker to step aside so the reload is not
+  // served the stale shell it just rejected.
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('push', event => {
