@@ -133,7 +133,30 @@ the full-screen Ask overlay pre-filled with what you typed, or `Escape` to dismi
 (⌘K on Mac) and `/` still open the overlay directly.
 
 The dropdown and the overlay share one `searchMatches()` helper, so the two can never disagree
-about what matches.
+about what matches. Memory view search uses it too, instead of a private copy of the matcher.
+
+## How Ask finds what to answer
+
+Ask is only as good as the context it is given, so retrieval matters more than the model:
+
+- **Stop words are dropped.** "what should I do today" is searched as the terms that carry
+  meaning, not as one long phrase that appears in no title — otherwise every real question
+  silently matched nothing.
+- **Every field is searchable** — title, notes, person, project, workflow status, priority,
+  kind, recurrence and checklist steps.
+- **Natural words map to stored values.** Typing *urgent* finds items whose priority is stored
+  as `high`; *blocked* finds `waiting`.
+- **Results are ranked, best first** (title hits and whole-phrase hits score highest), so the
+  AI sees the items that answer the question rather than the first N in insertion order.
+- **Broad questions still get context.** A question with few keyword matches is topped up with
+  recent open items, because one item is not enough to answer with. The pool is bounded for
+  the provider's input-token cap.
+- **The prompt carries the date and the state.** The browser sends its local date (the server
+  clock may be UTC) and every item line states its status, project, due date and checklist
+  progress, so "what is due today" and "what am I waiting on" are answerable at all.
+
+A stale answer can never overwrite a newer one: each request takes a ticket, and a reply whose
+ticket is out of date — or whose slot the dropdown has since replaced — is discarded.
 
 ## Back gesture on mobile
 A history entry is pushed while a dismissible layer is open (Capture sheet, Ask overlay, item

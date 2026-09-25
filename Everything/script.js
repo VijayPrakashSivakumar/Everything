@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-25.3";
+const APP_BUILD = "2026-09-25.4";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -2891,17 +2891,15 @@ function renderMemory() {
   const container = document.getElementById("memoryGrouped");
   if (!container) return;
   const searchInput = document.getElementById("memorySearchInput");
-  const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
-
-  let mem = state.items.filter((i) => i.kind === "memory" && !isArchived(i));
-  if (query) {
-    mem = mem.filter((i) =>
-      (i.title + " " + (i.sub || "") + " " + (i.person || ""))
-        .toLowerCase()
-        .includes(query),
-    );
-  }
-  mem.sort((a, b) => b.created - a.created);
+  // Uses the shared search engine so Memory matches the same way as the header search and Ask.
+  // It used to carry its own copy of the old title+sub+person substring test, which is why
+  // searching for part of a word or a person's name found nothing here.
+  const query = searchInput ? searchInput.value.trim() : "";
+  const ranked = query ? searchMatches(query) : [];
+  const mem = (query
+    ? ranked.filter((i) => i.kind === "memory")
+    : state.items.filter((i) => i.kind === "memory" && !isArchived(i))
+  ).sort((a, b) => b.created - a.created);
 
   if (!mem.length) {
     container.innerHTML = `<div class="card"><p class="empty">${query ? "No memories match that search." : "No memories captured yet."}</p></div>`;
@@ -4830,15 +4828,133 @@ function enableDashboardDragging() {
      - the full-screen overlay, still reachable via Ctrl+K / "/" for keyboard users
    Both render from the same helpers so results and the AI answer never drift apart. */
 
+/* Words that carry no retrieval signal. Without this filter a question like "what should I do
+   today" is searched as one long phrase that appears in no title, so the search silently
+   returns nothing. Dropping them leaves the meaningful terms. */
+const SEARCH_STOP_WORDS = new Set([
+  "a", "an", "and", "any", "are", "as", "at", "be", "but", "by", "can", "could", "did", "do",
+  "does", "for", "from", "had", "has", "have", "how", "i", "if", "in", "is", "it", "its", "me",
+  "my", "of", "on", "or", "our", "should", "show", "some", "tell", "that", "the", "their",
+  "them", "then", "there", "these", "they", "this", "to", "up", "us", "was", "we", "were",
+  "what", "when", "where", "which", "who", "why", "will", "with", "would", "you", "your",
+]);
+
+/* Splits a query into meaningful lowercase terms. Falls back to the whole trimmed string when
+   the query is nothing but stop words ("the?", "what?"), so a match is still possible. */
+function searchTerms(q) {
+  const words = String(q || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const meaningful = words.filter((word) => word.length > 1 && !SEARCH_STOP_WORDS.has(word));
+  return meaningful.length ? meaningful : words;
+}
+
+/* Every field worth searching, in descending order of importance. The old haystack was only
+   title + sub + person, so a query like "urgent Atlas project" matched nothing even when the
+   item was a high-priority task on that project. */
+function searchHaystack(item) {
+  const status = item?.kind === "task" ? taskStatusFromItem(item) : item?.status || "";
+  const steps = normaliseChecklist(item?.checklist).map((step) => step.text).join(" ");
+  return [
+    item?.title,
+    item?.sub,
+    item?.person,
+    item?.project,
+    taskStatusLabel(status),
+    item?.priority,
+    item?.kind,
+    item?.recurrence && item.recurrence !== "none" ? item.recurrence : "",
+    steps,
+    item?.rawText,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+/* Natural words a person actually types, mapped to the values this app stores. Without this,
+   "urgent" finds nothing because priority is saved as "high", and "blocked" finds nothing
+   because the status is "waiting". A term matches itself or any of its aliases. */
+const SEARCH_ALIASES = {
+  urgent: ["high", "asap", "important", "critical"],
+  important: ["high", "urgent"],
+  critical: ["high", "urgent"],
+  high: ["urgent", "important", "critical"],
+  blocked: ["waiting"],
+  waiting: ["blocked"],
+  todo: ["planned"],
+  doing: ["in_progress", "progress"],
+  progress: ["in_progress", "doing"],
+  done: ["completed"],
+  completed: ["done"],
+  note: ["memory"],
+  memo: ["memory"],
+  meeting: ["event"],
+  call: ["phone"],
+  phone: ["call"],
+};
+
+function searchAliases(term) {
+  return SEARCH_ALIASES[term] || [];
+}
+
+/* Scores one item against the query terms. Every term must appear somewhere (AND), which keeps
+   precision high; a whole-phrase hit and a title hit are worth extra so the obvious match sorts
+   first. Returns 0 for no match, which is what the filter below relies on. */
+function searchScore(item, terms, phrase) {
+  const haystack = searchHaystack(item);
+  if (!haystack) return 0;
+  const title = String(item?.title || "").toLowerCase();
+
+  let score = 0;
+  for (const term of terms) {
+    const hit = haystack.includes(term);
+    const alias = !hit && searchAliases(term).some((alt) => haystack.includes(alt));
+    if (!hit && !alias) return 0;
+    score += 1;
+    if (title.includes(term)) score += 3;
+  }
+  // The full phrase appearing intact is the strongest possible signal.
+  if (phrase && haystack.includes(phrase)) score += 4;
+  // A due date makes time-based questions ("what's due today") answerable from the ranking.
+  if (item?.dueDate || item?.due_date) score += 1;
+  return score;
+}
+
+/* The one search engine behind both the header dropdown and the Ask overlay. Returns the
+   best-matching items, most relevant first, so the AI is given the items that actually answer
+   the question instead of the first N in insertion order. */
 function searchMatches(q) {
-  const ql = q.toLowerCase();
-  return state.items.filter(
-    (i) =>
-      !isArchived(i) &&
-      (i.title + " " + (i.sub || "") + " " + (i.person || ""))
-        .toLowerCase()
-        .includes(ql),
-  );
+  const phrase = String(q || "").toLowerCase().trim();
+  if (!phrase) return [];
+  const terms = searchTerms(phrase);
+  return state.items
+    .filter((item) => !isArchived(item))
+    .map((item) => ({ item, score: searchScore(item, terms, phrase) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || (b.item.created || 0) - (a.item.created || 0))
+    .map((entry) => entry.item);
+}
+
+/* Builds the context sent to the model. The ranked matches lead, because those are what answer
+   the question. A broad question ("what should I do now") may only match one item, so recent
+   open work is then appended up to a floor: the model needs enough to actually answer, and an
+   earlier version sent an arbitrary slice of the list instead. Bounded for the token cap. */
+const ASK_CONTEXT_MATCHES = 12;
+const ASK_CONTEXT_MINIMUM = 8;
+function askContextPool(q) {
+  const ranked = searchMatches(q).slice(0, ASK_CONTEXT_MATCHES);
+  if (ranked.length >= ASK_CONTEXT_MINIMUM) return ranked;
+
+  const chosen = new Set(ranked.map((item) => item.id));
+  const recent = [...state.items]
+    .filter((item) => !isArchived(item) && !chosen.has(item.id))
+    .sort((a, b) => (b.created || 0) - (a.created || 0));
+  const filler = recent.slice(0, ASK_CONTEXT_MINIMUM - ranked.length);
+  return [...ranked, ...filler];
 }
 
 let searchDropDebounce = null;
@@ -4958,18 +5074,82 @@ function runAsk(q) {
   }, 550);
 }
 
+/* One context shape for both AI paths (the /api/ask route and the in-artifact `sample` path).
+
+   The raw item objects were sent as-is, and buildContextLine() on the server only reads
+   kind/priority/title/sub/person/due — so `status`, `project`, `recurrence` and checklist
+   progress never reached the model, and it could not answer questions about workflow state.
+   Normalising here keeps the two paths from drifting apart. */
+function askContextPayload(items) {
+  return items.map((item) => {
+    const status = item.kind === "task" ? taskStatusFromItem(item) : item.status || "";
+    const steps = checklistProgress(item);
+    return {
+      kind: item.kind || "item",
+      title: item.title || "",
+      sub: item.sub || "",
+      person: item.person || "",
+      project: item.project || "",
+      status: taskStatusLabel(status),
+      priority: item.priority || "",
+      recurrence: item.recurrence && item.recurrence !== "none" ? item.recurrence : "",
+      due: item.due || (item.dueDate ? formatDueDisplay(item.dueDate) : ""),
+      dueDate: item.dueDate || item.due_date || "",
+      done: Boolean(item.done),
+      checklist: steps.total ? `${steps.completed}/${steps.total} done` : "",
+    };
+  });
+}
+
+/* The single prompt used by both AI paths, so the in-artifact `sample` call and the /api/ask
+   route instruct the model identically. Each context line carries the fields the model actually
+   reasons over (state, project, due), and the current date makes relative questions answerable. */
+function buildAskPrompt(q, items, today) {
+  const context = items
+    .map((item) => {
+      const label = [item.kind, item.status, item.priority].filter(Boolean).join("/");
+      const bits = [item.title, item.sub].filter(Boolean).join(": ");
+      const meta = [
+        item.project ? `project: ${item.project}` : "",
+        item.person ? `person: ${item.person}` : "",
+        item.due ? `due: ${item.due}` : "",
+        item.recurrence ? `repeats: ${item.recurrence}` : "",
+        item.checklist ? `checklist: ${item.checklist}` : "",
+        item.done ? "completed" : "",
+      ].filter(Boolean);
+      return `- [${label}] ${bits}${meta.length ? ` (${meta.join(", ")})` : ""}`;
+    })
+    .join("\n");
+  return `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Today is ${today}. Be concise (2-4 sentences), specific, and reference relevant items by name. Use the status and due fields to judge what is current, overdue or still open. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context || "(none)"}\n\nQuestion: ${q}`;
+}
+
 /* Renders the AI answer for `q`. `opts.mount` is the element results are drawn into: the overlay's
    slot by default, or the header dropdown when the inline search box is the entry point. */
+/* Guards against a slow response overwriting a newer one. Typing "gym" then "gym membership"
+   fires two Ask calls; without this the slower first reply can land last and show an answer to a
+   query the user has already moved on from. Each call takes a ticket and only the newest wins. */
+let askRequestSeq = 0;
+
 async function askAI(q, opts = {}) {
+  const ticket = ++askRequestSeq;
   const extra = opts.extra || "";
   const slot = opts.mount || document.getElementById("aiAnswerSlot");
   if (!slot) return;
   slot.innerHTML = `<div class="ask-answer">Thinking…</div>`;
+  // The dropdown re-renders (and therefore replaces #searchAskSlot) on every keystroke, so the
+  // captured node can be detached by the time the answer arrives. A stale write is discarded.
+  const isStale = () => ticket !== askRequestSeq || !slot.isConnected;
 
   const contextItems = searchMatches(q);
-  const contextPool = contextItems.length
-    ? contextItems
-    : state.items.filter((item) => !isArchived(item)).slice(0, 20);
+  const contextPool = askContextPool(q);
+  // The model is given today's date so relative questions ("today", "this week", "overdue")
+  // are answerable instead of guessed.
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 
   // Results already listed by the caller should not be repeated above the AI answer.
   const buildSourcesHtml = () =>
@@ -4996,6 +5176,7 @@ async function askAI(q, opts = {}) {
   }
 
   const renderFallback = (note) => {
+    if (isStale()) return;
     const body = contextItems.length
       ? `Based on what you've captured — ${escapeHtml(
           contextItems
@@ -5013,21 +5194,15 @@ async function askAI(q, opts = {}) {
   };
 
   if (sample) {
-    const context = contextPool
-      .slice(0, 60)
-      .map(
-        (i) =>
-          `- [${i.kind}${i.priority ? "/" + i.priority : ""}] ${i.title}${i.sub ? ": " + i.sub : ""}${i.person ? " (person: " + i.person + ")" : ""}${i.due ? " (due: " + i.due + ")" : ""}`,
-      )
-      .join("\n");
-    const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${q}`;
     try {
-      const result = await sample(prompt, {
+      const result = await sample(buildAskPrompt(q, contextPool, today), {
         modelTier: "quick",
         onText: ({ text }) => {
+          if (isStale()) return;
           slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`;
         },
       });
+      if (isStale()) return;
       slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}${buildSourcesHtml()}</div>`;
       return;
     } catch (err) {
@@ -5045,13 +5220,18 @@ async function askAI(q, opts = {}) {
     const res = await apiFetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: q, items: contextPool }),
+      body: JSON.stringify({
+        query: q,
+        items: askContextPayload(contextPool),
+        today,
+      }),
     });
     // The server returns a short, user-safe reason for 503 (no key configured) and 502
     // (upstream problem). Anything else is unexpected, so stay quiet and use local results.
     if (!res.ok) return renderFallback(await readAskError(res));
     const data = await res.json();
     if (data.answer) {
+      if (isStale()) return;
       slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer)}${buildSourcesHtml()}</div>`;
       return;
     }

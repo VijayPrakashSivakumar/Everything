@@ -1796,6 +1796,10 @@ h1.page-title {
   font-size: 13.5px;
   line-height: 1.6;
   color: var(--text);
+  /* Models answer in paragraphs and bullet lists. Without this the newlines collapse and the
+     whole answer renders as one run-on line. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Sources list, shared by the overlay and the header search dropdown. */

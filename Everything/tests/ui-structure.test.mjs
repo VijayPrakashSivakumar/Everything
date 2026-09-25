@@ -181,22 +181,156 @@ if (process.argv.includes('--live')) {
 
 check('both search entry points share one matcher', () => {
   assert.match(js, /function searchMatches\(q\)/, 'searchMatches helper missing');
-  // Exactly one place may build the searchable haystack. searchMatches itself is allowed;
-  // any second copy means the two entry points could disagree.
-  const defs = js.match(/function searchMatches\(q\)/g) || [];
-  assert.equal(defs.length, 1, 'searchMatches must be declared once');
+  // Exactly one place may decide what matches. searchMatches and the two helpers it delegates
+  // to are allowed; a second inline filter means the entry points could disagree.
+  for (const name of ['function searchMatches(q)', 'function searchScore(', 'function searchHaystack(']) {
+    assert.equal((js.match(new RegExp(name.replace(/[()]/g, '\\$&'), 'g')) || []).length, 1,
+      `${name} must be declared exactly once`);
+  }
   const body = js.slice(js.indexOf('function searchMatches'));
-  const end = body.indexOf('\n}');
-  const helper = body.slice(0, end);
-  assert.match(helper, /includes\(ql\)/, 'searchMatches must do the matching');
-  const outside = js.slice(0, js.indexOf('function searchMatches')) + js.slice(js.indexOf('function searchMatches') + end);
-  assert.doesNotMatch(outside, /\.includes\(ql\)/, 'duplicate inline matching logic still exists');
+  const helper = body.slice(0, body.indexOf('\n}'));
+  assert.match(helper, /searchScore\(/, 'searchMatches must delegate the matching to searchScore');
+  // No ad-hoc matching against the item list may creep back in beside the shared helpers.
+  const others = js.replace(/function searchScore\([\s\S]*?\n}\n/, '').replace(/function searchHaystack\([\s\S]*?\n}\n/, '')
+    .replace(/function searchMatches\([\s\S]*?\n}\n/, '');
+  assert.doesNotMatch(others, /state\.items\s*\n?\s*\.filter\([\s\S]{0,200}?\.toLowerCase\(\)[\s\S]{0,120}?\.includes\(/,
+    'duplicate inline matching logic still exists');
   assert.match(js, /const matches = searchMatches\(q\);/, 'runAsk must reuse searchMatches');
 });
 
 check('the AI answer cannot wipe the dropdown hit list', () => {
   assert.match(js, /id="searchAskSlot"/, 'the dropdown needs its own AI slot');
   assert.match(js, /mount:\s*document\.getElementById\("searchAskSlot"\)/, 'askAI must mount into the AI slot');
+});
+
+/* These lock in the search/retrieval fixes. They run the real search functions out of
+   script.js against a stub `state`, so a regression fails here with a readable message
+   instead of surfacing as "the AI just doesn't understand my question". */
+const searchDeps = ['state', 'isArchived', 'taskStatusFromItem', 'taskStatusLabel', 'normaliseChecklist', 'checklistProgress', 'formatDueDisplay'];
+const stubDeps = {
+  state: {
+    items: [
+      { id: 'a', kind: 'task', title: 'Renew gym membership', project: 'Health', priority: 'high', status: 'today', dueDate: '2026-09-25', created: 300 },
+      { id: 'b', kind: 'task', title: 'Draft Atlas proposal', sub: 'send to Priya', project: 'Atlas', priority: 'high', status: 'in_progress', created: 200 },
+      { id: 'c', kind: 'memory', title: 'Book recommendation', sub: 'from Priya', person: 'Priya', created: 100 },
+      { id: 'd', kind: 'task', title: 'Water plants', project: 'Home', status: 'waiting', checklist: [{ text: 'buy soil', done: true }, { text: 'repot', done: false }], created: 50 },
+      { id: 'e', kind: 'task', title: 'Old archived thing', sub: 'gym', archivedAt: 1, created: 400 },
+    ],
+  },
+  isArchived: (i) => Boolean(i?.archivedAt || i?.archived_at),
+  taskStatusFromItem: (i) => (i.done ? 'completed' : i.status || 'planned'),
+  taskStatusLabel: (v) => String(v || '').replace(/_/g, ' '),
+  normaliseChecklist: (v) => (Array.isArray(v) ? v.filter((s) => s && s.text) : []),
+  checklistProgress: (i) => {
+    const list = Array.isArray(i?.checklist) ? i.checklist : [];
+    return { total: list.length, completed: list.filter((s) => s.done).length };
+  },
+  formatDueDisplay: (d) => String(d || ''),
+};
+// Lift the real search functions out of the bundle and run them against the stub state.
+const between = (start, end) => {
+  const from = js.indexOf(start);
+  assert.ok(from > -1, `${start} is missing from script.js`);
+  const to = js.indexOf(end, from);
+  assert.ok(to > -1, `no ${JSON.stringify(end)} after ${start}`);
+  return js.slice(from, to + end.length);
+};
+const searchSource = [
+  between('const SEARCH_STOP_WORDS', ']);'),
+  between('const SEARCH_ALIASES', '};'),
+  between('function searchAliases', '\n}'),
+  between('function searchTerms', '\n}'),
+  between('function searchHaystack', '\n}'),
+  between('function searchScore', '\n}'),
+  between('function searchMatches', '\n}'),
+  between('const ASK_CONTEXT_MATCHES', '\n}'),
+].join('\n');
+const runSearch = (deps, expr) =>
+  new Function(...searchDeps, `${searchSource}\nreturn ${expr};`)(...searchDeps.map((k) => deps[k]));
+const searchApi = runSearch(stubDeps, '({ searchMatches, askContextPool })');
+const titles = (items) => items.map((i) => i.title);
+
+check('a partial word still finds the item', () => {
+  // "gym" must match "Renew gym membership" — the old matcher needed the whole query verbatim.
+  assert.deepEqual(titles(searchApi.searchMatches('gym')), ['Renew gym membership']);
+});
+
+check('a natural question is not searched as one long phrase', () => {
+  // No single title contains "what should I do today", so the old matcher returned nothing and
+  // the AI was handed an arbitrary list of items instead.
+  assert.ok(searchApi.searchMatches('what should I do today').length > 0, 'a plain question must still retrieve something');
+});
+
+check('matches are ranked, not in insertion order', () => {
+  assert.deepEqual(titles(searchApi.searchMatches('proposal')), ['Draft Atlas proposal']);
+});
+
+check('the AI context leads with the best match', () => {
+  const pool = searchApi.askContextPool('atlas');
+  assert.ok(pool.length > 0, 'ask context must not be empty for a matching query');
+  assert.equal(pool[0].title, 'Draft Atlas proposal', 'the best match must lead the context');
+});
+
+check('archived items never enter search or the AI context', () => {
+  const ids = [...searchApi.searchMatches('gym'), ...searchApi.askContextPool('gym')].map((i) => i.id);
+  assert.ok(!ids.includes('e'), 'an archived item leaked into the results');
+});
+
+check('the AI context stays inside the provider token limit', () => {
+  const many = { ...stubDeps, state: { items: Array.from({ length: 200 }, (_, n) => ({ id: `x${n}`, kind: 'task', title: `Item ${n}`, created: n })) } };
+  const pool = runSearch(many, 'askContextPool("item")');
+  assert.ok(pool.length > 0 && pool.length <= 20, `context pool must stay small, got ${pool.length}`);
+});
+
+check('natural words map to the values the app stores', () => {
+  // "urgent" is typed; priority is stored as "high". Without the alias map this finds nothing.
+  assert.ok(titles(searchApi.searchMatches('urgent')).includes('Renew gym membership'),
+    '"urgent" must match an item whose priority is stored as high');
+  // "blocked" is typed; the status is stored as "waiting".
+  assert.ok(titles(searchApi.searchMatches('blocked')).includes('Water plants'),
+    '"blocked" must match an item whose status is stored as waiting');
+});
+
+check('a broad question still gets enough context to answer', () => {
+  // One keyword match must not leave the model with a single item to reason about.
+  const pool = searchApi.askContextPool('what i do now');
+  assert.ok(pool.length >= 4, `broad questions need real context, got ${pool.length}`);
+  assert.ok(!pool.some((i) => i.id === 'e'), 'archived filler leaked into the context');
+  assert.equal(new Set(pool.map((i) => i.id)).size, pool.length, 'the context must not repeat an item');
+});
+
+check('the checklist is searchable and reaches the model', () => {
+  // "repot" only exists inside a checklist step, so it is invisible without that field.
+  assert.ok(titles(searchApi.searchMatches('repot')).includes('Water plants'),
+    'checklist steps must be searchable');
+});
+
+check('the AI prompt carries the date and the workflow state', () => {
+  // Without the date "what is due today" is unanswerable; without status/project the model
+  // cannot reason about workflow state at all, because those fields never reached it.
+  const askSource = js.slice(js.indexOf('function buildAskPrompt'));
+  assert.match(askSource, /function buildAskPrompt\(q, items, today\)/, 'buildAskPrompt must take the date');
+  assert.match(askSource, /Today is \$\{today\}/, 'the prompt must state the current date');
+  assert.match(askSource, /item\.status/, 'the prompt must carry the item status');
+  assert.match(askSource, /item\.project/, 'the prompt must carry the project');
+  const server = fs.readFileSync(path.join(root, 'api/ask.js'), 'utf8');
+  assert.match(server, /const currentDate = String\(today/, 'the API must prefer the client date');
+  assert.match(server, /item\.status/, 'buildContextLine must render the status');
+  assert.match(server, /item\.project/, 'buildContextLine must render the project');
+});
+
+check('a slow answer cannot overwrite a newer one', () => {
+  assert.match(js, /let askRequestSeq = 0;/, 'askRequestSeq missing');
+  assert.match(js, /const isStale = \(\) =>/, 'the stale-response guard is missing');
+  const ask = js.slice(js.indexOf('async function askAI'));
+  const guarded = (ask.match(/if \(isStale\(\)\) return;/g) || []).length;
+  assert.ok(guarded >= 3, `every answer write must be guarded, found ${guarded}`);
+});
+
+check('multi-line AI answers keep their line breaks', () => {
+  const style = css.match(/\.ask-answer\s*\{[^}]*\}/);
+  assert.ok(style, '.ask-answer block missing');
+  assert.match(style[0], /white-space:\s*pre-wrap/, 'answers collapse into one run-on line without pre-wrap');
 });
 
 check('the Ask overlay still has an entry point for keyboard users', () => {

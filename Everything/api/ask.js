@@ -333,20 +333,31 @@ export async function probeProvider() {
 const MAX_CONTEXT_ITEMS = 30;
 const MAX_FIELD = 120;
 
+/* One context line per item. The client now sends a normalised payload (askContextPayload), so
+   status/project/recurrence/checklist are present and must be rendered here — without them the
+   model could not answer questions about workflow state, because only title/sub/person/priority
+   used to reach it. Completed items are marked so the model does not offer them as open work. */
 export function buildContextLine(item) {
-  const label = `[${item.kind || 'item'}${item.priority ? '/' + item.priority : ''}]`;
+  const bits = [item.kind, item.status, item.priority].filter(Boolean);
+  const label = `[${bits.join('/') || 'item'}]`;
   const title = String(item.title || '').slice(0, MAX_FIELD);
   const sub = item.sub ? `: ${String(item.sub).slice(0, MAX_FIELD)}` : '';
-  const person = item.person ? ` (person: ${item.person})` : '';
-  const due = item.due ? ` (due: ${item.due})` : '';
-  return `- ${label} ${title}${sub}${person}${due}`;
+  const meta = [
+    item.project ? `project: ${item.project}` : '',
+    item.person ? `person: ${item.person}` : '',
+    item.due ? `due: ${item.due}` : '',
+    item.recurrence ? `repeats: ${item.recurrence}` : '',
+    item.checklist ? `checklist: ${item.checklist}` : '',
+    item.done ? 'completed' : '',
+  ].filter(Boolean);
+  return `- ${label} ${title}${sub}${meta.length ? ` (${meta.join(', ')})` : ''}`;
 }
 
 export default async function handler(req, res) {
   const auth = await requireUser(req, res);
   if (!auth) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  const { query, items } = req.body || {};
+  const { query, items, today } = req.body || {};
   if (!query || !query.trim()) return res.status(400).json({ error: 'Missing query' });
 
   const context = (items || [])
@@ -355,7 +366,10 @@ export default async function handler(req, res) {
     .map(buildContextLine)
     .join('\n');
 
-  const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Be concise (2-4 sentences), specific, and reference relevant items by name. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context}\n\nQuestion: ${query}`;
+  // The browser knows the user's real local date; the server clock may be UTC. Preferring the
+  // client value is what lets "today" and "this week" be answered correctly.
+  const currentDate = String(today || '').slice(0, 60) || new Date().toDateString();
+  const prompt = `You are the "Ask" assistant inside a personal productivity app called Everything. Answer the user's question using ONLY the captured items below as context. Today is ${currentDate}. Be concise (2-4 sentences), specific, and reference relevant items by name. Use the status and due fields to judge what is current, overdue or still open. If nothing in the context is relevant, say so briefly.\n\nCaptured items:\n${context || '(none)'}\n\nQuestion: ${query}`;
 
   const result = await complete({ prompt, maxTokens: 600 });
   if (result.error) {
