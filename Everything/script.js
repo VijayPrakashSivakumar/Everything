@@ -4,6 +4,14 @@ const SUPABASE_KEY =
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+/* Opening index.html straight from disk runs the app on the file:// protocol, where the
+   browser refuses every fetch("/api/...") call with a bare 403. The server is never reached,
+   so a locally opened file silently loses login, sync, and AI Ask. Detect it up front and say
+   so plainly instead of surfacing a meaningless Forbidden. */
+function isFileProtocol() {
+  return typeof location !== "undefined" && location.protocol === "file:";
+}
+
 async function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (typeof sb?.auth?.getSession === "function") {
@@ -4895,6 +4903,12 @@ async function askAI(q) {
     } catch (err) {
       /* fall through to API below */
     }
+  }
+
+  // A file:// page cannot reach the API at all, so say that instead of reporting a bare 403.
+  if (isFileProtocol()) {
+    renderFallback("Opened from a file — open the deployed site to use AI answers.");
+    return;
   }
 
   try {
