@@ -1,4 +1,4 @@
-import { requireHouseholdMembership, requireUser } from './lib/auth.js';
+import { orderNewestFirst, requireHouseholdMembership, requireUser } from './lib/auth.js';
 
 const fail = (res, code, error) => res.status(code).json({ error: error || 'Request failed.' });
 
@@ -13,7 +13,8 @@ export default async function handler(req, res) {
   if (access.error) return fail(res, access.status, access.error);
 
   if (req.method === 'GET') {
-    const result = await supabase.from('household_members').select('*').eq('household_id', householdId).order('created_at', { ascending: false });
+    const query = supabase.from('household_members').select('*').eq('household_id', householdId);
+    const result = await orderNewestFirst(query, supabase, 'household_members');
     if (result.error) return fail(res, 500, result.error.message);
     return res.status(200).json({ members: result.data || [] });
   }

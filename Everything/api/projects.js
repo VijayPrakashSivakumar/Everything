@@ -1,4 +1,4 @@
-import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
+import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, orderNewestFirst, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
 
 const fail = (res, code, error) => res.status(code).json({ error: error || 'Request failed.' });
 const isPrivate = (row) => row?.visibility === 'private' || row?.metadata?.scope === 'private';
@@ -36,7 +36,8 @@ export default async function handler(req, res) {
   const access = await requireHouseholdMembership(supabase, user.id, householdId);
   if (access.error) return fail(res, access.status, access.error);
   if (req.method === 'GET') {
-    const result = await supabase.from('projects').select('*').eq('household_id', householdId).order('created_at', { ascending: false });
+    const query = supabase.from('projects').select('*').eq('household_id', householdId);
+    const result = await orderNewestFirst(query, supabase, 'projects');
     if (result.error) return fail(res, 500, result.error.message);
     return res.status(200).json({ projects: (result.data || []).filter((row) => !isPrivate(row) || row.user_id === user.id) });
   }

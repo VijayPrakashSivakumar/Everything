@@ -13,14 +13,24 @@ const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
 const js = fs.readFileSync(path.join(root, 'script.js'), 'utf8');
 
 const results = [];
+const inflight = [];
+/* Checks may be async (the optional live probe), so the summary must wait for all of them.
+   Each check returns a promise that is tracked directly — a Set of flags is not enough,
+   because a flag that flips never tells the loop when the work is actually finished. */
 function check(name, fn) {
-  try {
-    fn();
-    results.push(`PASS  ${name}`);
-  } catch (err) {
-    results.push(`FAIL  ${name}\n        ${err.message}`);
-    process.exitCode = 1;
-  }
+  const promise = Promise.resolve()
+    .then(fn)
+    .then(
+      () => {
+        results.push(`PASS  ${name}`);
+      },
+      (err) => {
+        results.push(`FAIL  ${name}\n        ${err.message}`);
+        process.exitCode = 1;
+      },
+    );
+  inflight.push(promise);
+  return promise;
 }
 
 check('the header search box is a real, focusable input', () => {
@@ -96,6 +106,79 @@ check('the back guard closes the search dropdown before anything else', () => {
   assert.ok(dropdown < ask, 'the dropdown must close before the Ask overlay');
 });
 
+/* The deployed schema is mixed: the original prototype tables (items/projects/goals/people) were
+   created with a `created` column, while the later foundation tables (entries/tasks) use
+   `created_at`. Ordering by the wrong name is an error, not an empty result, so every read route
+   must resolve the real column instead of hardcoding one. */
+const MIXED_SCHEMA_TABLES = ['projects', 'goals', 'people', 'items', 'entries', 'tasks'];
+
+check('no read route hardcodes a created timestamp column', () => {
+  const routes = fs.readdirSync(path.join(root, 'api'))
+    .filter((f) => f.endsWith('.js'))
+    .map((f) => ({ name: f, src: fs.readFileSync(path.join(root, 'api', f), 'utf8') }));
+  for (const { name, src } of routes) {
+    assert.doesNotMatch(src, /\.order\(\s*['"]created_at['"]/, `api/${name} hardcodes order('created_at')`);
+    assert.doesNotMatch(src, /\.order\(\s*['"]created['"]/, `api/${name} hardcodes order('created')`);
+  }
+});
+
+check('the client fallback also resolves the column', () => {
+  assert.doesNotMatch(js, /\.order\(\s*["']created_at["']/, 'the client fallback hardcodes created_at');
+  assert.match(js, /function structuredCreatedColumn\(/, 'structuredCreatedColumn helper missing');
+  assert.match(js, /if \(orderColumn\) query = query\.order\(/, 'the fallback must order conditionally');
+});
+
+check('both resolvers try the known column names and cache them', () => {
+  const server = fs.readFileSync(path.join(root, 'api/lib/auth.js'), 'utf8');
+  const resolver = server.slice(server.indexOf('const CREATED_COLUMN_CANDIDATES'));
+  for (const column of ['created_at', 'created']) {
+    assert.ok(resolver.includes(`'${column}'`), `server resolver must try ${column}`);
+    assert.ok(js.includes(`"${column}"`), `client resolver must try ${column}`);
+  }
+  assert.match(server, /createdColumnCache/, 'server result must be cached');
+  assert.match(js, /structuredCreatedCache/, 'client result must be cached');
+});
+
+check('a missing timestamp column degrades instead of failing', () => {
+  const server = fs.readFileSync(path.join(root, 'api/lib/auth.js'), 'utf8');
+  const fn = server.slice(server.indexOf('export async function orderNewestFirst'));
+  assert.match(fn, /return column \? builder\.order\([^)]*\) : builder;/, 'must return the builder unchanged when no column is found');
+  const resolver = server.slice(server.indexOf('export async function createdColumn'));
+  assert.match(resolver, /createdColumnCache\.set\(table, null\)/, 'a missing column must be remembered, not retried forever');
+});
+
+/* Opt-in live probe: the deployed schema is the source of truth for these column names, but the
+   check needs network access. It is skipped by default so the offline suite stays fast and
+   deterministic. Run `node Everything/tests/ui-structure.test.mjs --live` before a release, or
+   after applying a migration, to confirm the deployed shape still matches. */
+if (process.argv.includes('--live')) {
+  check('the live database exposes an orderable created column on every table', async () => {
+    const key = js.match(/const SUPABASE_KEY\s*=\s*"([^"]+)"/);
+    const base = js.match(/const SUPABASE_URL\s*=\s*"([^"]+)"/);
+    if (!key || !base) throw new Error('Supabase URL/key not found in script.js');
+
+    const probe = async (table, column) => {
+      const url = `${base[1]}/rest/v1/${table}?select=id&order=${column}.desc&limit=0`;
+      const res = await fetch(url, {
+        headers: { apikey: key[1], Authorization: `Bearer ${key[1]}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      return res.ok;
+    };
+
+    for (const table of MIXED_SCHEMA_TABLES) {
+      const hasCreatedAt = await probe(table, 'created_at');
+      const hasCreated = await probe(table, 'created');
+      assert.ok(
+        hasCreatedAt || hasCreated,
+        `${table} exposes neither created_at nor created — the resolver cannot order it`,
+      );
+    }
+  });
+} else {
+  results.push('SKIP  live database probe (re-run with --live)');
+}
+
 check('both search entry points share one matcher', () => {
   assert.match(js, /function searchMatches\(q\)/, 'searchMatches helper missing');
   // Exactly one place may build the searchable haystack. searchMatches itself is allowed;
@@ -128,5 +211,6 @@ check('CSS braces are balanced', () => {
   assert.equal(open, close, `unbalanced braces: ${open} open vs ${close} close`);
 });
 
+await Promise.all(inflight);
 console.log(results.join('\n'));
 console.log(process.exitCode ? '\nSOME TESTS FAILED' : `\nALL ${results.length} TESTS PASSED`);

@@ -1,4 +1,4 @@
-import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
+import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, orderNewestFirst, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
 
 const STATUS = ['inbox', 'planned', 'today', 'in_progress', 'waiting', 'completed', 'cancelled', 'someday'];
 const VISIBILITY = ['private', 'shared', 'shared_with_family', 'shared_with_selected'];
@@ -51,7 +51,9 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET') {
     const limit = Math.min(Math.max(Number(query.limit) || 100, 1), 200);
-    const result = await supabase.from('entries').select('*').eq('household_id', householdId).order('created_at', { ascending: false }).limit(limit);
+    let request = supabase.from('entries').select('*').eq('household_id', householdId).limit(limit);
+    request = await orderNewestFirst(request, supabase, 'entries');
+    const result = await request;
     if (result.error) return fail(res, 500, result.error.message);
     return res.status(200).json({ entries: (result.data || []).filter((row) => !isPrivate(row) || row.user_id === user.id) });
   }

@@ -87,6 +87,35 @@ export async function hasClientIdColumn(supabase, table) {
   return hasColumn(supabase, table, 'client_id');
 }
 
+/* The created-timestamp column differs between tables: the original prototype tables
+   (items/projects/goals/people) use `created`, while the later foundation tables
+   (entries/tasks/household_members) use `created_at`. Hardcoding either name made these
+   routes fail with a 500 (and the browser's own fallback fail with 400) because ordering by a
+   column the table does not have is an error, not an empty result. Resolve the real column once
+   per table and cache the answer. */
+const CREATED_COLUMN_CANDIDATES = ['created_at', 'created', 'createdAt'];
+const createdColumnCache = new Map();
+
+export async function createdColumn(supabase, table) {
+  if (createdColumnCache.has(table)) return createdColumnCache.get(table);
+  for (const column of CREATED_COLUMN_CANDIDATES) {
+    if (await hasColumn(supabase, table, column)) {
+      createdColumnCache.set(table, column);
+      return column;
+    }
+  }
+  // Nothing found: skip ordering entirely rather than 500 on a guaranteed-missing column.
+  createdColumnCache.set(table, null);
+  return null;
+}
+
+/* Applies newest-first ordering using whichever timestamp column the table actually has.
+   Returns the builder unchanged when no known column exists, so the caller still gets rows. */
+export async function orderNewestFirst(builder, supabase, table) {
+  const column = await createdColumn(supabase, table);
+  return column ? builder.order(column, { ascending: false }) : builder;
+}
+
 export async function findByClientId(supabase, table, householdId, clientId) {
   if (!clientId) return { data: null, error: null };
 

@@ -1,4 +1,4 @@
-import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, hasColumn, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
+import { applyClientIdentity, bodyClientId, findByClientId, findRecordForMutation, hasClientIdColumn, hasColumn, orderNewestFirst, requireHouseholdMembership, requireUser, upsertByClientId } from './lib/auth.js';
 
 const STATUS = ['inbox', 'planned', 'today', 'in_progress', 'waiting', 'completed', 'cancelled', 'someday'];
 const PRIORITY = ['low', 'normal', 'high', 'urgent'];
@@ -101,8 +101,9 @@ export default async function handler(req, res) {
   const access = await requireHouseholdMembership(supabase, user.id, householdId);
   if (access.error) return fail(res, access.status, access.error);
   if (req.method === 'GET') {
-    let request = supabase.from('tasks').select('*').eq('household_id', householdId).order('created_at', { ascending: false });
+    let request = supabase.from('tasks').select('*').eq('household_id', householdId);
     if (q.status) request = request.eq('status', status(q.status));
+    request = await orderNewestFirst(request, supabase, 'tasks');
     const result = await request;
     if (result.error) return fail(res, 500, result.error.message);
     return res.status(200).json({ tasks: (result.data || []).filter((row) => !isPrivate(row) || row.user_id === user.id) });

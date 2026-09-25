@@ -807,6 +807,24 @@ function canReadStructuredRow(row) {
   return !isPrivateStructuredRow(row) || row?.user_id === sbUser;
 }
 
+/* Resolves which created-timestamp column a table actually has, cached per table. The deployed
+   schema is mixed: items/projects/goals/people use `created`, entries/tasks use `created_at`. */
+const STRUCTURED_CREATED_COLUMNS = ["created_at", "created", "createdAt"];
+const structuredCreatedCache = new Map();
+
+async function structuredCreatedColumn(table) {
+  if (structuredCreatedCache.has(table)) return structuredCreatedCache.get(table);
+  for (const column of STRUCTURED_CREATED_COLUMNS) {
+    const { error } = await sb.from(table).select(column).limit(1);
+    if (!error) {
+      structuredCreatedCache.set(table, column);
+      return column;
+    }
+  }
+  structuredCreatedCache.set(table, null);
+  return null;
+}
+
 async function loadStructuredCollection(kind, responseKey) {
   if (structuredSyncAvailable()) {
     const result = await structuredRequest(
@@ -816,11 +834,14 @@ async function loadStructuredCollection(kind, responseKey) {
       return result.data[responseKey].filter(canReadStructuredRow);
     }
   }
-  const fallback = await sb
-    .from(kind)
-    .select("*")
-    .eq("household_id", currentHouseholdId)
-    .order("created_at", { ascending: false });
+  // The direct Supabase fallback runs only when the API route is unavailable. The created
+  // timestamp column is not consistent across tables (`created` on the older prototype tables,
+  // `created_at` on the later ones), so ordering by a name the table lacks errors out with a 400
+  // and the collection silently disappears. Probe once, then use what actually exists.
+  const orderColumn = await structuredCreatedColumn(kind);
+  let query = sb.from(kind).select("*").eq("household_id", currentHouseholdId);
+  if (orderColumn) query = query.order(orderColumn, { ascending: false });
+  const fallback = await query;
   if (fallback.error) return null;
   return (fallback.data || []).filter(canReadStructuredRow);
 }

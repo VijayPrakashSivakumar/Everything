@@ -147,11 +147,28 @@ The suites run offline — no API key, no login, no network:
 
 ```bash
 node Everything/tests/ask-adapter.test.mjs   # provider fallback, shared budget, reason trail
-node Everything/tests/ui-structure.test.mjs  # search wiring, mobile layout, back guard
+node Everything/tests/ui-structure.test.mjs  # search wiring, mobile layout, back guard, schema
+```
+
+The second suite has an opt-in live probe that checks the deployed database really does expose an
+orderable created column on every table:
+
+```bash
+node Everything/tests/ui-structure.test.mjs --live
 ```
 
 They live in `Everything/tests/`, deliberately outside `api/`, because every file in `api/` is
 built as a Vercel function and the project is already at the Hobby plan's 12-function limit.
+
+## The mixed `created` / `created_at` schema
+The original prototype tables use `created`; the later foundation tables use `created_at`, and the
+deployed database has both. Read routes therefore resolve the column through `createdColumn()` in
+`api/lib/auth.js` rather than hardcoding a name — ordering by a column a table lacks is a `42703`
+error, not an empty result, which is what produced the 500s on `/api/projects`, `/api/goals`,
+`/api/people` and `/api/household-members` (plus a 400 from the browser's own Supabase fallback).
+
+Do not "fix" this by renaming a column. Run the `--live` check to see the real shape first. If a
+table genuinely has no created timestamp, the routes skip ordering and still return rows.
 
 ## Database
 Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, or
