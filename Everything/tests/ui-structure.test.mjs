@@ -775,6 +775,286 @@ check('a goal can be renamed and its controls survive any id', () => {
   }
 });
 
+/* ---------- Goal depth: linked items, progress, target date ---------- */
+
+const sameNameSource = between('const sameName = (a, b) =>', '\n};');
+const goalLabelSource = betweenBlock('function goalTargetLabel', '/* A target date is typed as');
+// renderGoals with its two helpers and the escaping it renders through, lifted out of the bundle so
+// the assertions are about the markup that actually ships. escapeHtml and jsStr live at the foot of
+// script.js, well after the goals code, so they are appended rather than sliced in place.
+const escapeSource = [
+  between('function escapeHtml(', '\n}'),
+  js.match(/const jsStr = [^\n]*/)[0],
+].join('\n');
+const goalRenderSource = [
+  sameNameSource,
+  betweenBlock('function goalItems', 'function goalTargetLabel'),
+  goalLabelSource,
+  betweenBlock('function renderGoals', '/* The items linked to a goal'),
+  escapeSource,
+].join('\n');
+
+const makeGoalWorld = () => {
+  const el = { innerHTML: '' };
+  return {
+    el,
+    state: {
+      items: [
+        { id: 'i1', title: 'Write the spec', goal: 'ship the beta properly', done: true },
+        { id: 'i2', title: 'Ship it', goal: 'Ship the beta properly', done: false },
+        { id: 'i3', title: 'Walk the dog', goal: 'Walk the dog', done: false },
+        { id: 'i4', title: 'Archived chore', goal: 'Ship the beta properly', done: true, archivedAt: 1 },
+      ],
+      goals: [
+        { id: 'g1', title: 'Ship the beta properly', done: false, created: Date.now() },
+        { id: 'g2', title: 'Walk the dog', done: false, created: Date.now() },
+        { id: 'g3', title: 'Finished thing', done: true, created: Date.now() },
+      ],
+      people: [],
+      projects: [],
+    },
+    isArchived: (i) => Boolean(i?.archivedAt || i?.archived_at),
+    icon: () => '<svg></svg>',
+    document: { getElementById: (id) => (id === 'goalsList' ? el : null) },
+  };
+};
+const renderGoalsWith = (world) => {
+  const deps = ['state', 'isArchived', 'icon', 'document'];
+  new Function(...deps, `${goalRenderSource}\nrenderGoals();`)(...deps.map((k) => world[k]));
+  return world.el.innerHTML;
+};
+
+check('a goal reports the progress of the items linked to it', () => {
+  // A goal used to be a title and a tick, so nothing said whether any work was actually attached to
+  // it. Items link to a goal by title, exactly as they link to a project by name, and the progress
+  // is read off them rather than stored.
+  const html = renderGoalsWith(makeGoalWorld());
+
+  assert.match(html, /50% complete \(1\/2\)/,
+    'progress is the finished count over the items linked to this goal');
+  assert.match(html, /width:50%/, 'and the bar shows it');
+  assert.ok(html.includes('Write the spec') && html.includes('Ship it'),
+    'the linked items are listed under the goal');
+  assert.ok(html.includes('openPanel(&quot;i1&quot;)'), 'a linked item opens its panel');
+  assert.ok(!html.includes('Archived chore'),
+    'an archived item must not be counted or listed — it would inflate the progress');
+  assert.match(html, /0% complete \(0\/1\)/, "another goal's own progress is computed separately");
+  assert.equal((html.match(/No items linked yet/g) || []).length, 1,
+    'a goal with nothing linked says so rather than showing an empty bar');
+  assert.match(html, /Completed \(1\)/, 'a finished goal still moves to the completed group');
+});
+
+check('a target date is counted from today, not from a stale render', () => {
+  const label = new Function(`${goalLabelSource}\nreturn goalTargetLabel;`)();
+  const day = (offset) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  assert.equal(label({ targetDate: day(0) }), 'Due today');
+  assert.equal(label({ targetDate: day(1) }), 'Due tomorrow');
+  assert.equal(label({ targetDate: day(9) }), 'Due in 9 days');
+  assert.equal(label({ targetDate: day(-1) }), 'Overdue by 1 day',
+    'a date that has passed must say so, not count up towards it');
+  assert.equal(label({ targetDate: day(-4) }), 'Overdue by 4 days');
+  // A goal with no date, or one that cannot be read, must say nothing rather than "Due in 0 days".
+  assert.equal(label({ targetDate: '' }), '');
+  assert.equal(label({ targetDate: 'nonsense' }), '');
+  assert.equal(label(null), '');
+
+  // And the label has to reach the row, escaped like any other stored text.
+  const world = makeGoalWorld();
+  world.state.goals[0].targetDate = day(-2);
+  world.state.goals[0].title = "Bob's beta";
+  const html = renderGoalsWith(world);
+  assert.match(html, /Overdue by 2 days/);
+  assert.ok(html.includes('Bob&#39;s beta'),
+    'a quote in a title is escaped rather than breaking the row');
+});
+
+check('a goal takes the date from the card and is only created once', async () => {
+  // Two goals sharing one title would each claim the other's items and report the same progress
+  // twice — the duplicate guard people and projects already had.
+  const addSource = [sameNameSource, betweenBlock('async function addGoal', 'async function toggleGoal')].join('\n');
+  const inputs = { newGoalInput: { value: 'Ship the beta' }, newGoalDate: { value: '2026-12-31' } };
+  const saved = [];
+  const state = { goals: [] };
+  let n = 0;
+  const addGoal = new Function('state', 'cid', 'dbSaveGoal', 'document',
+    `${addSource}\nreturn addGoal;`)(state, () => `g${++n}`, async (g) => saved.push(g.id),
+    { getElementById: (id) => inputs[id] });
+
+  await addGoal();
+  assert.deepEqual(saved, ['g1'], 'the goal is created through the real input');
+  assert.equal(state.goals[0].targetDate, '2026-12-31', 'the card can give a goal a target date');
+  assert.equal(inputs.newGoalDate.value, '', 'and the date is consumed, not inherited by the next goal');
+
+  inputs.newGoalInput.value = '  ship the BETA ';
+  await addGoal();
+  assert.equal(state.goals.length, 1, 'the same title must not produce a second goal');
+  assert.equal(inputs.newGoalInput.value, '', 'and the input is cleared, so it is not silently re-sent');
+});
+
+check('a target date is stored only when it is a real date', async () => {
+  const world = makeGoalWorld();
+  const saved = [];
+  world.dbSaveGoal = async (g) => { saved.push(`${g.id}:${g.targetDate}`); };
+  world.renderGoals = () => { world.rendered = true; };
+  world.alert = (m) => { world.alerted = m; };
+  const deps = ['state', 'dbSaveGoal', 'renderGoals', 'alert'];
+  const setGoalDate = new Function(...deps,
+    `${betweenBlock('async function setGoalDate', 'function startSetGoalDate')}\nreturn setGoalDate;`)(
+    ...deps.map((k) => world[k]));
+
+  await setGoalDate('g1', '2026-12-31');
+  assert.equal(world.state.goals[0].targetDate, '2026-12-31');
+  assert.deepEqual(saved, ['g1:2026-12-31'], 'a changed date is persisted, not just held in memory');
+
+  await setGoalDate('g1', '31/12/2026');
+  assert.match(world.alerted || '', /2026-12-31/, 'anything but YYYY-MM-DD is refused');
+  assert.equal(world.state.goals[0].targetDate, '2026-12-31', 'a refused date changes nothing');
+
+  await setGoalDate('g1', '2026-02-31');
+  assert.equal(world.state.goals[0].targetDate, '2026-12-31',
+    'a day that does not exist must not be stored — the Date parser rolls it into March');
+
+  await setGoalDate('g1', '   ');
+  assert.equal(world.state.goals[0].targetDate, '', 'blank clears the date instead of stranding it');
+
+  await setGoalDate('nope', '2026-12-31');
+  assert.equal(saved.length, 2, 'an unknown goal is ignored rather than creating one');
+});
+
+check('renaming a goal carries its linked items and refuses a title already in use', async () => {
+  const goalSource = [
+    renameSource,
+    js.slice(js.indexOf('async function renameGoal'), js.indexOf('function startRenameGoal')),
+  ].join('\n');
+  const deps = [...renameDeps, 'dbSaveGoal', 'renderGoals'];
+  const saved = [];
+  const world = {
+    state: {
+      items: [
+        { id: 'i1', title: 'Spec', goal: 'ship the beta' },
+        { id: 'i2', title: 'Ship it', goal: 'Ship The Beta' },
+        { id: 'i3', title: 'Walk', goal: 'Walk the dog' },
+      ],
+      goals: [{ id: 'g1', title: 'Ship the beta', created: 1 }, { id: 'g2', title: 'Walk the dog', created: 1 }],
+      people: [],
+      projects: [],
+    },
+    isArchived: (i) => Boolean(i?.archivedAt || i?.archived_at),
+    dbSaveItem: async (i) => { saved.push(i.id); },
+    dbSaveGoal: async (g) => { saved.push(`goal:${g.id}`); },
+    dbSavePerson: async () => {},
+    dbSaveProject: async () => {},
+    renderAll: () => {},
+    renderProjects: () => {},
+    renderGoals: () => {},
+    closePersonModal: () => {},
+    alert: (m) => { world.alerted = m; },
+    confirm: () => true,
+    prompt: () => { throw new Error('the prompt is not reached when setGoalDate is called directly'); },
+    currentPersonName: null,
+    syncReadyPromise: null,
+    db: null,
+    sbUser: null,
+    deleteStructuredRecord: async () => true,
+    save: () => {},
+    renderNav: () => {},
+    renderPeople: () => {},
+  };
+  const renameGoal = new Function(...deps, `${goalSource}\nreturn renameGoal;`)(...deps.map((k) => world[k]));
+
+  await renameGoal('g1', 'Ship v1');
+  assert.equal(world.state.goals[0].title, 'Ship v1');
+  assert.deepEqual(world.state.items.map((i) => i.goal), ['Ship v1', 'Ship v1', 'Walk the dog'],
+    'every item carrying the old title follows the rename, however it was capitalised');
+  assert.deepEqual(saved, ['goal:g1', 'i1', 'i2'], 'only the retagged items are rewritten');
+
+  const before = world.state.goals.map((g) => g.title);
+  await renameGoal('g1', 'walk the DOG');
+  assert.match(world.alerted || '', /already a goal/i);
+  assert.deepEqual(world.state.goals.map((g) => g.title), before, 'a refused rename changes nothing');
+  assert.equal(world.state.items[0].goal, 'Ship v1', 'and it must not retag anything');
+
+  await renameGoal('g1', '  ');
+  assert.match(world.alerted || '', /needs a title/i);
+  assert.equal(world.state.goals[0].title, 'Ship v1');
+});
+
+check('a goal target date survives a sync round trip', () => {
+  // goals has a title, description, status and metadata — and no target-date column, exactly like the
+  // people table has no phone. A field hung on the record is dropped by the server on the way out.
+  const src = [
+    betweenBlock('function normaliseStructuredRecord', 'function mergeStructuredStateRecord'),
+    betweenBlock('function buildStructuredRecordPayload', 'const VAPID_PUBLIC_KEY'),
+  ].join('\n');
+  const api = new Function('currentHouseholdId', 'sbUser',
+    `${src}\nreturn { buildStructuredRecordPayload, normaliseStructuredRecord };`)('house-1', 'user-1');
+
+  const payload = api.buildStructuredRecordPayload('goal',
+    { id: 'g1', title: 'Ship the beta', done: false, targetDate: '2026-12-31' });
+  assert.equal(payload.metadata.targetDate, '2026-12-31', 'the target date must be sent');
+  assert.equal(payload.metadata.done, false, 'the done flag that was already there is untouched');
+  assert.equal(payload.status, 'active');
+
+  // The row that comes back has it inside metadata, so it has to be lifted out again on read.
+  const row = { id: 'row-1', client_id: 'g1', title: 'Ship the beta', status: 'active', metadata: payload.metadata };
+  const back = api.normaliseStructuredRecord('goal', row);
+  assert.equal(back.targetDate, '2026-12-31', 'a target date must not vanish on the next load');
+  assert.equal(back.id, 'g1', 'the goal still keys off client_id');
+  // A goal saved before target dates existed has no metadata at all, and must not throw.
+  assert.equal(api.normaliseStructuredRecord('goal', { id: 'g2', title: 'Walk the dog' }).targetDate, undefined);
+  // And a person must not pick up a goal's fields.
+  assert.equal(api.normaliseStructuredRecord('person',
+    { id: 'p1', name: 'Ravi', metadata: { targetDate: '2026-12-31' } }).targetDate, undefined);
+});
+
+check('the depth fields are wired to real controls, and the tag reaches the server', () => {
+  // These are the only places a target date and a goal tag are set, so a rename of either id would
+  // save a blank value and look like the data had been lost rather than never read.
+  assert.match(html, /id="newGoalDate"[\s\S]{0,80}?type="date"/,
+    'the new-goal card needs an optional target date');
+  assert.match(html, /id="editGoal"/, 'the item dialog needs a Goal field');
+  assert.match(html, /id="panelGoal"/, 'the item panel should say which goal an item is on');
+
+  const add = between('async function addGoal', 'async function toggleGoal');
+  assert.match(add, /getElementById\("newGoalDate"\)/, 'addGoal must read the date it was given');
+  assert.match(add, /dateInput\.value = "";/, 'and clear it afterwards');
+  assert.match(add, /sameName\(g\.title, title\)/, 'two goals with one title would each claim the same items');
+  assert.ok(add.indexOf('sameName') < add.indexOf('state.goals.unshift'),
+    'the duplicate check must run before the goal is added');
+
+  const save = betweenBlock('async function saveEdit', 'async function toggleCurrentTaskArchive');
+  assert.match(save, /item\.goal = document\.getElementById\("editGoal"\)\.value;/,
+    'choosing a goal in the item dialog has to write it onto the item');
+  const open = between('function openEditModal', 'function closeEditModal');
+  assert.match(open, /goalSel\.value = item\.goal \|\| "";/, 'the dialog must show the item\'s current goal');
+  assert.match(open, /state\.goals\s*\n\s*\.map\(/, 'and offer the goals that exist');
+  assert.match(open, /escapeHtml\(g\.title\)/, 'a title is user text, so the option text is escaped');
+
+  // The tag has to travel with the item. items has real person and project columns but no goal one, so
+  // the goal rides the entry and task draft metadata, and the flat row must not grow a key the table
+  // does not have — PostgREST rejects the whole upsert over a single unknown column.
+  assert.match(between('function itemSnapshot', 'function itemToRow'), /goal: item\.goal \|\| "",/,
+    'the local snapshot carries the tag, which is what the offline queue and the backup hold');
+  assert.match(betweenBlock('function buildEntryDraftFromItem', 'function buildTaskDraftFromItem'),
+    /goal: item\.goal \|\| null[,;]/);
+  assert.match(betweenBlock('function buildTaskDraftFromItem', 'async function dbSaveItem'),
+    /goal: item\.goal \|\| null[,;]/);
+  assert.doesNotMatch(between('function itemToRow', 'function rowToItem'), /goal: item\.goal/,
+    'items has no goal column, so the flat row must not claim one');
+  assert.match(betweenBlock('function goalItems', 'function goalTargetLabel'), /!isArchived\(i\)/,
+    'an archived item must not count towards progress');
+
+  // The Date button builds a handler from the id and the stored date, so it has to use jsStr.
+  assert.match(between('function renderGoals', 'function logCompletion'),
+    /onclick="startSetGoalDate\(\$\{jsStr\(g\.id\)\}, \$\{jsStr\(g\.targetDate \|\| ""\)\}\)"/,
+    'the Date button must carry the id and the current date, both through jsStr');
+});
+
 
 check('no inline handler interpolates a value into a quoted JS string', () => {
   // The apostrophe bug that killed the project Delete buttons, then the goal controls, then the

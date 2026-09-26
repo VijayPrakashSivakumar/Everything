@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.12";
+const APP_BUILD = "2026-09-26.13";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -194,6 +194,7 @@ function itemSnapshot(item) {
     recurrenceKey: item.recurrenceKey || null,
     archivedAt: item.archivedAt || null,
     project: item.project || "",
+    goal: item.goal || "",
     created: item.created || Date.now(),
     done: Boolean(item.done),
     notified: Boolean(item.notified),
@@ -240,7 +241,11 @@ function normaliseStructuredRecord(kind, row) {
     ownerId: row.user_id || row.owner_id || null,
     created: row.created ?? (row.created_at ? Date.parse(row.created_at) : Date.now()),
   };
-  if (kind === "goal") normalized.done = row.done ?? row.status === "completed";
+  if (kind === "goal") {
+    normalized.done = row.done ?? row.status === "completed";
+    // The target date has no column of its own, so it rides in metadata and must be lifted back out.
+    if (!normalized.targetDate && row.metadata?.targetDate) normalized.targetDate = row.metadata.targetDate;
+  }
   if (kind === "person") {
     // Contact details are stored in metadata, so without this they would be dropped on the next load.
     ["phone", "email", "birthday"].forEach((field) => {
@@ -299,7 +304,8 @@ function buildStructuredRecordPayload(kind, record) {
         ? "active"
         : record.status || "active",
       client_id: record.id,
-      metadata: { ...metadata, done: Boolean(record.done) },
+      // goals has no target-date column either, so it rides in metadata as a person's details do.
+      metadata: { ...metadata, done: Boolean(record.done), targetDate: record.targetDate || "" },
     };
   }
   return {
@@ -2002,6 +2008,7 @@ function buildEntryDraftFromItem(item) {
       client_id: item.id,
       project: item.project || null,
       person: item.person || null,
+      goal: item.goal || null,
       recurrence: item.recurrence || null,
       priority: item.priority || null,
       scope: item.scope || "shared",
@@ -2039,6 +2046,8 @@ function buildTaskDraftFromItem(item, entryId) {
     recurrence_rule: item.recurrence || null,
     project_id: null,
     person_id: null,
+    // Items match a project, person or goal by name, and the name travels in metadata, so these uuid
+    // columns stay null rather than guessing at a backend id.
     goal_id: null,
     completed_at: item.completedAt ? new Date(item.completedAt).toISOString() : null,
     metadata: {
@@ -2052,6 +2061,7 @@ function buildTaskDraftFromItem(item, entryId) {
       captureFingerprint: item.captureFingerprint || null,
       checklist: normaliseChecklist(item.checklist),
       recurrenceKey: item.recurrenceKey || null,
+      goal: item.goal || null,
       archivedAt: item.archivedAt || null,
     },
     client_id: item.id,
@@ -3339,9 +3349,23 @@ async function addGoal() {
   const input = document.getElementById("newGoalInput");
   const title = input.value.trim();
   if (!title) return;
-  const g = { id: cid(), title, done: false, created: Date.now() };
+  // Same guard as addProject: items link to a goal by title, so two goals sharing one title would
+  // each claim the other's items and report the same progress twice.
+  if (state.goals.some((g) => sameName(g.title, title))) {
+    input.value = "";
+    return;
+  }
+  const dateInput = document.getElementById("newGoalDate");
+  const g = {
+    id: cid(),
+    title,
+    done: false,
+    created: Date.now(),
+    targetDate: dateInput ? dateInput.value.trim() : "",
+  };
   state.goals.unshift(g);
   input.value = "";
+  if (dateInput) dateInput.value = "";
   await dbSaveGoal(g);
 }
 async function toggleGoal(id) {
@@ -3351,9 +3375,8 @@ async function toggleGoal(id) {
     await dbSaveGoal(g);
   }
 }
-/* Goals are the one record nothing links to by name, so a rename has nothing to retag and no
-   uniqueness rule to break — unlike renameProject. It was still the missing half: addGoal() set the
-   title once and the row offered only a tick and a Delete, so a mistyped goal was permanent. */
+/* Goals are identified by their title now that items link to them by name, so a rename has to carry
+   those items along — exactly what renameProject does — and a title already in use is refused. */
 async function renameGoal(id, newTitle) {
   const goal = state.goals.find((g) => g.id === id);
   if (!goal) return;
@@ -3362,8 +3385,14 @@ async function renameGoal(id, newTitle) {
     alert("A goal needs a title.");
     return;
   }
+  if (state.goals.some((g) => g.id !== id && sameName(g.title, next))) {
+    alert(`"${next}" is already a goal.`);
+    return;
+  }
+  const previous = goal.title;
   goal.title = next;
   await dbSaveGoal(goal);
+  await persistRetagged(retagItems("goal", previous, next));
   renderGoals();
 }
 
@@ -3384,17 +3413,39 @@ function renderGoals() {
   const active = state.goals.filter((g) => !g.done);
   const done = state.goals.filter((g) => g.done);
 
+  const renderLinked = (i) => `<div class="task-row" onclick="openPanel(${jsStr(i.id)})"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`;
+
   const renderRow = (g) => {
     const days = Math.floor((Date.now() - g.created) / 86400000);
+    // Items link to a goal by title, exactly as they link to a project by name, so progress is
+    // computed from them rather than stored and left to drift.
+    const items = goalItems(g.title);
+    const finished = items.filter((i) => i.done).length;
+    const total = items.length;
+    const pct = total ? Math.round((finished / total) * 100) : 0;
+    const target = goalTargetLabel(g);
+    const when = g.done
+      ? "Completed"
+      : days === 0
+        ? "Started today"
+        : `In progress · ${days} day${days !== 1 ? "s" : ""}`;
     return `<div class="task-row">
       <div class="checkbox ${g.done ? "checked" : ""}" onclick="toggleGoal(${jsStr(g.id)})">${g.done ? icon("check") : ""}</div>
       <div class="task-meta">
         <div class="task-title" style="${g.done ? "text-decoration:line-through;color:var(--muted);" : ""}">${escapeHtml(g.title)}</div>
-        <div class="task-sub">${g.done ? "Completed" : days === 0 ? "Started today" : `In progress · ${days} day${days !== 1 ? "s" : ""}`}</div>
+        <div class="task-sub">${when}${target ? ` · ${escapeHtml(target)}` : ""}</div>
       </div>
       <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startRenameGoal(${jsStr(g.id)}, ${jsStr(g.title)})">Rename</button>
+      <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startSetGoalDate(${jsStr(g.id)}, ${jsStr(g.targetDate || "")})">Date</button>
       <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteGoal(${jsStr(g.id)})">Delete</button>
-    </div>`;
+    </div>
+    ${
+      total
+        ? `<div style="background:var(--bg);border-radius:6px;height:6px;margin:8px 0 6px;overflow:hidden;">
+        <div style="background:var(--green-fg);height:100%;width:${pct}%;transition:width .3s;"></div>
+      </div><p style="font-size:12px;color:var(--muted);margin:0 0 8px;">${pct}% complete (${finished}/${total})</p>${items.map(renderLinked).join("")}`
+        : '<p style="font-size:12px;color:var(--muted);margin:0 0 8px;">No items linked yet — set a Goal on an item to track its progress here.</p>'
+    }`;
   };
 
   let html = "";
@@ -3404,6 +3455,50 @@ function renderGoals() {
       `<div class="card-head" style="margin-top:${active.length ? "16px" : "0"};"><h3 style="font-size:13px;color:var(--muted);">Completed (${done.length})</h3></div>` +
       done.map(renderRow).join("");
   el.innerHTML = html;
+}
+
+/* The items linked to a goal, matched by title the way renderProjects matches by name. */
+function goalItems(title) {
+  return state.items.filter((i) => sameName(i.goal, title) && !isArchived(i));
+}
+
+/* Days run from local midnight, so "Due today" does not become "Overdue by 1 day" after lunch. */
+function goalTargetLabel(g) {
+  if (!g || !g.targetDate) return "";
+  const target = Date.parse(`${g.targetDate}T00:00:00`);
+  if (Number.isNaN(target)) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((target - today.getTime()) / 86400000);
+  if (days < 0) return `Overdue by ${-days} day${days === -1 ? "" : "s"}`;
+  if (days === 0) return "Due today";
+  if (days === 1) return "Due tomorrow";
+  return `Due in ${days} days`;
+}
+
+/* A target date is typed as YYYY-MM-DD; blank clears it. The goals table has no column for one, so it
+   rides inside metadata — see buildStructuredRecordPayload. The day is compared back because an
+   out-of-range one like 2026-02-31 is silently rolled forward by the Date parser. */
+async function setGoalDate(id, value) {
+  const goal = state.goals.find((g) => g.id === id);
+  if (!goal) return;
+  const raw = String(value == null ? "" : value).trim();
+  const parsed = raw ? new Date(`${raw}T00:00:00`) : null;
+  const usable = !raw ||
+    (/^\d{4}-\d{2}-\d{2}$/.test(raw) && !Number.isNaN(parsed.getTime()) && parsed.getDate() === Number(raw.slice(8)));
+  if (!usable) {
+    alert("Use a date like 2026-12-31, or leave it blank to clear it.");
+    return;
+  }
+  goal.targetDate = raw;
+  await dbSaveGoal(goal);
+  renderGoals();
+}
+
+function startSetGoalDate(id, current) {
+  const typed = prompt("Target date for this goal (YYYY-MM-DD, blank to clear).", current || "");
+  if (typed === null) return;
+  setGoalDate(id, typed);
 }
 
 /* Items only store a `done` flag, so we keep a small local log of *when* something
@@ -3826,6 +3921,7 @@ function openPanel(id) {
   document.getElementById("panelDue").textContent = item.due || "—";
   document.getElementById("panelPerson").textContent = item.person || "—";
   document.getElementById("panelProject").textContent = item.project || "—";
+  document.getElementById("panelGoal").textContent = item.goal || "—";
   document.getElementById("panelPriority").textContent = item.priority
     ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1)
     : "—";
@@ -3917,13 +4013,22 @@ function renderRelatedChips(item) {
     });
   }
 
+  if (item.goal) {
+    chips.push({
+      label: `${icon("target")} ${escapeHtml(item.goal)}`,
+      tag: "Goal",
+      onclick: `closePanel();switchView('goals')`,
+    });
+  }
+
   const related = state.items
     .filter(
       (i) =>
         i.id !== item.id &&
         !isArchived(i) &&
         ((item.person && sameName(i.person, item.person)) ||
-          (item.project && sameName(i.project, item.project))),
+          (item.project && sameName(i.project, item.project)) ||
+          (item.goal && sameName(i.goal, item.goal))),
     )
     .slice(0, 5);
 
@@ -3985,6 +4090,16 @@ function openEditModal() {
       )
       .join("");
   projSel.value = item.project || "";
+  const goalSel = document.getElementById("editGoal");
+  goalSel.innerHTML =
+    '<option value="">No goal</option>' +
+    state.goals
+      .map(
+        (g) =>
+          `<option value="${escapeHtml(g.title)}">${escapeHtml(g.title)}</option>`,
+      )
+      .join("");
+  goalSel.value = item.goal || "";
   document.getElementById("editModal").classList.add("open");
   lockPageScroll(true);
 }
@@ -4006,6 +4121,7 @@ async function saveEdit() {
   item.priority = document.getElementById("editPriority").value;
   item.person = document.getElementById("editPerson").value.trim();
   item.project = document.getElementById("editProject").value;
+  item.goal = document.getElementById("editGoal").value;
 
   const editDueVal = document.getElementById("editDueDate").value;
   const newDueDate = editDueVal ? new Date(editDueVal).toISOString() : "";
@@ -5836,6 +5952,7 @@ function askContextPayload(items) {
       sub: item.sub || "",
       person: item.person || "",
       project: item.project || "",
+      goal: item.goal || "",
       status: taskStatusLabel(status),
       priority: item.priority || "",
       recurrence: item.recurrence && item.recurrence !== "none" ? item.recurrence : "",

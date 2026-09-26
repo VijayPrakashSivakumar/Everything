@@ -4,13 +4,27 @@
 //   node projects-probe.mjs
 import { chromium } from 'playwright';
 import OS from 'os';
+import fs from 'fs';
 
 const URL = process.env.APP_URL || 'https://everything-app-zeta.vercel.app';
 
 // A throwaway profile, so this cannot see the saved session. `db` and `sbUser` stay null and the app
 // runs local-only, with the backend hard-blocked below as a second guarantee.
-const context = await chromium.launchPersistentContext(OS.tmpdir() + '\\everything-probe', {
-  headless: false,
+//
+// The profile is wiped first: it keeps the service worker, and a cached shell would let this probe
+// verify the *previous* deploy while reporting on the current one. That is the one way this file can
+// lie, so it starts clean every run.
+const PROFILE = OS.tmpdir() + '\\everything-probe';
+try {
+  fs.rmSync(PROFILE, { recursive: true, force: true });
+} catch (e) {
+  console.log(`  ! could not clear the probe profile, results may come from a cached shell: ${e.message}`);
+}
+const context = await chromium.launchPersistentContext(PROFILE, {
+  // Headful needs an interactive desktop session, and where one is missing a headful Chromium is
+  // denied network access — which surfaces as ERR_NETWORK_ACCESS_DENIED and reads exactly like the
+  // deployed app being unreachable. Set PROBE_HEADFUL=1 to watch a run happen.
+  headless: process.env.PROBE_HEADFUL !== '1',
   viewport: { width: 1400, height: 900 },
 });
 const page = context.pages()[0] || (await context.newPage());
@@ -38,6 +52,8 @@ if (!booted) {
   process.exit(2);
 }
 await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
+// State the build under test, so a run can never be read as being about some other deploy.
+console.log(`  build under test: ${await page.evaluate(() => document.querySelector('meta[name="everything-build"]')?.content ?? 'unknown')}`);
 await page.waitForTimeout(500);
 
 const say = (name, got, want) =>
@@ -300,8 +316,8 @@ say('the sync payload carries the details in metadata',
   JSON.stringify(['+91 90000 00000', 'ravi@personal.example', '1994-04-02']));
 // The row that comes back has them inside metadata, so they have to be lifted out again on read.
 say('a row read back from the server still has the phone number',
-  await page.evaluate((payload) => window.normaliseStructuredRecord('person',
-    { id: 'row-1', client_id: 'p1', name: 'Ravi', notes: '', metadata: payload }).phone, personPayload),
+  await page.evaluate((metadata) => window.normaliseStructuredRecord('person',
+    { id: 'row-1', client_id: 'p1', name: 'Ravi', notes: '', metadata }).phone, personPayload.metadata),
   '+91 90000 00000');
 
 // The merge itself, driven through the real button.
@@ -327,6 +343,121 @@ say('the notes from both records are kept',
   'Met at the climbing gym\n\nPrefers mornings');
 say('the list shows one person instead of two',
   await page.locator('#peopleList .task-row').count(), 1);
+
+// ---------- 8. goals carry a target date, and report the work linked to them ----------
+console.log('\nGOAL DEPTH');
+await page.evaluate(() => {
+  window.confirm = () => true;
+  window.__alerts = [];
+  window.alert = (m) => window.__alerts.push(String(m));
+  state.items = [];
+  state.goals = [];
+  switchView('goals');
+});
+const due = await page.evaluate(() => {
+  const d = new Date();
+  d.setDate(d.getDate() + 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+});
+// Created through the real card, target date and all.
+await page.evaluate((target) => {
+  document.getElementById('newGoalInput').value = 'Ship the beta';
+  document.getElementById('newGoalDate').value = target;
+  return window.addGoal();
+}, due);
+await page.evaluate(() => {
+  document.getElementById('newGoalInput').value = 'Learn to sail';
+  return window.addGoal();
+});
+say('a goal takes the target date from the card', await page.evaluate(() => state.goals[0].targetDate), due);
+say('the date field is cleared, so the next goal does not inherit it',
+  await page.evaluate(() => document.getElementById('newGoalDate').value), '');
+say('the goal says how long is left',
+  (await page.locator('#goalsList').innerText()).includes('Due in 10 days'), true);
+
+await page.evaluate(() => {
+  state.items = [
+    { id: 'g-i1', kind: 'task', title: 'Write the spec', goal: 'ship the beta', done: true, created: Date.now() },
+    { id: 'g-i2', kind: 'task', title: 'Ship it', goal: 'Ship the beta', done: false, created: Date.now() },
+    { id: 'g-i3', kind: 'task', title: 'Unlinked work', goal: 'Walk the dog', created: Date.now() },
+  ];
+  renderGoals();
+});
+const goalText = await page.locator('#goalsList').innerText();
+say('progress is read off the items linked to the goal', goalText.includes('50% complete (1/2)'), true);
+say('the linked items are listed under the goal',
+  [goalText.includes('Write the spec'), goalText.includes('Ship it')].join(), 'true,true');
+say("an item on another goal is not counted here", goalText.includes('Unlinked work'), false);
+say('a goal with nothing linked says so instead of showing an empty bar',
+  goalText.includes('No items linked yet'), true);
+
+// The goal is chosen on the item, and read back on the item's own panel.
+say('the item panel says which goal an item is on', await page.evaluate(() => {
+  openPanel('g-i2');
+  return document.getElementById('panelGoal').textContent;
+}), 'Ship the beta');
+await page.evaluate(() => window.openEditModal());
+say('the item dialog offers the goals that exist', JSON.stringify(await page.evaluate(() =>
+  [...document.getElementById('editGoal').options].map((o) => o.value))),
+  JSON.stringify(['', 'Learn to sail', 'Ship the beta']));
+await page.evaluate(() => {
+  document.getElementById('editGoal').value = 'Learn to sail';
+  return window.saveEdit();
+});
+say('choosing a goal in the dialog writes it onto the item', await page.evaluate(() =>
+  (state.items.find((i) => i.id === 'g-i2') || {}).goal), 'Learn to sail');
+
+// Two goals with one title would each claim the same items and report the same progress twice.
+await page.evaluate(() => {
+  document.getElementById('newGoalInput').value = 'SHIP the beta';
+  return window.addGoal();
+});
+say('the same title cannot become a second goal', JSON.stringify(await page.evaluate(() =>
+  state.goals.map((g) => g.title))), JSON.stringify(['Learn to sail', 'Ship the beta']));
+
+const betaId = await page.evaluate(() => state.goals.find((g) => g.title === 'Ship the beta').id);
+await page.evaluate((id) => window.renameGoal(id, 'Ship the beta properly'), betaId);
+say('renaming a goal carries the items linked to it', JSON.stringify(await page.evaluate(() =>
+  state.items.map((i) => i.goal))), JSON.stringify(['Ship the beta properly', 'Learn to sail', 'Walk the dog']));
+
+await page.evaluate((id) => window.setGoalDate(id, '31/12/2026'), betaId);
+say('a target date that is not YYYY-MM-DD is refused', await page.evaluate((id) =>
+  state.goals.find((g) => g.id === id).targetDate, betaId), due);
+await page.evaluate((id) => window.setGoalDate(id, '2026-02-31'), betaId);
+say('a day that does not exist is refused rather than rolled into March', await page.evaluate((id) =>
+  state.goals.find((g) => g.id === id).targetDate, betaId), due);
+await page.evaluate((id) => window.setGoalDate(id, ''), betaId);
+say('a blank date clears it', await page.evaluate((id) =>
+  state.goals.find((g) => g.id === id).targetDate, betaId), '');
+say('an unreadable date is explained rather than swallowed', (await page.evaluate(() => window.__alerts.length)) >= 2, true);
+await page.evaluate((id, target) => window.setGoalDate(id, target), betaId, due);
+say('setting a date puts it back on screen',
+  (await page.locator('#goalsList').innerText()).includes('Due in 10 days'), true);
+
+// The goals table has no target-date column, so it rides in the metadata jsonb column.
+const goalPayload = await page.evaluate((id) =>
+  window.buildStructuredRecordPayload('goal', state.goals.find((g) => g.id === id)), betaId);
+say('the sync payload carries the target date in metadata', goalPayload.metadata.targetDate, due);
+say('a goal read back from the server still has its target date', await page.evaluate((md) =>
+  window.normaliseStructuredRecord('goal',
+    { id: 'row-1', client_id: 'g1', title: 'Ship the beta properly', status: 'active', metadata: md }).targetDate,
+  goalPayload.metadata), due);
+
+// The Date button builds a handler from stored text, which is where a quote would break it.
+await page.evaluate((id) => window.setGoalDate(id, '2026-12-31'), betaId);
+const dateOnclick = await page.locator('#goalsList .btn').filter({ hasText: 'Date' }).first().getAttribute('onclick');
+console.log(`  onclick="${dateOnclick}"`);
+say('a stored date still produces a handler the parser accepts', await page.evaluate((src) => {
+  try { new Function(`return (${src});`); return 'parses'; } catch (e) { return `${e.constructor.name}: ${e.message}`; }
+}, dateOnclick), 'parses');
+say('the Date button hands the setter the id and the stored date', JSON.stringify(await page.evaluate(() => {
+  const orig = window.startSetGoalDate;
+  window.__args = null;
+  window.startSetGoalDate = (a, b) => { window.__args = [a, b]; };
+  [...document.querySelectorAll('#goalsList .btn')].find((b) => b.textContent.trim() === 'Date').click();
+  window.startSetGoalDate = orig;
+  return window.__args;
+})), JSON.stringify([betaId, '2026-12-31']));
 
 console.log(`\npage errors: ${errors.length}`);
 errors.forEach((e) => console.log(`  ! ${e.slice(0, 140)}`));

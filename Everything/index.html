@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-26.12" />
+    <meta name="everything-build" content="2026-09-26.13" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -746,6 +746,12 @@
                 placeholder="What are you working toward?…"
                 onkeydown="if (event.key === 'Enter') addGoal();"
               />
+              <input
+                class="capture-input"
+                id="newGoalDate"
+                type="date"
+                title="Optional target date"
+              />
               <button class="btn primary" onclick="addGoal()">
                 + Add goal
               </button>
@@ -1391,6 +1397,9 @@
           ><span id="panelProject">—</span>
         </div>
         <div class="field-row">
+          <span class="field-label">Goal</span><span id="panelGoal">—</span>
+        </div>
+        <div class="field-row">
           <span class="field-label">Priority</span
           ><span id="panelPriority">—</span>
         </div>
@@ -1951,6 +1960,26 @@
 
           <select
             id="editProject"
+            style="
+              width: 100%;
+              padding: 9px;
+              border-radius: 8px;
+              border: 1px solid var(--border);
+              background: var(--bg);
+              color: var(--text);
+              margin-top: 4px;
+            "
+          ></select>
+        </div>
+
+        <!-- Goal -->
+        <div id="editGoalContainer" style="margin-top: 10px">
+          <label style="font-size: 12.5px; color: var(--muted)">
+            Goal
+          </label>
+
+          <select
+            id="editGoal"
             style="
               width: 100%;
               padding: 9px;

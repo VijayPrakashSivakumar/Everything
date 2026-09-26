@@ -23,11 +23,16 @@ inbox, calendar, projects, goals, and AI-assisted search.
   `/api/ask` (any supported model provider) and falls back to keyword matching offline.
 - **Quick reschedule** — open any item and use *Reschedule* (Tomorrow 9 AM, +1 day,
   +1 week, clear) instead of editing the date by hand.
-- **Repair the name-based links** — items link to a person or project by *name*, so a typo used to
-  strand them with no way back. People and projects can be **renamed** (every linked item follows),
-  a person can be **removed** (their tag is cleared and the items are kept), and goals can be
-  renamed too. Every control built from stored text is escaped so an apostrophe in a name cannot
-  kill the button.
+- **Repair the name-based links** — items link to a person, project or goal by *name*, so a typo used
+  to strand them with no way back. People, projects and goals can be **renamed** (every linked item
+  follows), a person can be **removed** (their tag is cleared and the items are kept), and a goal
+  refuses a title that is already in use. Every control built from stored text is escaped so an
+  apostrophe in a name cannot kill the button.
+- **Deeper goals** — a goal carries an optional **target date** (set on the new-goal card or from a
+  *Date* button; shown as *Due in 10 days* or *Overdue by 3 days*), items link to a goal by **title**,
+  and the goal reports the **progress** of the work attached to it — a done/total bar and the linked
+  items themselves. Archived items are left out of the count, and renaming a goal carries its items
+  along, because the title is the identity.
 - **Fuller people** — each person holds notes, phone, email and birthday, and two records for one
   human (*Ravi* and *Ravi Kumar*) can be **merged**: every linked item moves onto the survivor,
   notes from both sides are kept and the duplicate record is deleted.
@@ -309,6 +314,18 @@ name and notes, so `buildStructuredRecordPayload()` puts the details inside the 
 the structured-record routes already accept, and `normaliseStructuredRecord()` lifts them back out on
 read. A field hung directly on the record would be dropped by the server on the way out and gone by the
 next load, with no error to show for it.
+
+A goal's **target date** works the same way. `goals` has a title, description, status and metadata, but
+no date column, so the date travels as `metadata.targetDate` and is lifted back out on read. It is typed
+as `YYYY-MM-DD`, and a day that does not exist — 2026-02-31 — is refused rather than silently rolled
+into March by the `Date` parser.
+
+The *item* side of a goal link stays on the item: `itemSnapshot()` (what the offline queue and the JSON
+backup hold) and the `metadata` of the entry and task drafts, which is where the project and person tags
+already travel. It is deliberately **not** added to the flat `items` row — that table has real `person`
+and `project` columns but no `goal` one, and PostgREST rejects the whole upsert over a single unknown
+column. As with the project and person tags, the app restores an item's links from its own local store
+rather than re-deriving them from the `items` table.
 
 The household API is used first during sign-in to find or create the current workspace.
 The browser still falls back to direct Supabase household access when the API is not
