@@ -221,8 +221,11 @@ Ask is only as good as the context it is given, so retrieval matters more than t
   clock may be UTC) and every item line states its status, project, due date and checklist
   progress, so "what is due today" and "what am I waiting on" are answerable at all.
 
-A stale answer can never overwrite a newer one: each request takes a ticket, and a reply whose
-ticket is out of date — or whose slot the dropdown has since replaced — is discarded.
+A stale answer can never overwrite a newer one. Each call takes a ticket and only the
+newest wins — but a *re-render* is not a newer question, so it must not discard an answer that is
+already on screen. `askAI()` therefore re-resolves its slot by id on every write instead of
+holding the original node, which the dropdown detaches on each keystroke. Getting this wrong left
+the header search sitting on "Thinking…" forever.
 
 ## Back gesture on mobile
 A history entry is pushed while a dismissible layer is open (Capture sheet, Ask overlay, item

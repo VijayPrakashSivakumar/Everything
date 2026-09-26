@@ -321,10 +321,29 @@ check('the AI prompt carries the date and the workflow state', () => {
 
 check('a slow answer cannot overwrite a newer one', () => {
   assert.match(js, /let askRequestSeq = 0;/, 'askRequestSeq missing');
-  assert.match(js, /const isStale = \(\) =>/, 'the stale-response guard is missing');
+  assert.match(js, /const isSuperseded = \(\) =>/, 'the superseded-response guard is missing');
   const ask = js.slice(js.indexOf('async function askAI'));
-  const guarded = (ask.match(/if \(isStale\(\)\) return;/g) || []).length;
-  assert.ok(guarded >= 3, `every answer write must be guarded, found ${guarded}`);
+  const writes = (ask.match(/\bshow\(`/g) || []).length;
+  assert.ok(writes >= 4, `every answer write must go through show(), found ${writes}`);
+});
+
+check('a re-rendered dropdown cannot discard the answer already on screen', () => {
+  // Regression: runSearch() rebuilds the dropdown markup on every keystroke, which detaches the
+  // #searchAskSlot node askAI had captured. The old guard tested `slot.isConnected` and threw the
+  // answer away, so the dropdown sat on "Thinking…" forever — the real cause of a search that
+  // "does not work". The slot must now be re-resolved by id, and only a *newer* call may discard.
+  const ask = js.slice(js.indexOf('async function askAI'), js.indexOf('function readAskError'));
+  assert.doesNotMatch(ask, /isConnected/, 'a detached node must not be treated as a stale answer');
+  assert.doesNotMatch(ask, /isStale/, 'the old disconnect-based guard must be gone');
+  assert.match(ask, /const mountId = opts\.mount \? opts\.mount\.id : "aiAnswerSlot"/,
+    'the mount must be identified so it can be re-resolved');
+  assert.match(ask, /const slot = \(\) => \(mountId \? document\.getElementById\(mountId\) : null\)/,
+    'the slot must be looked up live rather than captured once');
+  assert.match(ask, /const isSuperseded = \(\) => ticket !== askRequestSeq;/,
+    'only a newer call may discard an answer, not a re-render');
+  // The dropdown must also carry a finished answer across a re-render.
+  assert.match(js, /const previousAnswer = document\.getElementById\("searchAskSlot"\)\?\.innerHTML/,
+    'a finished answer must survive the hit list being re-rendered');
 });
 
 check('multi-line AI answers keep their line breaks', () => {

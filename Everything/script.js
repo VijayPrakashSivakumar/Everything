@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-25.8";
+const APP_BUILD = "2026-09-25.9";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -5452,7 +5452,13 @@ function runSearch(q) {
   }
 
   const matches = searchMatches(q);
-  // The AI answer is appended to its own slot so re-rendering it never disturbs the hit list.
+  // The AI answer lives in its own slot so re-rendering the hit list never disturbs it.
+  //
+  // That slot must be REUSED, not recreated. Replacing the dropdown's innerHTML on every
+  // keystroke would detach the node askAI captured, and its answer would be discarded — leaving
+  // the dropdown stuck on "Thinking…" forever. The existing answer is also carried over so a
+  // half-typed word does not blank a finished answer.
+  const previousAnswer = document.getElementById("searchAskSlot")?.innerHTML || "";
   dd.innerHTML =
     (matches.length
       ? matches
@@ -5463,7 +5469,7 @@ function runSearch(q) {
           )
           .join("")
       : '<p class="empty">No matches found.</p>') +
-    '<div class="search-ask" id="searchAskSlot"></div>';
+    `<div class="search-ask" id="searchAskSlot">${previousAnswer}</div>`;
 
   // Ask is a debounced AI call, so it must not run on every keystroke here.
   clearTimeout(searchDropDebounce);
@@ -5577,12 +5583,27 @@ let askRequestSeq = 0;
 async function askAI(q, opts = {}) {
   const ticket = ++askRequestSeq;
   const extra = opts.extra || "";
-  const slot = opts.mount || document.getElementById("aiAnswerSlot");
-  if (!slot) return;
-  slot.innerHTML = `<div class="ask-answer">Thinking…</div>`;
-  // The dropdown re-renders (and therefore replaces #searchAskSlot) on every keystroke, so the
-  // captured node can be detached by the time the answer arrives. A stale write is discarded.
-  const isStale = () => ticket !== askRequestSeq || !slot.isConnected;
+  const mountId = opts.mount ? opts.mount.id : "aiAnswerSlot";
+
+  /* Resolves the slot live rather than holding on to one node.
+     The header dropdown rebuilds its own markup on every keystroke, so a node captured at the
+     start of the call is detached by the time the answer arrives; writing to it would either do
+     nothing or, worse, be dropped by a naive "is it still connected?" check — which is what left
+     the dropdown stuck on "Thinking…". Looking the element up again by id always finds the node
+     the user is actually looking at. */
+  const slot = () => (mountId ? document.getElementById(mountId) : null);
+  const first = slot();
+  if (!first) return;
+  first.innerHTML = `<div class="ask-answer">Thinking…</div>`;
+
+  // Only a *newer* call supersedes this one. A re-rendered dropdown is not a newer question, so
+  // it must not throw away an answer the user is waiting for.
+  const isSuperseded = () => ticket !== askRequestSeq;
+  const show = (html) => {
+    if (isSuperseded()) return;
+    const target = slot();
+    if (target) target.innerHTML = html;
+  };
 
   const contextItems = searchMatches(q);
   const contextPool = askContextPool(q);
@@ -5620,7 +5641,6 @@ async function askAI(q, opts = {}) {
   }
 
   const renderFallback = (note) => {
-    if (isStale()) return;
     const body = contextItems.length
       ? `Based on what you've captured — ${escapeHtml(
           contextItems
@@ -5634,7 +5654,7 @@ async function askAI(q, opts = {}) {
       : "";
     // The dropdown already lists the matching items, so sources there would just repeat them.
     const sources = extra === "search-ask" ? "" : buildSourcesHtml();
-    slot.innerHTML = `<div class="ask-answer">${body}${hint}${sources}</div>`;
+    show(`<div class="ask-answer">${body}${hint}${sources}</div>`);
   };
 
   if (sample) {
@@ -5642,12 +5662,10 @@ async function askAI(q, opts = {}) {
       const result = await sample(buildAskPrompt(q, contextPool, today), {
         modelTier: "quick",
         onText: ({ text }) => {
-          if (isStale()) return;
-          slot.innerHTML = `<div class="ask-answer">${escapeHtml(text)}</div>`;
+          show(`<div class="ask-answer">${escapeHtml(text)}</div>`);
         },
       });
-      if (isStale()) return;
-      slot.innerHTML = `<div class="ask-answer">${escapeHtml(result.text)}${buildSourcesHtml()}</div>`;
+      show(`<div class="ask-answer">${escapeHtml(result.text)}${buildSourcesHtml()}</div>`);
       return;
     } catch (err) {
       /* fall through to API below */
@@ -5675,8 +5693,7 @@ async function askAI(q, opts = {}) {
     if (!res.ok) return renderFallback(await readAskError(res));
     const data = await res.json();
     if (data.answer) {
-      if (isStale()) return;
-      slot.innerHTML = `<div class="ask-answer">${escapeHtml(data.answer)}${buildSourcesHtml()}</div>`;
+      show(`<div class="ask-answer">${escapeHtml(data.answer)}${buildSourcesHtml()}</div>`);
       return;
     }
     renderFallback();
