@@ -151,6 +151,60 @@ say('removing a person untags their items so they do not reappear',
 say('the people list no longer shows them',
   (await page.locator('#peopleList').innerText()).includes('Ravi Kumar'), false);
 
+// ---------- 5. goals can be renamed, and their controls survive any id ----------
+console.log('\nGOALS');
+await page.evaluate(() => {
+  window.confirm = () => true;
+  window.alert = () => {};
+  state.goals = [];
+  return window.switchView('goals');
+});
+await page.evaluate(() => {
+  document.getElementById('newGoalInput').value = 'Ship the beta';
+  return window.addGoal();
+});
+say('a goal is added through the real input',
+  await page.evaluate(() => state.goals[0].title), 'Ship the beta');
+
+await page.evaluate(() => window.renameGoal(state.goals[0].id, 'Ship the beta properly'));
+say('renaming a goal writes the new title',
+  await page.evaluate(() => state.goals[0].title), 'Ship the beta properly');
+say('the renamed goal is on screen',
+  (await page.locator('#goalsList').innerText()).includes('Ship the beta properly'), true);
+say('a blank rename is refused rather than blanking the goal',
+  await page.evaluate(() => window.renameGoal(state.goals[0].id, '   ').then(() => state.goals[0].title)),
+  'Ship the beta properly');
+
+// A hand-edited backup can carry any id. A quote in one used to render a handler the parser
+// rejects, which left that goal with a dead tick and a dead Delete.
+await page.evaluate(() => {
+  state.goals = [{ id: "o'brien", title: 'From a backup', done: false, created: Date.now() }];
+  renderGoals();
+});
+const goalOnclick = await page.locator('#goalsList .checkbox').first().getAttribute('onclick');
+console.log(`  onclick="${goalOnclick}"`);
+say('a quoted goal id still produces a valid handler', await page.evaluate((src) => {
+  try { new Function('return (' + src + ');'); return 'parses'; } catch (e) { return e.constructor.name + ': ' + e.message; }
+}, goalOnclick), 'parses');
+say('clicking the tick reaches toggleGoal() with the real id', await page.evaluate(() => {
+  const orig = window.toggleGoal;
+  window.__goalId = null;
+  window.toggleGoal = (a) => { window.__goalId = a; };
+  document.querySelector('#goalsList .checkbox').click();
+  window.toggleGoal = orig;
+  return window.__goalId;
+}), "o'brien");
+const goalRenameOnclick = await page.locator('#goalsList .btn:not(.danger)').first().getAttribute('onclick');
+console.log(`  onclick="${goalRenameOnclick}"`);
+say('the Rename button carries both the id and the current title', JSON.stringify(await page.evaluate(() => {
+  const orig = window.startRenameGoal;
+  window.__args = null;
+  window.startRenameGoal = (a, b) => { window.__args = [a, b]; };
+  document.querySelector('#goalsList .btn:not(.danger)').click();
+  window.startRenameGoal = orig;
+  return window.__args;
+})), JSON.stringify(["o'brien", 'From a backup']));
+
 console.log(`\npage errors: ${errors.length}`);
 errors.forEach((e) => console.log(`  ! ${e.slice(0, 140)}`));
 await context.close();

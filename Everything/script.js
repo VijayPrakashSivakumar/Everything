@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.9";
+const APP_BUILD = "2026-09-26.10";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -3251,6 +3251,28 @@ async function toggleGoal(id) {
     await dbSaveGoal(g);
   }
 }
+/* Goals are the one record nothing links to by name, so a rename has nothing to retag and no
+   uniqueness rule to break — unlike renameProject. It was still the missing half: addGoal() set the
+   title once and the row offered only a tick and a Delete, so a mistyped goal was permanent. */
+async function renameGoal(id, newTitle) {
+  const goal = state.goals.find((g) => g.id === id);
+  if (!goal) return;
+  const next = String(newTitle == null ? "" : newTitle).trim();
+  if (!next) {
+    alert("A goal needs a title.");
+    return;
+  }
+  goal.title = next;
+  await dbSaveGoal(goal);
+  renderGoals();
+}
+
+function startRenameGoal(id, title) {
+  const typed = prompt("Rename this goal.", title);
+  if (typed === null) return;
+  renameGoal(id, typed);
+}
+
 function renderGoals() {
   const el = document.getElementById("goalsList");
   if (!el) return;
@@ -3265,12 +3287,13 @@ function renderGoals() {
   const renderRow = (g) => {
     const days = Math.floor((Date.now() - g.created) / 86400000);
     return `<div class="task-row">
-      <div class="checkbox ${g.done ? "checked" : ""}" onclick="toggleGoal('${g.id}')">${g.done ? icon("check") : ""}</div>
+      <div class="checkbox ${g.done ? "checked" : ""}" onclick="toggleGoal(${jsStr(g.id)})">${g.done ? icon("check") : ""}</div>
       <div class="task-meta">
         <div class="task-title" style="${g.done ? "text-decoration:line-through;color:var(--muted);" : ""}">${escapeHtml(g.title)}</div>
         <div class="task-sub">${g.done ? "Completed" : days === 0 ? "Started today" : `In progress · ${days} day${days !== 1 ? "s" : ""}`}</div>
       </div>
-      <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteGoal('${g.id}')">Delete</button>
+      <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startRenameGoal(${jsStr(g.id)}, ${jsStr(g.title)})">Rename</button>
+      <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteGoal(${jsStr(g.id)})">Delete</button>
     </div>`;
   };
 

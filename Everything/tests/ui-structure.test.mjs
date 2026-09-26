@@ -614,6 +614,47 @@ check('removing a person covers every storage backend and has a button', () => {
   assert.match(js, /onclick="startRenameProject\(/, 'each project card needs a Rename button');
 });
 
+check('a goal can be renamed and its controls survive any id', () => {
+  // Goals were the last entity with a create but no repair path: addGoal() set the title once and
+  // renderGoals() offered only a tick and a Delete, so a mistyped goal was permanent — the same dead
+  // end that the people and projects work had just closed.
+  assert.match(js, /onclick="startRenameGoal\(/, 'each goal row needs a Rename button');
+  const rename = between('async function renameGoal', 'function renderGoals');
+  assert.match(rename, /goal\.title = next;/, 'the rename must actually write the title');
+  assert.match(rename, /await dbSaveGoal\(goal\);/, 'and persist it through the shared saver');
+
+  // The tick and Delete interpolated the id straight into a quoted string. Ids are generated today,
+  // but importBackup accepts whatever id a hand-edited backup carries, and a quote in one produced a
+  // handler the parser rejects — leaving that goal with no working control at all.
+  const goals = between('function renderGoals', 'function logCompletion');
+  assert.doesNotMatch(goals, /onclick="\w+\('\$\{g\.id\}'\)"/,
+    'goal handlers must not interpolate the id into a quoted string');
+  assert.match(goals, /onclick="toggleGoal\(\$\{jsStr\(g\.id\)\}\)"/, 'the tick must use jsStr');
+  assert.match(goals, /onclick="deleteGoal\(\$\{jsStr\(g\.id\)\}\)"/, 'Delete must use jsStr');
+  assert.match(goals, /onclick="startRenameGoal\(\$\{jsStr\(g\.id\)\}, \$\{jsStr\(g\.title\)\}\)"/,
+    'Rename needs both the id and the current title');
+
+  // Behaviour: build the attribute the way renderGoals does, decode it the way a browser does, then
+  // check the handler actually parses and hands the exact id through.
+  const start = js.indexOf('function escapeHtml(');
+  const src = js.slice(start, js.indexOf('const jsStr'));
+  const jsStr = new Function(`${src}\nreturn (v) => escapeHtml(JSON.stringify(String(v ?? "")));`)();
+  const decode = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g,
+    (_, n) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[n]);
+
+  for (const id of ["o'brien", 'i_abc', 'x"y', 'back\\slash']) {
+    const attr = `toggleGoal(${jsStr(id)})`;
+    let got;
+    try {
+      got = new Function('toggleGoal', `return (${decode(attr)});`)((a) => a);
+    } catch (e) {
+      assert.fail(`goal handler for ${JSON.stringify(id)} does not parse: ${e.message}`);
+    }
+    assert.equal(got, id, `the goal id must reach the handler intact for ${JSON.stringify(id)}`);
+  }
+});
+
+
 check('every view is rendered when it is opened, not as a side effect of another', () => {
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const views = [...html.matchAll(/id="view-(\w+)"/g)].map((m) => m[1]);
