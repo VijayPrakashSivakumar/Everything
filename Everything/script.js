@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.7";
+const APP_BUILD = "2026-09-26.8";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -3075,6 +3075,80 @@ async function addPersonManual() {
   await dbSavePerson(p);
 }
 
+/* ---------- Rename and remove people and projects ----------
+   Items link to a person or a project by name, not by id. That is why a name is the identity, and it
+   is why there was no way out of a typo: "Hom" stranded every item tagged with it, and the only fix
+   was opening each item by hand. Renaming now carries the items along in one step.
+
+   Untagging is the other half. Deleting a person must clear the tag, because renderPeople() infers
+   people from the items that mention them — leaving the tag would re-infer the person immediately
+   and make Delete look like it had done nothing. */
+function retagItems(field, oldName, newName) {
+  const changed = [];
+  state.items.forEach((i) => {
+    if (!sameName(i[field], oldName)) return;
+    i[field] = newName;
+    changed.push(i);
+  });
+  return changed;
+}
+
+async function persistRetagged(items) {
+  for (const i of items) await dbSaveItem(i);
+}
+
+function personNameTaken(name, exceptName) {
+  return state.people.some((p) => !sameName(p.name, exceptName) && sameName(p.name, name));
+}
+
+async function renamePerson(oldName, newName) {
+  const next = String(newName == null ? "" : newName).trim();
+  if (!next) {
+    alert("A name is required.");
+    return;
+  }
+  if (personNameTaken(next, oldName)) {
+    alert(`"${next}" is already in your people list.`);
+    return;
+  }
+  const person = state.people.find((p) => sameName(p.name, oldName));
+  if (person) {
+    person.name = next;
+    await dbSavePerson(person);
+  }
+  // A case-only rename ("ravi" to "Ravi") has no visual effect here but still has to be written
+  // through, so every item ends up carrying the corrected spelling.
+  await persistRetagged(retagItems("person", oldName, next));
+  closePersonModal();
+  renderAll();
+}
+
+function startRenamePerson() {
+  if (!currentPersonName) return;
+  const typed = prompt(
+    "Rename this person. Everything linked to them follows the new name.",
+    currentPersonName,
+  );
+  if (typed === null) return;
+  renamePerson(currentPersonName, typed);
+}
+
+async function deletePerson(name) {
+  const linked = state.items.filter((i) => sameName(i.person, name) && !isArchived(i));
+  const many = linked.length !== 1;
+  if (
+    !confirm(
+      `Remove "${name}"? ${linked.length} linked item${many ? "s" : ""} will no longer be tagged with them. The items themselves are kept.`,
+    )
+  )
+    return;
+  closePersonModal();
+  const person = state.people.find((p) => sameName(p.name, name));
+  if (person) await dbDeletePerson(person.id);
+  await persistRetagged(retagItems("person", name, ""));
+  renderAll();
+}
+
 /* ---------- Projects ---------- */
 async function addProject() {
   const input = document.getElementById("newProjectInput");
@@ -3090,6 +3164,34 @@ async function addProject() {
   state.projects.unshift(p);
   input.value = "";
   await dbSaveProject(p);
+}
+
+async function renameProject(id, newName) {
+  const project = state.projects.find((p) => p.id === id);
+  if (!project) return;
+  const next = String(newName == null ? "" : newName).trim();
+  if (!next) {
+    alert("A name is required.");
+    return;
+  }
+  if (state.projects.some((p) => p.id !== id && sameName(p.name, next))) {
+    alert(`"${next}" is already a project.`);
+    return;
+  }
+  const previous = project.name;
+  project.name = next;
+  await dbSaveProject(project);
+  await persistRetagged(retagItems("project", previous, next));
+  renderProjects();
+}
+
+function startRenameProject(id, name) {
+  const typed = prompt(
+    "Rename this project. Everything linked to it follows the new name.",
+    name,
+  );
+  if (typed === null) return;
+  renameProject(id, typed);
 }
 function renderProjects() {
   const el = document.getElementById("projectsList");
@@ -3110,6 +3212,7 @@ function renderProjects() {
         <h3>${escapeHtml(p.name)}</h3>
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="badge task">${total - done} open</span>
+          <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startRenameProject(${jsStr(p.id)}, ${jsStr(p.name)})">Rename</button>
           <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteProject(${jsStr(p.id)}, ${jsStr(p.name)})">Delete</button>
         </div>
       </div>
@@ -3871,6 +3974,24 @@ async function dbDeleteProject(id) {
   state.projects = state.projects.filter((p) => p.id !== id);
   save();
   renderProjects();
+  renderNav();
+}
+
+// People had no delete path at all before this, so a mistyped or unwanted name was permanent.
+async function dbDeletePerson(id) {
+  if (syncReadyPromise) await syncReadyPromise;
+  const person = state.people.find((p) => p.id === id);
+  if (db) {
+    await db.collection("people").doc(id).delete();
+  } else if (sbUser) {
+    await deleteStructuredRecord("person", person);
+  } else {
+    state.people = state.people.filter((p) => p.id !== id);
+    save();
+  }
+  state.people = state.people.filter((p) => p.id !== id);
+  save();
+  renderPeople();
   renderNav();
 }
 async function dbDeleteGoal(id) {

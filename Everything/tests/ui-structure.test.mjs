@@ -445,6 +445,157 @@ check('a project cannot be created twice under names that differ only by case or
     'a refused duplicate must clear the input');
 });
 
+/* ---------- Renaming and removing people and projects ----------
+
+   Items link to a person or project by *name*, so the name is the identity. Before this there was
+   no way to correct one: "Hom" stranded every item tagged with it, and a person could never be
+   removed at all. These run the real functions against a stub world, so the assertions are about
+   behaviour rather than about the presence of a string. */
+
+const renameSource = [
+  between('const sameName = (a, b) =>', '\n};'),
+  betweenBlock('function retagItems', 'async function addProject'),
+  // between() includes its end marker, which is what you want for a closing brace but not for a
+  // function signature: it would leave a dangling "function renderProjects" in the source. Cut short.
+  js.slice(
+    js.indexOf('async function renameProject'),
+    js.indexOf('function renderProjects'),
+  ),
+  // The real dbDeletePerson, not a stub: this test is about the record actually leaving the store,
+  // and a stub that only recorded the id would have passed while the record stayed put.
+  js.slice(
+    js.indexOf('async function dbDeletePerson'),
+    js.indexOf('async function dbDeleteGoal'),
+  ),
+].join('\n');
+// sameName is declared inside renameSource, so it must not also be injected as a parameter.
+const renameDeps = ['state', 'isArchived', 'dbSaveItem', 'dbSavePerson', 'dbSaveProject',
+  'renderAll', 'renderProjects', 'closePersonModal', 'alert', 'confirm', 'prompt',
+  'currentPersonName', 'syncReadyPromise', 'db', 'sbUser', 'deleteStructuredRecord',
+  'save', 'renderNav', 'renderPeople'];
+const runRename = (deps, expr) =>
+  new Function(...renameDeps, `${renameSource}\nreturn ${expr};`)(
+    ...renameDeps.map((k) => deps[k]),
+  );
+
+// A fresh world per test. Every persistence call is recorded instead of performed.
+const makeWorld = () => {
+  const saved = { items: [], people: [], projects: [], deleted: undefined };
+  const world = {
+    state: {
+      items: [
+        { id: 'i1', title: 'Call the plumber', person: 'ravi', project: 'Home' },
+        { id: 'i2', title: 'Book flights', person: '  RAVI ', project: 'home' },
+        { id: 'i3', title: 'Pay Priya back', person: 'Priya', project: 'Office' },
+      ],
+      people: [{ id: 'p1', name: 'Ravi', notes: '', created: 1 }],
+      projects: [{ id: 'j1', name: 'Home', created: 1 }],
+    },
+    isArchived: (i) => Boolean(i?.archivedAt || i?.archived_at),
+    dbSaveItem: async (i) => { saved.items.push(i.id); },
+    dbSavePerson: async (p) => { saved.people.push(p.id); },
+    dbSaveProject: async (p) => { saved.projects.push(p.id); },
+    renderAll: () => {},
+    renderProjects: () => {},
+    closePersonModal: () => {},
+    // dbDeletePerson is the real one, so these are its own dependencies.
+    syncReadyPromise: null,
+    db: null,
+    sbUser: null,
+    deleteStructuredRecord: async () => true,
+    save: () => {},
+    renderNav: () => {},
+    renderPeople: () => {},
+    alert: (m) => { world.alerted = m; },
+    confirm: () => { world.confirmed = true; return true; },
+    prompt: () => { throw new Error('prompt should not be reached in these tests'); },
+    currentPersonName: null,
+  };
+  return { world, saved };
+};
+const peopleOf = (world) => world.state.items.map((i) => i.person);
+const projectsOf = (world) => world.state.items.map((i) => i.project);
+
+check('renaming a person carries every linked item with it', async () => {
+  const { world, saved } = makeWorld();
+  const api = runRename(world, '({ renamePerson })');
+  await api.renamePerson('Ravi', 'Ravi Kumar');
+  // The items spell the name three different ways, and all three must follow.
+  assert.deepEqual(peopleOf(world), ['Ravi Kumar', 'Ravi Kumar', 'Priya']);
+  assert.equal(world.state.people[0].name, 'Ravi Kumar');
+  assert.deepEqual(saved.items.sort(), ['i1', 'i2'], 'only the items that changed are rewritten');
+  assert.deepEqual(saved.people, ['p1']);
+});
+
+check('a case-only rename is still written through to the items', async () => {
+  const { world, saved } = makeWorld();
+  world.state.people[0].name = 'ravi';
+  const api = runRename(world, '({ renamePerson })');
+  await api.renamePerson('ravi', 'Ravi');
+  assert.equal(world.state.people[0].name, 'Ravi', 'the stored spelling must be corrected');
+  assert.deepEqual(peopleOf(world), ['Ravi', 'Ravi', 'Priya']);
+  assert.deepEqual(saved.items.sort(), ['i1', 'i2']);
+});
+
+check('a rename refuses a blank name and a name that is already taken', async () => {
+  const { world, saved } = makeWorld();
+  world.state.people.push({ id: 'p2', name: 'Priya', notes: '', created: 2 });
+  const api = runRename(world, '({ renamePerson })');
+  await api.renamePerson('Ravi', '   ');
+  assert.match(world.alerted || '', /required/i, 'a blank name must be refused');
+  await api.renamePerson('Ravi', 'priya');
+  assert.match(world.alerted || '', /already in your people list/i);
+  assert.equal(world.state.people[0].name, 'Ravi', 'a refused rename must change nothing');
+  assert.deepEqual(peopleOf(world), ['ravi', '  RAVI ', 'Priya']);
+  assert.deepEqual(saved.items, [], 'a refused rename must not rewrite items');
+});
+
+check('renaming a project carries its items with it', async () => {
+  const { world, saved } = makeWorld();
+  const api = runRename(world, '({ renameProject })');
+  await api.renameProject('j1', 'Home Renovation');
+  assert.deepEqual(projectsOf(world), ['Home Renovation', 'Home Renovation', 'Office']);
+  assert.equal(world.state.projects[0].name, 'Home Renovation');
+  assert.deepEqual(saved.items.sort(), ['i1', 'i2']);
+  assert.deepEqual(saved.projects, ['j1']);
+});
+
+check('deleting a person untags their items so they stop reappearing', async () => {
+  // renderPeople() infers people from the items that name them, so leaving the tag behind would
+  // re-create the person on the very next render and make Remove look like it had done nothing.
+  const { world, saved } = makeWorld();
+  const api = runRename(world, '({ deletePerson })');
+  await api.deletePerson('Ravi');
+  assert.deepEqual(world.state.people.map((p) => p.name), [], 'the stored record must be gone');
+  assert.deepEqual(peopleOf(world), ['', '', 'Priya']);
+  assert.deepEqual(
+    world.state.items.filter((i) => i.person && i.person.trim()).map((i) => i.id),
+    ['i3'],
+    'no item may still name the removed person, or the list re-infers them',
+  );
+  assert.deepEqual(saved.items.sort(), ['i1', 'i2']);
+});
+
+check('cancelling the confirm keeps the person, the record and every tag', async () => {
+  const { world, saved } = makeWorld();
+  world.confirm = () => false;
+  const api = runRename(world, '({ deletePerson })');
+  await api.deletePerson('Ravi');
+  assert.deepEqual(world.state.people.map((p) => p.name), ['Ravi']);
+  assert.deepEqual(peopleOf(world), ['ravi', '  RAVI ', 'Priya']);
+  assert.deepEqual(saved.items, []);
+});
+
+check('removing a person covers every storage backend and has a button', () => {
+  const src = between('async function dbDeletePerson', 'async function dbDeleteGoal');
+  assert.match(src, /state\.people = state\.people\.filter\(\(p\) => p\.id !== id\);/,
+    'the local store must drop the person, like dbDeleteProject does');
+  assert.match(src, /deleteStructuredRecord\("person"/, 'Supabase sync must be covered too');
+  assert.match(html, /onclick="deletePerson\(/, 'the person dialog needs a Remove button');
+  assert.match(html, /onclick="startRenamePerson\(\)"/, 'the person dialog needs a Rename button');
+  assert.match(js, /onclick="startRenameProject\(/, 'each project card needs a Rename button');
+});
+
 check('every view is rendered when it is opened, not as a side effect of another', () => {
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const views = [...html.matchAll(/id="view-(\w+)"/g)].map((m) => m[1]);

@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-26.7" />
+    <meta name="everything-build" content="2026-09-26.8" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -2019,6 +2019,10 @@
         </div>
         <div id="personItemsList"></div>
         <div class="modal-actions">
+          <button class="btn danger" onclick="deletePerson(document.getElementById('personModalName').textContent)">
+            Remove
+          </button>
+          <button class="btn" onclick="startRenamePerson()">Rename</button>
           <button class="btn" onclick="closePersonModal()">Close</button>
           <button class="btn primary" onclick="savePersonNotes()">
             Save notes

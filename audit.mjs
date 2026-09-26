@@ -34,14 +34,25 @@ page.on('requestfailed', (r) => {
   if (!/ERR_ABORTED/.test(f)) netErrors.push({ status: 'failed', url: r.url().replace(URL, ''), error: f });
 });
 
-await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
-if (await page.locator('#authEmail').isVisible().catch(() => false)) {
-  console.log('Session expired. Run: node tmp-login.mjs');
-  await context.close();
-  process.exit(2);
-}
+// 'domcontentloaded' plus an explicit boot wait. networkidle never settles reliably here because the
+// app holds a realtime connection open, so it used to fail on a healthy deploy.
+await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.waitForFunction(() => typeof window.switchView === 'function', null, { timeout: 30000 });
 const build = await page.getAttribute('meta[name="everything-build"]', 'content');
-console.log(`signed in | build ${build}`);
+
+// Without a session the app is local-only and the sign-in card covers the UI. Every view, modal and
+// keyboard check below still works if we step around it, so the audit degrades instead of stopping —
+// an expiring session should not block regression checks. Only the model-backed search checks need a
+// real session, and they are reported as skipped rather than silently passing.
+const signedIn = !(await page.locator('#authEmail').isVisible().catch(() => false));
+if (!signedIn) {
+  console.log('NOT signed in — running the local-only checks. Model-backed search checks will be skipped.');
+  console.log('For full coverage run: node tmp-login.mjs\n');
+  await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
+  await page.waitForTimeout(400);
+} else {
+  console.log(`signed in | build ${build}`);
+}
 console.log(`items in store: ${await page.evaluate(() => (typeof state !== 'undefined' ? state.items.length : -1))}\n`);
 
 // ---------- every view ----------
@@ -126,13 +137,18 @@ await page.locator('#searchInput').fill('');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(400);
 
-// A real question should still reach the model.
-const before3 = askCalls.length;
-await page.locator('#searchInput').click();
-await page.locator('#searchInput').fill('what should I do today');
-await page.waitForTimeout(2500);
-record('search', 'a question still reaches the model', askCalls.length > before3,
-  askCalls.length > before3 ? 'model called as expected' : 'never reached the model');
+// A real question should still reach the model. Skipped without a session: the server would reject
+// the call, so a pass here would be meaningless.
+if (signedIn) {
+  const before3 = askCalls.length;
+  await page.locator('#searchInput').click();
+  await page.locator('#searchInput').fill('what should I do today');
+  await page.waitForTimeout(2500);
+  record('search', 'a question still reaches the model', askCalls.length > before3,
+    askCalls.length > before3 ? 'model called as expected' : 'never reached the model');
+} else {
+  console.log('  SKIP  a question still reaches the model  — no session');
+}
 await page.keyboard.press('Escape');
 await page.locator('#searchInput').fill('');
 await page.keyboard.press('Escape');

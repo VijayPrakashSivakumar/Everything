@@ -104,6 +104,43 @@ const called = await page.evaluate((id) => {
 }, 'x');
 say('clicking Delete reaches deleteProject()', typeof called === 'string' && called.length > 0, true);
 
+// ---------- 4. rename and remove ----------
+console.log('\nRENAME AND REMOVE');
+await page.evaluate(() => { window.confirm = () => true; });
+await reset();
+await page.evaluate(() => {
+  state.projects = [{ id: 'j1', name: 'Hom', created: Date.now() }];
+  state.people = [{ id: 'p1', name: 'ravi', notes: '', created: Date.now() }];
+  state.items = [
+    { id: 'i1', title: 'Fix the roof', person: 'Ravi', project: 'Hom', created: Date.now() },
+    { id: 'i2', title: 'Call plumber', person: 'RAVI', project: 'hom', created: Date.now() },
+    { id: 'i3', title: 'Unrelated', person: 'Priya', project: 'Office', created: Date.now() },
+  ];
+  renderProjects();
+  renderPeople();
+});
+// A typo'd name used to strand its items with no way back. Renaming must carry them along.
+await page.evaluate(() => window.renameProject('j1', 'Home Renovation'));
+say('renaming a project retags its items',
+  JSON.stringify(await page.evaluate(() => state.items.map((i) => i.project))),
+  JSON.stringify(['Home Renovation', 'Home Renovation', 'Office']));
+say('the project keeps the new name', await page.evaluate(() => state.projects[0].name), 'Home Renovation');
+
+await page.evaluate(() => window.renamePerson('ravi', 'Ravi Kumar'));
+say('renaming a person retags their items',
+  JSON.stringify(await page.evaluate(() => state.items.map((i) => i.person))),
+  JSON.stringify(['Ravi Kumar', 'Ravi Kumar', 'Priya']));
+
+await page.evaluate(() => window.deletePerson('Ravi Kumar'));
+say('removing a person deletes the record',
+  JSON.stringify(await page.evaluate(() => state.people.map((p) => p.name))), '[]');
+// renderPeople() infers people from the items that name them, so a surviving tag would re-add them.
+say('removing a person untags their items so they do not reappear',
+  JSON.stringify(await page.evaluate(() =>
+    state.items.filter((i) => i.person && i.person.trim()).map((i) => i.id))), '["i3"]');
+say('the people list no longer shows them',
+  (await page.locator('#peopleList').innerText()).includes('Ravi Kumar'), false);
+
 console.log(`\npage errors: ${errors.length}`);
 errors.forEach((e) => console.log(`  ! ${e.slice(0, 140)}`));
 await context.close();
