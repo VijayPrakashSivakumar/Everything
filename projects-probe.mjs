@@ -205,6 +205,51 @@ say('the Rename button carries both the id and the current title', JSON.stringif
   return window.__args;
 })), JSON.stringify(["o'brien", 'From a backup']));
 
+// ---------- 6. handlers built from user data, and a kindless related item ----------
+console.log('\nRELATED CHIPS AND HANDLER SAFETY');
+await page.evaluate(() => {
+  window.confirm = () => true;
+  window.alert = () => {};
+  state.people = [];
+  state.projects = [];
+  state.items = [
+    { id: 'c1', kind: 'task', title: 'Call the plumber', person: "O'Brien", project: "Mom's Home", created: Date.now() },
+    { id: 'c2', title: 'No kind at all', person: "O'Brien", project: "Mom's Home", created: Date.now() },
+  ];
+});
+say('opening an item whose related list holds a kindless item does not throw',
+  await page.evaluate(() => {
+    try { window.openPanel('c1'); return 'opened'; }
+    catch (e) { return e.constructor.name + ': ' + e.message; }
+  }), 'opened');
+say('the kindless related item is still listed in the panel',
+  await page.evaluate(() => document.getElementById('panelRelated').textContent.includes('No kind at all')), true);
+const chipOnclicks = await page.evaluate(() =>
+  [...document.querySelectorAll('#panelRelated [onclick]')].map((el) => el.getAttribute('onclick')));
+console.log(`  chips: ${JSON.stringify(chipOnclicks)}`);
+// Compile the handler the way a browser does — as a function body — so a stray quote fails here.
+say('every related chip compiles as a handler', await page.evaluate((srcs) => {
+  for (const src of srcs) {
+    try { new Function('closePanel', 'openPersonModal', 'openPanel', 'switchView', src); }
+    catch (e) { return `${e.constructor.name} for ${src}`; }
+  }
+  return `all parse (${srcs.length})`;
+}, chipOnclicks), `all parse (${chipOnclicks.length})`);
+say('the apostrophe person chip is present at all',
+  chipOnclicks.some((s) => s.includes('openPersonModal')), true);
+
+// The same quoted-interpolation mistake in the other rendered lists: a hand-edited backup can carry
+// any item id, and a quote in one used to leave that row with a dead click target.
+await page.evaluate(() => {
+  state.items = [{ id: "id'with'quotes", kind: 'memory', title: 'From a backup', created: Date.now() }];
+  renderMemory();
+});
+const memoryOnclick = await page.locator('#memoryGrouped [onclick]').first().getAttribute('onclick');
+console.log(`  memory row: ${JSON.stringify(memoryOnclick)}`);
+say('a quoted item id still produces a working memory row', await page.evaluate((src) => {
+  try { new Function('openPanel', src); return 'parses'; } catch (e) { return `${e.constructor.name} for ${src}`; }
+}, memoryOnclick), 'parses');
+
 console.log(`\npage errors: ${errors.length}`);
 errors.forEach((e) => console.log(`  ! ${e.slice(0, 140)}`));
 await context.close();

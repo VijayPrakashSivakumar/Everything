@@ -655,6 +655,50 @@ check('a goal can be renamed and its controls survive any id', () => {
 });
 
 
+check('no inline handler interpolates a value into a quoted JS string', () => {
+  // The apostrophe bug that killed the project Delete buttons, then the goal controls, then the
+  // person chip and the Memory rows, was always the same shape: onX="fn('${value}')". A quote in the
+  // value reaches the parser as a SyntaxError and the control silently does nothing. Every such site
+  // now goes through jsStr(). This scan covers both files, so a handler added to index.html counts.
+  const events = ['onclick', 'oninput', 'onchange', 'onkeydown', 'onkeyup', 'onfocus', 'onblur',
+    'onsubmit', 'onerror', 'onplay', 'onended'];
+  const attr = new RegExp(`(${events.join('|')})\\s*=\\s*"(?:[^"\\\\]|\\\\.)*"`, 'g');
+  const bad = [];
+  for (const [name, source] of [['script.js', js], ['index.html', html]]) {
+    for (const m of source.matchAll(attr)) {
+      const body = m[0].slice(m[0].indexOf('"') + 1, -1);
+      for (const h of body.matchAll(/\$\{([^}]*)\}/g)) {
+        // A hole that is the whole attribute value is a handler expression, e.g. onclick="${c.onclick}",
+        // not a quoted literal — the chip builds its own handler and this only places it.
+        if (h.index === 0 && h[0].length === body.length) continue;
+        const quoted = /['"`]/.test(body[h.index - 1] || '') && /['"`]/.test(body[h.index + h[0].length] || '');
+        if (!quoted) continue;
+        if (!/jsStr\s*\(/.test(h[1])) bad.push(`${name}: ${m[0]}  <- ${h[1]}`);
+        // jsStr already returns a quoted JS string, so wrapping it in quotes passes "\"id\"" not "id".
+        else bad.push(`${name}: ${m[0]}  <- jsStr double-quoted`);
+      }
+    }
+  }
+  assert.deepEqual(bad, [],
+    `these interpolations must go through jsStr() and must not be wrapped in quotes:\n${bad.join('\n')}`);
+});
+
+check('the related-chips list does not dereference a missing kind', () => {
+  // renderToday was fixed for exactly this; the same r.kind.charAt() survived here, and it is worse:
+  // renderRelatedChips runs before the panel opens, so ONE kindless item made the item impossible to
+  // open at all — the probe showed a TypeError and an empty chip list.
+  const chips = between('function renderRelatedChips', 'function closePanel');
+  assert.doesNotMatch(chips, /\br\.kind\.charAt\(/,
+    'the kind must be defaulted before use, the way renderToday does it');
+  assert.match(chips, /const kind = r\.kind \|\| "text";/, 'related items need the same default');
+  assert.match(chips, /escapeHtml\(r\.title\)/, 'the chip label is injected as HTML, so escape the title');
+  assert.match(chips, /escapeHtml\(kind\.charAt\(0\)/, 'so must the chip tag');
+  assert.match(chips, /onclick: `closePanel\(\);openPanel\(\$\{jsStr\(r\.id\)\}\)`/,
+    'the chip handler must pass the id through jsStr');
+  assert.match(chips, /openPersonModal\(null,\$\{jsStr\(item\.person\)\}\)/,
+    'the person chip must not quote an escapeHtml() result');
+});
+
 check('every view is rendered when it is opened, not as a side effect of another', () => {
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const views = [...html.matchAll(/id="view-(\w+)"/g)].map((m) => m[1]);

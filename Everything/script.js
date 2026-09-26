@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.10";
+const APP_BUILD = "2026-09-26.11";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -2793,7 +2793,7 @@ function renderInbox(filter) {
   tabRow.innerHTML = tabs
     .map(
       ([id, label]) =>
-        `<div class="tab ${id === filter ? "active" : ""}" onclick="renderInbox('${id}')">${label}</div>`,
+        `<div class="tab ${id === filter ? "active" : ""}" onclick="renderInbox(${jsStr(id)})">${label}</div>`,
     )
     .join("");
   const searchInput = document.getElementById("inboxSearchInput");
@@ -2854,7 +2854,7 @@ function renderTasks(filter) {
     tabRow.innerHTML = tabs
       .map(
         ([id, label]) =>
-          `<div class="tab ${id === filter ? "active" : ""}" onclick="renderTasks('${id}')">${label}</div>`,
+          `<div class="tab ${id === filter ? "active" : ""}" onclick="renderTasks(${jsStr(id)})">${label}</div>`,
       )
       .join("");
   }
@@ -2969,7 +2969,7 @@ function renderMemory() {
       <div class="card-head"><h3>${label}</h3></div>
       <div>${items
         .map(
-          (i) => `<div class="task-row" onclick="openPanel('${i.id}')">
+          (i) => `<div class="task-row" onclick="openPanel(${jsStr(i.id)})">
         <div class="task-meta"><div class="task-title">${i.scope === "private" ? icon("lock") + " " : ""}${escapeHtml(i.title)}</div>
         <div class="task-sub">${timeAgo(i.created)}${i.person ? " · " + icon("user") + " " + escapeHtml(i.person) : ""}</div></div>
       </div>`,
@@ -3018,7 +3018,7 @@ function renderPeople() {
   el.innerHTML = rows
     .map((p) => {
       const count = state.items.filter((i) => sameName(i.person, p.name) && !isArchived(i)).length;
-      return `<div class="task-row" onclick="openPersonModal(${p.id ? `'${p.id}'` : "null"}, ${jsStr(p.name)})">
+      return `<div class="task-row" onclick="openPersonModal(${p.id ? jsStr(p.id) : "null"}, ${jsStr(p.name)})">
       <div class="avatar" style="width:32px;height:32px;font-size:12px;">${p.name.charAt(0).toUpperCase()}</div>
       <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count !== 1 ? "s" : ""}${p.notes ? " · has notes" : ""}</div></div>
     </div>`;
@@ -3039,7 +3039,7 @@ function openPersonModal(id, name) {
     ? items
         .map(
           (i) =>
-            `<div class="task-row" onclick="closePersonModal();openPanel('${i.id}')"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`,
+            `<div class="task-row" onclick="closePersonModal();openPanel(${jsStr(i.id)})"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`,
         )
         .join("")
     : '<p class="empty">No linked items yet.</p>';
@@ -3228,7 +3228,7 @@ function renderProjects() {
       </div><p style="font-size:12px;color:var(--muted);margin:-6px 0 12px;">${pct}% complete (${done}/${total})</p>`
           : ""
       }
-      ${items.length ? items.map((i) => `<div class="task-row" onclick="openPanel('${i.id}')"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`).join("") : '<p class="empty">No items here yet.</p>'}
+      ${items.length ? items.map((i) => `<div class="task-row" onclick="openPanel(${jsStr(i.id)})"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`).join("") : '<p class="empty">No items here yet.</p>'}
     </div>`;
     })
     .join("");
@@ -3543,7 +3543,7 @@ function renderWeekView() {
       if (height < 14) return;
       const [bg, fg] = kindColor(e.item.kind);
       const time = fmtTime(e.d);
-      html += `<div class="cal-week-event" title="${escapeHtml(time + " " + e.item.title)}" style="top:${top}px;height:${height}px;left:calc(${(e.lane * laneWidth).toFixed(4)}% + 4px);width:calc(${laneWidth.toFixed(4)}% - 8px);background:${bg};color:${fg};" onclick="openPanel('${e.item.id}')"><b>${time}</b> ${escapeHtml(e.item.title)}</div>`;
+      html += `<div class="cal-week-event" title="${escapeHtml(time + " " + e.item.title)}" style="top:${top}px;height:${height}px;left:calc(${(e.lane * laneWidth).toFixed(4)}% + 4px);width:calc(${laneWidth.toFixed(4)}% - 8px);background:${bg};color:${fg};" onclick="openPanel(${jsStr(e.item.id)})"><b>${time}</b> ${escapeHtml(e.item.title)}</div>`;
     });
     html += `</div></div>`;
   });
@@ -3804,14 +3804,14 @@ function renderRelatedChips(item) {
 
   if (item.person) {
     chips.push({
-      label: `${icon("user")} ${item.person}`,
+      label: `${icon("user")} ${escapeHtml(item.person)}`,
       tag: "Person",
-      onclick: `closePanel();openPersonModal(null,'${escapeHtml(item.person)}')`,
+      onclick: `closePanel();openPersonModal(null,${jsStr(item.person)})`,
     });
   }
   if (item.project) {
     chips.push({
-      label: `${icon("folder-kanban")} ${item.project}`,
+      label: `${icon("folder-kanban")} ${escapeHtml(item.project)}`,
       tag: "Project",
       onclick: `closePanel();switchView('projects')`,
     });
@@ -3828,10 +3828,14 @@ function renderRelatedChips(item) {
     .slice(0, 5);
 
   related.forEach((r) => {
+    // Same default as renderToday: a hand-edited or older backup can carry an item with no kind, and
+    // reading the first letter off an undefined one threw a TypeError that killed the whole panel
+    // before it could open. The live probe caught that; the suite had missed it.
+    const kind = r.kind || "text";
     chips.push({
-      label: `${kindIcon(r.kind)} ${r.title}`,
-      tag: r.kind.charAt(0).toUpperCase() + r.kind.slice(1),
-      onclick: `closePanel();openPanel('${r.id}')`,
+      label: `${kindIcon(kind)} ${escapeHtml(r.title)}`,
+      tag: escapeHtml(kind.charAt(0).toUpperCase() + kind.slice(1)),
+      onclick: `closePanel();openPanel(${jsStr(r.id)})`,
     });
   });
 
@@ -4115,7 +4119,7 @@ function renderVoiceLanguages() {
   if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
   row.innerHTML = VOICE_LANGUAGES.map(
     (entry) =>
-      `<div class="type-chip ${entry.tag === captureVoiceLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickVoiceLang('${entry.tag}')"><span>${entry.hint}</span></div>`,
+      `<div class="type-chip ${entry.tag === captureVoiceLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickVoiceLang(${jsStr(entry.tag)})"><span>${entry.hint}</span></div>`,
   ).join("");
 }
 
@@ -4317,7 +4321,7 @@ function renderOcrLanguages() {
   if (!row) return;
   row.innerHTML = OCR_LANGUAGES.map(
     (entry) =>
-      `<div class="type-chip ${entry.tag === captureOcrLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickOcrLang('${entry.tag}')"><span>${entry.label}</span></div>`,
+      `<div class="type-chip ${entry.tag === captureOcrLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickOcrLang(${jsStr(entry.tag)})"><span>${entry.label}</span></div>`,
   ).join("");
 }
 
@@ -4466,7 +4470,7 @@ function openCapture() {
   const row = document.getElementById("typeRow");
   row.innerHTML = CAPTURE_TYPES.map(
     (t) =>
-      `<div class="type-chip ${t.id === captureType ? "active" : ""}" data-type="${t.id}" onclick="pickType('${t.id}', true)"><i data-lucide="${t.icon}"></i><span>${t.label}</span></div>`,
+      `<div class="type-chip ${t.id === captureType ? "active" : ""}" data-type="${t.id}" onclick="pickType(${jsStr(t.id)}, true)"><i data-lucide="${t.icon}"></i><span>${t.label}</span></div>`,
   ).join("");
   refreshIcons();
   document.getElementById("captureText").value = "";
@@ -5657,7 +5661,7 @@ function runSearch(q) {
           .slice(0, 8)
           .map(
             (m) =>
-              `<div class="search-hit" onclick="closeSearch();document.getElementById('searchInput').value='';openPanel('${m.id}')"><b>${escapeHtml(m.title)}</b><br><span class="search-hit-sub">${escapeHtml(m.sub || "")}</span></div>`,
+              `<div class="search-hit" onclick="closeSearch();document.getElementById('searchInput').value='';openPanel(${jsStr(m.id)})"><b>${escapeHtml(m.title)}</b><br><span class="search-hit-sub">${escapeHtml(m.sub || "")}</span></div>`,
           )
           .join("")
       : '<p class="empty">No matches found.</p>') +
@@ -5704,7 +5708,7 @@ function runAsk(q) {
     ? matches
         .map(
           (m) =>
-            `<div class="ask-result-item" onclick="closeAsk();openPanel('${m.id}')"><b>${escapeHtml(m.title)}</b><br><span style="color:var(--muted)">${escapeHtml(m.sub || "")}</span></div>`,
+            `<div class="ask-result-item" onclick="closeAsk();openPanel(${jsStr(m.id)})"><b>${escapeHtml(m.title)}</b><br><span style="color:var(--muted)">${escapeHtml(m.sub || "")}</span></div>`,
         )
         .join("")
     : '<p class="empty">No matches found.</p>';
@@ -6481,7 +6485,7 @@ function renderNotifPanel() {
     ? items
         .map(
           (i) => `
-    <div class="task-row" style="padding:9px 14px;" onclick="toggleNotifPanel();openPanel('${i.id}')">
+    <div class="task-row" style="padding:9px 14px;" onclick="toggleNotifPanel();openPanel(${jsStr(i.id)})">
       <div class="task-meta"><div class="task-title">${isOverdue(i) ? icon("triangle-alert") + " " : ""}${escapeHtml(i.title)}</div>
       <div class="task-sub">${isOverdue(i) ? "Overdue" : i.due || "Waiting for"}</div></div>
     </div>`,
