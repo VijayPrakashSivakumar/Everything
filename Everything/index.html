@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-26.13" />
+    <meta name="everything-build" content="2026-09-26.15" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -1664,6 +1664,9 @@
         <!-- Missing-value questions: the assistant asks instead of inventing an uncertain value. -->
         <div class="capture-question" id="captureQuestion" hidden></div>
 
+        <!-- Everything else the sentence carried, beyond the item the fields above are editing. -->
+        <div class="capture-plan" id="capturePlan" hidden></div>
+
         <div
           class="capture-duplicate-warning"
           id="captureDuplicateWarning"
@@ -2110,6 +2113,11 @@
         </div>
       </div>
     </div>
+
+    <!-- Auto-created capture confirmation. A capture that saves itself is silent, so it has to
+         name what it made and offer one tap to take it back. -->
+    <div class="capture-undo" id="captureUndo" role="status" aria-live="polite" hidden></div>
+
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="script.js"></script>
   </body>

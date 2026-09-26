@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.13";
+const APP_BUILD = "2026-09-26.15";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -4657,11 +4657,156 @@ let captureExtraction = null;
 let captureSuggestionFields = {};
 let captureDuplicate = null;
 let captureQuestions = [];
+let capturePlan = []; // Extra items from the same sentence. See setCapturePlan.
+let captureAgenda = []; // Agenda lines, saved as the main item's checklist steps.
+let captureMainAsk = ""; // A question the model raised about the main item.
+let captureAutoSaveTimer = null; // Pending "Done." for a sentence that read clearly.
+let capturePlanTouched = false; // A row was corrected, so the app must not decide.
 let captureVoiceRecognition = null;
 let captureVoiceActive = false;
 let captureVoiceFinal = "";
 let captureVoiceBase = "";
 let captureSaveInFlight = false;
+
+/* ---------- One sentence, several things ----------
+   One capture used to save exactly ONE item, so "meeting with the design team at 9, need to
+   discuss the new app and send the proposal afterwards" lost everything after the first clause.
+   Entry 0 drives the form (unchanged path), the rest become editable rows, and an "agenda"
+   entry folds into the main item's checklist. Shown before saving, never saved behind the back. */
+const CAPTURE_PLAN_LIMIT = 6;
+const CAPTURE_PLAN_KIND_LABELS = {
+  task: "Task",
+  event: "Event",
+  memory: "Memory",
+  waiting: "Waiting for",
+  openloop: "Open loop",
+};
+const CAPTURE_PLAN_KINDS = Object.keys(CAPTURE_PLAN_KIND_LABELS);
+const CAPTURE_PLAN_SUB = {
+  task: "Captured task",
+  event: "Captured event",
+  memory: "Memory",
+  waiting: "Waiting for",
+  openloop: "Open loop",
+};
+// Kinds whose title is work, so the reading may shorten it. A note, a link and media keep the
+// person's own words, because there the wording is the content.
+const CAPTURE_MODEL_TITLE_KINDS = new Set(["task", "event", "waiting", "openloop"]);
+
+function normalisePlanEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const title = String(entry.title || "")
+    .trim()
+    .slice(0, 200);
+  if (!title) return null;
+  return {
+    // "agenda" must survive normalisation, or setCapturePlan can no longer tell a talking
+    // point (a step on the main item) from work of its own (a row of its own).
+    kind: entry.kind === "agenda" || CAPTURE_PLAN_KINDS.includes(entry.kind) ? entry.kind : "task",
+    title,
+    dueDate: String(entry.dueDate || "").slice(0, 40),
+    person: String(entry.person || "")
+      .trim()
+      .slice(0, 80),
+    project: String(entry.project || "")
+      .trim()
+      .slice(0, 80),
+    priority: ["high", "medium", "low"].includes(entry.priority) ? entry.priority : "",
+    ambiguous: String(entry.ambiguous || "")
+      .trim()
+      .slice(0, 200),
+  };
+}
+
+function setCapturePlan(items, mainAsk = "") {
+  const entries = (Array.isArray(items) ? items : []).map(normalisePlanEntry).filter(Boolean);
+  // Entry 0 is already on the form, so its question has nowhere else to appear.
+  captureMainAsk = String(mainAsk || "").trim().slice(0, 200);
+  // Agenda lines are not work of their own, so they become steps on the main item rather than
+  // extra rows to triage.
+  captureAgenda = entries.filter((entry) => entry.kind === "agenda");
+  capturePlan = entries
+    .slice(1)
+    .filter((entry) => entry.kind !== "agenda")
+    .slice(0, CAPTURE_PLAN_LIMIT);
+  renderCapturePlan();
+}
+
+function editCapturePlan(index, field, value) {
+  const entry = capturePlan[index];
+  if (!entry) return;
+  // Correcting a row is a decision to keep control, so nothing may auto-save after it.
+  capturePlanTouched = true;
+  cancelAutoSave();
+  if (field === "dueDate") {
+    // A half-typed datetime-local value must clear the date, never become NaN.
+    const parsed = value ? new Date(value) : null;
+    entry.dueDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : "";
+    return;
+  }
+  if (field === "kind") entry.kind = CAPTURE_PLAN_KINDS.includes(value) ? value : entry.kind;
+  else entry[field] = String(value || "").slice(0, 200);
+}
+
+function removeCapturePlan(index) {
+  if (index < 0 || index >= capturePlan.length) return;
+  capturePlan.splice(index, 1);
+  capturePlanTouched = true;
+  cancelAutoSave();
+  renderCapturePlan();
+}
+
+/* "Save 4 items" makes the fan-out visible before it lands. */
+function updateCaptureSaveLabel() {
+  const button = document.getElementById("captureSaveBtn");
+  if (!button || captureSaveInFlight) return;
+  const total = 1 + capturePlan.length;
+  button.textContent = total > 1 ? `Save ${total} items` : "Save";
+}
+
+/* ---------- Auto-create: "Done." ----------
+
+   The product goal is that a clear sentence needs no Save click at all. It only earns that when
+   the reading is unambiguous: every entry titled, typed and free of a question. One unclear
+   entry and the sheet asks instead, which is why an ambiguous sentence still shows the plan.
+
+   Guarded rather than trusted, because a capture is silent and therefore unforgiving:
+     - text only (voice/image/file/link need their own inputs and an upload)
+     - smart suggestions must still be on
+     - a detected duplicate never auto-saves
+     - editing any plan row cancels it
+     - the text must be unchanged when the timer fires, so a fast typist is never auto-saved
+     - undo is offered, so a wrong auto-create costs one tap */
+const AUTO_SAVE_SETTLE_MS = 1400;
+
+function capturePlanIsClear(items) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!list.length) return false;
+  return list.every((entry) => String(entry.title || "").trim() && entry.kind && !entry.ambiguous);
+}
+
+function cancelAutoSave() {
+  if (!captureAutoSaveTimer) return;
+  clearTimeout(captureAutoSaveTimer);
+  captureAutoSaveTimer = null;
+}
+
+function scheduleAutoSave(items, text) {
+  cancelAutoSave();
+  // The guard is on the *channel*, not the kind: reading the sentence moves captureType to
+  // event/task/…, so testing for "text" here would block every real auto-create.
+  if (["voice", "image", "file", "link"].includes(captureType)) return;
+  if (!captureSmartEnabled) return;
+  if (!capturePlanIsClear(items)) return;
+  captureAutoSaveTimer = setTimeout(() => {
+    captureAutoSaveTimer = null;
+    const field = document.getElementById("captureText");
+    // Kept typing, or already started correcting the plan: do not decide for them.
+    if (!field || field.value.trim() !== text) return;
+    if (captureDuplicate || capturePlanTouched || captureSaveInFlight) return;
+    saveCapture(true, { auto: true });
+  }, AUTO_SAVE_SETTLE_MS);
+}
 
 function pickScope(scope) {
   captureScope = scope;
@@ -4679,6 +4824,12 @@ function openCapture() {
   captureExtraction = null;
   captureSuggestionFields = {};
   captureDuplicate = null;
+  capturePlan = [];
+  captureAgenda = [];
+  captureMainAsk = "";
+  capturePlanTouched = false;
+  cancelAutoSave();
+  renderCapturePlan();
   captureVoiceFinal = "";
   captureVoiceBase = "";
   stopVoiceDictation();
@@ -4848,7 +4999,10 @@ function updateCaptureDuplicate(kind, title) {
     message.textContent = `“${duplicate.title}” was captured ${age}. Open it or save this as a separate item.`;
   }
   const saveButton = document.getElementById("captureSaveBtn");
-  if (saveButton && !saveButton.disabled) saveButton.textContent = duplicate ? "Review duplicate" : "Save";
+  if (saveButton && !saveButton.disabled) {
+    if (duplicate) saveButton.textContent = "Review duplicate";
+    else updateCaptureSaveLabel();
+  }
   return duplicate;
 }
 
@@ -4859,7 +5013,7 @@ function clearCaptureDuplicate() {
   const message = document.getElementById("captureDuplicateText");
   if (message) message.textContent = "";
   const saveButton = document.getElementById("captureSaveBtn");
-  if (saveButton) saveButton.textContent = "Save";
+  if (saveButton) updateCaptureSaveLabel();
 }
 
 function openCaptureDuplicate() {
@@ -4893,6 +5047,12 @@ function clearCaptureSuggestions() {
   }
   captureExtraction = null;
   captureSuggestionFields = {};
+  capturePlan = [];
+  captureAgenda = [];
+  captureMainAsk = "";
+  capturePlanTouched = false;
+  cancelAutoSave();
+  renderCapturePlan();
   const clearButton = document.getElementById("clearCaptureSuggestionsBtn");
   if (clearButton) clearButton.disabled = true;
   dismissCaptureQuestion();
@@ -4919,6 +5079,13 @@ function onLinkInput() {
 function onCaptureInput() {
   const text = document.getElementById("captureText").value;
   captureExtraction = null;
+  // A stale plan belongs to words the person has since changed, so it is dropped.
+  capturePlan = [];
+  captureAgenda = [];
+  captureMainAsk = "";
+  capturePlanTouched = false;
+  cancelAutoSave();
+  renderCapturePlan();
   updateCaptureDuplicate(captureType, text);
   if (!captureSmartEnabled) return;
   document.getElementById("captureHint").textContent = "";
@@ -4959,6 +5126,154 @@ async function extractWithAI(text) {
   // The person kept typing while the request was in flight; the answer is now stale.
   if (document.getElementById("captureText").value !== text) return;
   if (ai) applyExtraction(mergeExtractions(local, ai), text);
+  // After the form settles, so the plan and the fields cannot disagree on the main item.
+  if (ai) setCapturePlan(ai.items, ai.ambiguous);
+  // "Done." A sentence that read cleanly creates itself; an unclear one still asks.
+  if (ai?.items?.length) scheduleAutoSave(ai.items, text);
+}
+
+function renderCapturePlan() {
+  const host = document.getElementById("capturePlan");
+  if (!host) return;
+  if (!capturePlan.length && !captureAgenda.length && !captureMainAsk) {
+    host.hidden = true;
+    host.innerHTML = "";
+    updateCaptureSaveLabel();
+    return;
+  }
+  host.hidden = false;
+  // The main item's own question belongs here, because the form has nowhere to show it.
+  const askLine = captureMainAsk
+    ? `<p class="capture-plan-ask">${icon("circle-help")} ${escapeHtml(captureMainAsk)}</p>`
+    : "";
+  const agendaLine = captureAgenda.length
+    ? `<p class="capture-plan-agenda">${icon("list-checks")} Also added to the first item, as steps: ${escapeHtml(
+        captureAgenda.map((entry) => entry.title).join(", "),
+      )}</p>`
+    : "";
+  const headLine = capturePlan.length
+    ? `<p class="capture-plan-head">${icon("layers")} This sentence holds ${
+        capturePlan.length + 1
+      } things. They are all saved.</p>`
+    : "";
+  host.innerHTML = [
+    headLine,
+    askLine,
+    agendaLine,
+    capturePlan.map((entry, index) => capturePlanRowHtml(entry, index)).join(""),
+  ].join("");
+  refreshIcons();
+  updateCaptureSaveLabel();
+}
+
+function capturePlanRowHtml(entry, index) {
+  const flag = entry.ambiguous
+    ? `<p class="capture-plan-flag">${icon("circle-help")} ${escapeHtml(entry.ambiguous)}</p>`
+    : "";
+  const options = CAPTURE_PLAN_KINDS.map(
+    (kind) =>
+      `<option value="${kind}"${kind === entry.kind ? " selected" : ""}>${escapeHtml(
+        CAPTURE_PLAN_KIND_LABELS[kind],
+      )}</option>`,
+  ).join("");
+  return `<div class="capture-plan-row" data-plan-index="${index}">
+            <div class="capture-plan-row-top">
+              <input class="capture-plan-title" type="text" value="${escapeHtml(entry.title)}"
+                oninput="editCapturePlan(${index}, 'title', this.value)"
+                aria-label="Item ${index + 1} title" />
+              <button type="button" class="capture-plan-remove" onclick="removeCapturePlan(${index})"
+                aria-label="Remove item ${index + 1}">${icon("x")}</button>
+            </div>
+            <div class="capture-plan-row-bottom">
+              <select class="capture-plan-select" onchange="editCapturePlan(${index}, 'kind', this.value)"
+                aria-label="Item ${index + 1} type">${options}</select>
+              <input class="capture-plan-due" type="datetime-local"
+                value="${escapeHtml(toDateTimeLocalValue(entry.dueDate))}"
+                onchange="editCapturePlan(${index}, 'dueDate', this.value)"
+                aria-label="Item ${index + 1} due" />
+            </div>
+            ${flag}
+          </div>`;
+}
+
+/* ---------- Undo for an auto-created capture ----------
+
+   Auto-create is silent, so it is only acceptable if it is cheap to reverse. This bar names
+   what was created and removes the whole group, because a capture that made three items must be
+   undoable as the one action the person took, not three. */
+let captureUndoTimer = null;
+let captureUndoItems = [];
+
+function showCaptureUndo(items) {
+  const bar = document.getElementById("captureUndo");
+  if (!bar) return;
+  captureUndoItems = items;
+  clearTimeout(captureUndoTimer);
+  const count = items.length;
+  bar.innerHTML = `${icon("check")} <span>${escapeHtml(
+    count === 1 ? items[0].title : `Saved ${count} items`,
+  )}</span> <button type="button" class="capture-undo-btn" onclick="undoCaptureSave()">Undo</button>`;
+  bar.hidden = false;
+  refreshIcons();
+  captureUndoTimer = setTimeout(dismissCaptureUndo, 8000);
+}
+
+function dismissCaptureUndo() {
+  clearTimeout(captureUndoTimer);
+  captureUndoTimer = null;
+  captureUndoItems = [];
+  const bar = document.getElementById("captureUndo");
+  if (bar) {
+    bar.hidden = true;
+    bar.innerHTML = "";
+  }
+}
+
+async function undoCaptureSave() {
+  const items = captureUndoItems;
+  dismissCaptureUndo();
+  // Main item first, so no extra is ever orphaned pointing at a row that is already gone.
+  for (const item of items.slice().reverse()) {
+    state.items = state.items.filter((i) => i.id !== item.id);
+    await dbDeleteItem(item.id, item);
+  }
+  renderAll();
+}
+
+/* Extra plan rows as real items, linked back via planOf so the group stays traceable. */
+function buildCapturePlanItems(main) {
+  return capturePlan
+    .map((entry, index) => {
+      const title = String(entry.title || "").trim();
+      if (!title) return null;
+      const parsed = entry.dueDate ? new Date(entry.dueDate) : null;
+      const dueISO = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : "";
+      return {
+        id: cid(),
+        ownerId: main.ownerId,
+        kind: entry.kind,
+        title,
+        sub: CAPTURE_PLAN_SUB[entry.kind] || "Captured task",
+        priority: entry.priority || (entry.kind === "task" ? "medium" : ""),
+        person: entry.person || "",
+        due: dueISO ? formatDueDisplay(dueISO) : "",
+        dueDate: dueISO,
+        recurrence: "none",
+        status: entry.kind === "task" ? "today" : "inbox",
+        project: entry.project || main.project,
+        created: Date.now(),
+        done: false,
+        scope: main.scope,
+        mediaUrl: "",
+        sourceType: main.sourceType,
+        rawText: main.rawText,
+        captureMetadata: { ...main.captureMetadata, planOf: main.id, planIndex: index + 2 },
+        captureFingerprint: CAPTURE_GENERIC_TITLES.has(normaliseCaptureFingerprint(title))
+          ? null
+          : captureFingerprintFor(entry.kind, title),
+      };
+    })
+    .filter(Boolean);
 }
 
 /* Progress line under the smart-suggestions toggle. Extracted so the reading steps can never
@@ -5242,8 +5557,12 @@ const COMMITMENT_RE =
    task plus a promise, a date plus a follow-up — and the single-value local rules can only
    ever report the first match. That is the main reason to call the model. */
 function splitCaptureClauses(text) {
+  // Commas count. "Meeting at 9, discuss the app, send the proposal" is three things, and
+  // splitting only on full stops read it as one — so the model was never asked, and the
+  // second and third parts were lost. Over-splitting only costs one request; under-splitting
+  // loses the work, so the comma belongs here.
   return String(text || "")
-    .split(/[.;!?\n]+|\b(?:and then|also|plus|then)\b/i)
+    .split(/[.;,!?\n]+|\b(?:and then|also|plus|then)\b/i)
     .map((clause) => clause.trim())
     .filter((clause) => clause.length > 2);
 }
@@ -5359,7 +5678,12 @@ async function requestModelExtraction(text) {
     });
     if (!res.ok) return null;
     const data = await res.json();
-    return data?.extraction || null;
+    if (!data?.extraction) return null;
+    // An older build ignores `items` and keeps the one-item behaviour.
+    return {
+      ...data.extraction,
+      items: Array.isArray(data.items) ? data.items : [],
+    };
   } catch (error) {
     return null;
   }
@@ -5396,8 +5720,10 @@ function closeCapture() {
   document.getElementById("captureModal").classList.remove("open");
   lockPageScroll(false);
 }
-async function saveCapture(forceSave = false) {
+async function saveCapture(forceSave = false, options = {}) {
   if (captureSaveInFlight) return false;
+  // A manual Save supersedes any pending "Done.", so it can never fire a moment later.
+  cancelAutoSave();
   const kind = captureType;
   const isMediaType = ["voice", "image", "file"].includes(kind);
   const isLink = kind === "link";
@@ -5437,7 +5763,16 @@ async function saveCapture(forceSave = false) {
     : isLink
       ? text
       : text;
-  if (!forceSave && updateCaptureDuplicate(realKind, candidateTitle)) {
+  // A capture that saves itself made the raw sentence the title of every meeting and task, which
+  // reads badly in a list. The reading already returns a clean one, so use it for work — but not
+  // for a note, a link or media, where the person's own words are the point. rawText keeps the
+  // original sentence either way, so nothing is lost.
+  const title = CAPTURE_MODEL_TITLE_KINDS.has(realKind)
+    ? String(captureExtraction?.title || "").trim().slice(0, 200) || candidateTitle
+    : candidateTitle;
+  // Checked against the title that will actually be stored, so the fingerprint and the warning
+  // can never disagree about what "the same capture" means.
+  if (!forceSave && updateCaptureDuplicate(realKind, title)) {
     document.getElementById("captureDuplicateWarning")?.scrollIntoView({ block: "nearest" });
     return false;
   }
@@ -5462,7 +5797,6 @@ async function saveCapture(forceSave = false) {
     const person = document.getElementById("capturePerson").value.trim();
     const captionText = document.getElementById("captureText").value.trim();
     const sourceType = isLink ? "link" : isMediaType ? kind : "manual";
-    const title = candidateTitle;
     const sub = isMediaType
       ? kind === "voice"
         ? captionText ? "Voice note" : "Voice"
@@ -5516,10 +5850,29 @@ async function saveCapture(forceSave = false) {
       captureFingerprint: CAPTURE_GENERIC_TITLES.has(normaliseCaptureFingerprint(title)) ? null : captureFingerprintFor(realKind, title),
     };
 
+    // Agenda lines ride along as the main item's checklist, not as extra rows to triage.
+    if (captureAgenda.length) {
+      newItem.checklist = normaliseChecklist([
+        ...normaliseChecklist(newItem.checklist),
+        ...captureAgenda.map((entry) => ({ text: entry.title, done: false })),
+      ]);
+    }
+
     state.items.unshift(newItem);
     closeCapture();
     await dbSaveItem(newItem);
-    return true;
+
+    // Saved after the first item so planOf can point at it, one at a time so a mid-way
+    // failure cannot leave the group half-written while the screen claims success.
+    const created = [newItem];
+    for (const extra of buildCapturePlanItems(newItem)) {
+      state.items.unshift(extra);
+      created.push(extra);
+      await dbSaveItem(extra);
+    }
+    // Only an auto-create is silent, so only an auto-create has to be reversible.
+    if (options.auto) showCaptureUndo(created);
+    return created;
   } catch (error) {
     console.error("Capture save failed:", error);
     const hint = document.getElementById("captureHint");
@@ -5529,7 +5882,7 @@ async function saveCapture(forceSave = false) {
     captureSaveInFlight = false;
     if (saveButton) {
       saveButton.disabled = false;
-      saveButton.textContent = "Save";
+      updateCaptureSaveLabel();
     }
   }
 }

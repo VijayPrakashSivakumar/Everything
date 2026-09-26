@@ -46,7 +46,7 @@ function setEnv(next) {
   Object.assign(process.env, next);
 }
 
-const { complete, aiStatus, probeProvider, parseExtraction, buildExtractionPrompt, resetFailureMemory } = await import('../api/ask.js');
+const { complete, aiStatus, probeProvider, parseExtraction, parseExtractionPlan, buildExtractionPrompt, resetFailureMemory } = await import('../api/ask.js');
 
 // Every scenario starts with an empty provider-failure memory. The adapter deliberately remembers
 // which providers just failed so it can skip them, and that memory is module state shared across
@@ -504,6 +504,78 @@ await check('the extraction prompt refuses to invent a date and carries the date
   assert.match(prompt, /Maybe Friday about the quote/, 'the sentence must be included');
   assert.match(prompt, /waiting/, 'the prompt must explain the non-task kinds');
   assert.match(prompt, /openloop/, 'the prompt must explain open loops');
+});
+
+/* ---------- Capture plan: one sentence, several things ---------- */
+
+await check('a plan reads every thing one sentence unpacked into', async () => {
+  const plan = parseExtractionPlan('{"items":['
+    + '{"kind":"event","title":"Design team meeting","dueDate":"2026-09-27T09:00:00.000Z","person":"","project":"","priority":"","recurrence":"none","confidence":"high","ambiguous":""},'
+    + '{"kind":"agenda","title":"Discuss the new app","dueDate":"","person":"","project":"","priority":"","recurrence":"none","confidence":"high","ambiguous":""},'
+    + '{"kind":"task","title":"Send the proposal","dueDate":"","person":"","project":"","priority":"medium","recurrence":"none","confidence":"medium","ambiguous":""}]}');
+  assert.equal(plan.length, 3, 'the meeting, its agenda and the follow-up must all survive');
+  assert.equal(plan[0].kind, 'event');
+  assert.equal(plan[0].title, 'Design team meeting');
+  assert.equal(plan[1].kind, 'agenda', 'an agenda line must be expressible, so it can become a step');
+  assert.equal(plan[2].title, 'Send the proposal');
+});
+
+await check('a plan tolerates a bare array, a lone object and code fences', async () => {
+  // A model that ignores the wrapper must still capture, not fail the whole capture.
+  const bare = parseExtractionPlan('[{"kind":"task","title":"Pay the invoice"}]');
+  assert.equal(bare.length, 1);
+  assert.equal(bare[0].title, 'Pay the invoice');
+
+  const lone = parseExtractionPlan('{"kind":"task","title":"Call Ravi"}');
+  assert.equal(lone.length, 1, 'a lone object is a one-item plan');
+  assert.equal(lone[0].title, 'Call Ravi');
+
+  const fenced = parseExtractionPlan('Sure:\n```json\n{"items":[{"kind":"event","title":"Standup"}]}\n```\nDone.');
+  assert.equal(fenced.length, 1);
+  assert.equal(fenced[0].kind, 'event');
+});
+
+await check('a plan drops untitled entries and refuses to flood the inbox', async () => {
+  const fillers = Array.from({ length: 9 }, (_, i) => `{"kind":"task","title":"Filler ${i}"}`);
+  const messy = parseExtractionPlan('{"items":['
+    + '{"kind":"task","title":"Real task"},'
+    + '{"kind":"task","title":"   "},'
+    + '{"kind":"task"},'
+    + 'null,'
+    + '"a string",'
+    + fillers.join(',')
+    + ']}');
+  assert.equal(messy[0].title, 'Real task', 'the first real entry must survive');
+  assert.ok(!messy.some((entry) => !entry.title), 'no untitled entry may be saved as a blank row');
+  assert.equal(messy.length, 6, `a plan must be capped, got ${messy.length}`);
+});
+
+await check('a plan validates fields exactly like the single read', async () => {
+  const plan = parseExtractionPlan('{"items":[{"kind":"spaceship","title":"x","priority":"catastrophic","recurrence":"fortnightly","confidence":"certain","dueDate":12345}]}');
+  assert.equal(plan[0].kind, '', 'an unknown kind must be dropped');
+  assert.equal(plan[0].priority, '');
+  assert.equal(plan[0].recurrence, 'none');
+  assert.equal(plan[0].confidence, 'medium');
+  assert.equal(plan[0].dueDate, '', 'a non-string date must be dropped');
+});
+
+await check('a plan rejects unusable replies without throwing', async () => {
+  for (const bad of ['', '   ', 'not json at all', '{"items":[', '[]', '{"items":[]}', 'null', '"a string"', '42']) {
+    assert.equal(parseExtractionPlan(bad), null, `must be null for: ${JSON.stringify(bad)}`);
+  }
+});
+
+await check('the prompt asks for a plan, and still refuses to invent a date', async () => {
+  const prompt = buildExtractionPrompt(
+    'Tomorrow we have a meeting with the design team at 9 AM. Need to discuss the new app and send the proposal afterward.',
+    'Saturday, September 26, 2026',
+  );
+  assert.match(prompt, /\{"items":\[/, 'the prompt must ask for the items list, not a lone object');
+  assert.match(prompt, /ONE entry per distinct thing/i, 'the prompt must ask for one entry per thing');
+  assert.match(prompt, /"agenda"/, 'the prompt must explain the agenda kind');
+  assert.match(prompt, /Never invent a date/i, 'the prompt must keep forbidding an invented date');
+  assert.match(prompt, /Saturday, September 26, 2026/, 'the current date must reach the model');
+  assert.match(prompt, /design team at 9 AM/, 'the sentence must be included');
 });
 
 await check('the Gemini path is a working default, not just a reordered list', async () => {

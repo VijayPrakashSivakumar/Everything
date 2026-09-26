@@ -16,7 +16,8 @@ inbox, calendar, projects, goals, and AI-assisted search.
 ## Features
 - **Capture** — text, voice (recording or browser dictation), image, file and link captures,
   with editable smart suggestions for type, date, person, priority, recurrence and project,
-  plus duplicate-capture protection.
+  plus duplicate-capture protection. One sentence can unpack into **several** items, and a clear
+  one creates itself with no Save click — see *Auto-create* and *One sentence, several things*.
 - **Views** — Today, Inbox, Tasks, Schedule (week/month), Memory, People, Projects,
   Goals, Reports and Insights.
 - **Ask / Search** — `Ctrl/⌘ + K` or `/` opens search, which answers questions via
@@ -182,13 +183,109 @@ Friday" is not a date, so the sheet asks rather than guessing:
 | `maybe friday about the quotation` | asks: *"I read 'maybe' as <date>. Keep that, or pick another day?"* |
 | `I'll send the drawings tomorrow` | asks: *"This sounds like something you promised. Shall I keep it as a task?"* |
 | `Ravi prefers WhatsApp instead of email` | **memory**, not a task (the verbs say "email") |
-| `ring the shop about the quote tomorrow, and remind me to pay the invoice` | AI reads the second clause the single-value rules would drop |
+| `ring the shop about the quote tomorrow, and remind me to pay the invoice` | two items, not one — see below |
 
 Questions are shown **one at a time**, always dismissible, and never block Save — "suggestions,
 not pressure". An answer the person gives is no longer a suggestion, so *Clear suggestions* will
 not undo it.
 
 Type, voice and image all end up in the same pipeline, so all three get the same reading.
+
+### What a capture is called
+
+A capture that saves itself used to make the **whole sentence** the title of every meeting and
+task, which is unreadable in a list. The reading already returns a clean one, so:
+
+| Kind | Title |
+| --- | --- |
+| task, event, waiting, open loop | the reading's title — *"Design team meeting"* |
+| memory (a note), link, voice, image, file | **your own words**, unchanged |
+| no reading available | your own words |
+
+`raw_text` always keeps the sentence the item came from, so nothing is lost and the original is
+still searchable.
+
+The **duplicate guard is checked against the title that is actually stored**, not the raw text.
+That was the subtle part: once titles are normalised, the same sentence twice produces the same
+title twice, so the guard finally catches it — checking the raw text would have let a repeated
+capture through under a fingerprint that no longer matched.
+
+### Auto-create — "Done."
+
+A clear sentence now saves **itself**. There is no Save click at all, and no form to fill: you
+type the sentence, it becomes the items, the sheet closes.
+
+It only earns that when the reading is completely clean — `capturePlanIsClear()` requires every
+entry to be **titled**, **typed**, and free of a **question**. One unclear entry and the sheet
+asks instead, so *"Meet John sometime next week"* still stops and asks rather than guessing.
+
+| | |
+| --- | --- |
+| clear sentence | creates every item, closes the sheet, shows *"Saved 2 items · Undo"* |
+| any doubt | shows the plan and the question, saves nothing |
+| you touch a row | auto-create is cancelled — taking control is a decision |
+| you press Save | cancels the pending auto-create; no undo bar, because you chose it |
+| smart suggestions off | no reading, so no auto-create |
+| voice / image / file / link | never auto-saves — those need their own inputs and an upload |
+
+A silent action is only acceptable if it is cheap to reverse, so the bar names what was made and
+**undo removes the whole capture** — one capture that made three items is one action, not three.
+It dismisses itself after 8 seconds.
+
+Two details that are easy to get wrong, and were:
+
+- **The auto-save guard is the *channel*, not the kind.** Reading a sentence moves `captureType`
+  to `event`/`task`/…, so a `captureType === "text"` test blocks *every* real auto-create. It
+  checks for `voice`/`image`/`file`/`link` instead.
+- **A comma is a boundary.** `splitCaptureClauses()` originally split on `.` `;` `!` but not
+  `,`, so *"meeting at 9, discuss the app, send the proposal"* counted as **one** clause. The
+  local rules were then "confident", `captureNeedsModelHelp()` said no, the model was never
+  asked, and two thirds of the sentence was silently dropped. Over-splitting only costs one
+  request; under-splitting loses work, so the comma belongs in the separator.
+
+A question about **entry 0** also used to be invisible — it drives the form, which has nowhere
+to show one. It now appears in the plan block as `.capture-plan-ask`.
+
+### One sentence, several things
+
+One capture used to save exactly **one** item. `splitCaptureClauses()` only decided *whether to
+call the model*, so "ring the shop about the quote tomorrow, and remind me to pay the invoice"
+had its second clause folded into the first item's title — one long title, one reminder, and the
+invoice effectively lost.
+
+The model now returns **one entry per distinct thing** (`{"items":[…]}` from
+`buildExtractionPrompt`, read by `parseExtractionPlan` in `api/ask.js`). Take:
+
+> Tomorrow we have a meeting with the design team at 9 AM. Need to discuss the new app and send
+> the proposal afterward.
+
+| Entry | Becomes |
+| --- | --- |
+| event — *Design team meeting*, tomorrow 09:00 | the item the form is editing |
+| agenda — *Discuss the new app* | a **checklist step on the meeting**, not a second item |
+| task — *Send the proposal* | its **own item**, `capture_metadata.planOf` pointing at the meeting |
+
+How it is put in front of the person, and why:
+
+- **Entry 0 drives the form** the sheet already shows, so the single-item path is untouched and
+  the main item keeps your typed text as its title, exactly as before.
+- **The rest appear as a short list** under the suggestions — title, type and date, each editable,
+  each removable. The list is shown *before* saving, so less typing never means an action the
+  person was not told about.
+- **The Save button counts**: *Save 4 items*. The fan-out is stated, not assumed.
+- **Retyping invalidates the plan**, so a stale suggestion can never be saved beside words you
+  have since changed. *Clear suggestions* clears it too.
+- **Capped at 6 extra items** (`CAPTURE_PLAN_LIMIT`, `MAX_PLAN_ITEMS`) so a run-on sentence or a
+  wall of pasted text cannot flood the inbox.
+- `extraction` is still returned as the first entry, so a browser on the previous build keeps
+  working and still captures one item.
+
+`agenda` is deliberately **not** a stored kind — it exists only so the model can say "this belongs
+to the meeting". `normalisePlanEntry()` must therefore let `agenda` survive normalisation, or
+every agenda line would silently become a task.
+
+`Everything/tests/plan-probe.mjs` drives this in a real browser with a mocked `/api/ask`: one
+sentence in, two items and a checklist step out. `npm test` runs it.
 
 ## Voice and image capture
 
@@ -268,7 +365,15 @@ The suites run offline — no API key, no login, no network:
 ```bash
 node Everything/tests/ask-adapter.test.mjs   # provider fallback, shared budget, reason trail
 node Everything/tests/ui-structure.test.mjs  # search wiring, mobile layout, back guard, schema
+node Everything/tests/plan-probe.mjs         # capture fan-out, in a real browser
+node Everything/tests/plan-visual.mjs        # plan layout, escaping, phone fit, screenshots
+node Everything/tests/autosave-probe.mjs      # auto-create, the doubt path, undo
 ```
+
+`npm test` runs all of them, plus the mobile audit. The two plan checks need Playwright (already a
+dev dependency) and start their own static server (ports 4399 and 4402); they mock `/api/ask`, so
+they need no API key and make no model call. `plan-visual.mjs` writes `tmp/plan-desktop.png` and
+`tmp/plan-mobile.png` so the layout can be looked at rather than inferred.
 
 The second suite has an opt-in live probe that checks the deployed database really does expose an
 orderable created column on every table:

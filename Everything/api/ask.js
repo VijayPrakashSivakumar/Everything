@@ -427,29 +427,55 @@ export function buildContextLine(item) {
    rather than as a second function because the project is already at Vercel Hobby's
    12-function limit. The browser still applies its own local rules first and only calls
    this when those rules are unsure, so ordinary captures stay instant and cost nothing. */
-const EXTRACTION_KINDS = ['task', 'event', 'memory', 'waiting', 'openloop'];
+// `agenda` is not stored as a kind: the browser folds it into the meeting's checklist.
+const EXTRACTION_KINDS = ['task', 'event', 'memory', 'waiting', 'openloop', 'agenda'];
 const EXTRACTION_RECURRENCE = ['none', 'daily', 'weekly', 'monthly'];
 const EXTRACTION_PRIORITY = ['high', 'medium', 'low'];
 const EXTRACTION_CONFIDENCE = ['high', 'medium', 'low'];
+
+// A run-on or pasted wall of text must not be able to flood the inbox.
+const MAX_PLAN_ITEMS = 6;
 
 const oneOf = (value, allowed, fallback) => {
   const raw = String(value ?? '').trim().toLowerCase();
   return allowed.includes(raw) ? raw : fallback;
 };
 
+// One plan entry, with every field forced to a value the capture form can represent.
+function cleanExtraction(parsed) {
+  const str = (value) => (typeof value === 'string' ? value.trim() : '');
+  return {
+    kind: oneOf(parsed.kind, EXTRACTION_KINDS, ''),
+    title: str(parsed.title).slice(0, 200),
+    dueDate: str(parsed.dueDate).slice(0, 40),
+    person: str(parsed.person).slice(0, 80),
+    project: str(parsed.project).slice(0, 80),
+    priority: oneOf(parsed.priority, EXTRACTION_PRIORITY, ''),
+    recurrence: oneOf(parsed.recurrence, EXTRACTION_RECURRENCE, 'none'),
+    confidence: oneOf(parsed.confidence, EXTRACTION_CONFIDENCE, 'medium'),
+    ambiguous: str(parsed.ambiguous).slice(0, 200),
+  };
+}
+
 export function buildExtractionPrompt(text, today) {
   return `You turn one captured sentence into structured data for a personal productivity app called Everything. Today is ${today}.
 
 Rules:
-- One sentence often carries more than one thing (a task plus a promise, a date plus a follow-up). Put the thing the person must act on in the title.
+- One sentence often carries SEVERAL things (a meeting plus what to discuss plus what to send afterwards). Return ONE entry per distinct thing, most important first. Do not merge them into one title, and do not drop them.
+- "agenda" is for a talking point belonging to a meeting in the same sentence ("need to discuss the new app"). It is not something the person does afterwards.
+- A follow-up mentioned after a meeting ("send the proposal afterwards") is its own task, and inherits the meeting's date only when the sentence says it happens after.
 - Never invent a date. If the wording is vague ("maybe Friday", "sometime next week"), leave dueDate empty and put the question in ambiguous.
 - "waiting for X" is a waiting item, not a task.
 - An undecided question ("need to decide which laptop") is an openloop.
 - A fact or preference about a person is a memory.
 - A fixed time with someone ("call Ravi at 10") is an event.
+- One sentence carrying a single thing still gets a one-entry list.
 
 Respond with ONLY raw JSON, no prose and no code fence:
-{"kind":"task|event|memory|waiting|openloop","title":"short imperative title","dueDate":"ISO 8601 datetime or empty string","person":"name or empty string","project":"name or empty string","priority":"high|medium|low or empty string","recurrence":"none|daily|weekly|monthly","confidence":"high|medium|low","ambiguous":"one short question if something is genuinely unclear, otherwise empty string"}
+{"items":[{"kind":"task|event|memory|waiting|openloop|agenda","title":"short imperative title","dueDate":"ISO 8601 datetime or empty string","person":"name or empty string","project":"name or empty string","priority":"high|medium|low or empty string","recurrence":"none|daily|weekly|monthly","confidence":"high|medium|low","ambiguous":"one short question if something is genuinely unclear, otherwise empty string"}]}
+
+Worked example — Sentence: "Tomorrow we have a meeting with the design team at 9 AM. Need to discuss the new app and send the proposal afterward."
+{"items":[{"kind":"event","title":"Design team meeting","dueDate":"<tomorrow at 09:00, ISO 8601>","person":"","project":"","priority":"","recurrence":"none","confidence":"high","ambiguous":""},{"kind":"agenda","title":"Discuss the new app","dueDate":"","person":"","project":"","priority":"","recurrence":"none","confidence":"high","ambiguous":""},{"kind":"task","title":"Send the proposal","dueDate":"","person":"","project":"","priority":"","recurrence":"none","confidence":"medium","ambiguous":""}]}
 
 Sentence: ${text}`;
 }
@@ -474,19 +500,47 @@ export function parseExtraction(raw) {
     return null;
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return cleanExtraction(parsed);
+}
 
-  const str = (value) => (typeof value === 'string' ? value.trim() : '');
-  return {
-    kind: oneOf(parsed.kind, EXTRACTION_KINDS, ''),
-    title: str(parsed.title).slice(0, 200),
-    dueDate: str(parsed.dueDate).slice(0, 40),
-    person: str(parsed.person).slice(0, 80),
-    project: str(parsed.project).slice(0, 80),
-    priority: oneOf(parsed.priority, EXTRACTION_PRIORITY, ''),
-    recurrence: oneOf(parsed.recurrence, EXTRACTION_RECURRENCE, 'none'),
-    confidence: oneOf(parsed.confidence, EXTRACTION_CONFIDENCE, 'medium'),
-    ambiguous: str(parsed.ambiguous).slice(0, 200),
-  };
+/* Reads the whole plan — every thing one sentence unpacked into. This is the difference
+   between "one capture, one item" and "type the sentence, get the meeting, its agenda and
+   the follow-up". Also accepts a bare array or a lone object, so a model that ignores the
+   wrapper still yields a usable one-item plan instead of a failed capture. */
+export function parseExtractionPlan(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced ? fenced[1] : text).trim();
+
+  // Whichever bracket opens first wins, so a bare array is not read as an object, or vice versa.
+  const objectStart = candidate.indexOf('{');
+  const arrayStart = candidate.indexOf('[');
+  const useArray = arrayStart >= 0 && (objectStart < 0 || arrayStart < objectStart);
+  const start = useArray ? arrayStart : objectStart;
+  const end = useArray ? candidate.lastIndexOf(']') : candidate.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(candidate.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!parsed) return null;
+
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed.items)
+      ? parsed.items
+      : [parsed];
+  // An untitled entry cannot be shown or edited, so it is dropped rather than saved as a
+  // blank row the person would have to clean up.
+  const items = list
+    .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+    .map(cleanExtraction)
+    .filter((entry) => entry.title);
+  return items.length ? items.slice(0, MAX_PLAN_ITEMS) : null;
 }
 
 export default async function handler(req, res) {
@@ -508,20 +562,27 @@ export default async function handler(req, res) {
     const result = await complete({
       prompt: buildExtractionPrompt(text, currentDate),
       // A reasoning model needs headroom before it emits visible text; too small a budget
-      // returns 200 with an empty body, which is what made this look like a failure.
-      maxTokens: 400,
+      // returns 200 with an empty body, which is what made this look like a failure. A plan of
+      // several items is longer than the old single read, so the budget goes up with it.
+      maxTokens: 700,
     });
     if (result.error) {
       return res.status(result.status || 500).json({ error: result.error, reason: result.reason });
     }
-    const extraction = parseExtraction(result.answer);
-    if (!extraction) {
+    const plan = parseExtractionPlan(result.answer);
+    if (!plan) {
       return res.status(502).json({
         error: 'The model did not return a usable result.',
         reason: `${result.provider}:unparsable`,
       });
     }
-    return res.status(200).json({ extraction, provider: result.provider, model: result.model });
+    // `extraction` stays as the first entry, so a browser on the previous build keeps working.
+    return res.status(200).json({
+      extraction: plan[0],
+      items: plan,
+      provider: result.provider,
+      model: result.model,
+    });
   }
 
   if (!query || !query.trim()) return res.status(400).json({ error: 'Missing query' });

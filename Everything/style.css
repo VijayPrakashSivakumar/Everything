@@ -1549,6 +1549,201 @@ h1.page-title {
   color: var(--text);
 }
 
+/* One sentence, several things. Reads as a short list of what else will be saved, not as a
+   second form to complete: each row is editable, and every row can be removed. */
+.capture-plan {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.capture-plan[hidden] {
+  display: none;
+}
+
+/* Confirmation for an auto-created capture. Sits above the content, clear of the mobile tab
+   bar, and never covers the thing it is talking about. */
+.capture-undo {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(440px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 8px 24px rgba(16, 21, 43, 0.18);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.capture-undo[hidden] {
+  display: none;
+}
+
+.capture-undo > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capture-undo > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--green-fg);
+}
+
+.capture-undo-btn {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.capture-undo-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.capture-plan-ask,
+.capture-plan-head,
+.capture-plan-agenda {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.capture-plan-ask {
+  color: var(--muted);
+}
+
+.capture-plan-head {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.capture-plan-agenda {
+  color: var(--muted);
+}
+
+.capture-plan-head svg,
+.capture-plan-ask svg,
+.capture-plan-agenda svg,
+.capture-plan-flag svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.14em;
+}
+
+.capture-plan-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.capture-plan-row:first-of-type {
+  border-top: 0;
+}
+
+.capture-plan-row-top,
+.capture-plan-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.capture-plan-row-bottom {
+  margin-top: 6px;
+}
+
+.capture-plan-title {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.capture-plan-title:focus,
+.capture-plan-select:focus,
+.capture-plan-due:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.capture-plan-select,
+.capture-plan-due {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.capture-plan-select {
+  flex: 0 0 auto;
+}
+
+.capture-plan-due {
+  flex: 1;
+  min-width: 0;
+}
+
+.capture-plan-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.capture-plan-remove:hover {
+  color: var(--text);
+}
+
+.capture-plan-remove svg {
+  width: 15px;
+  height: 15px;
+}
+
+.capture-plan-flag {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .capture-duplicate-warning {
   display: flex;
   align-items: flex-start;
@@ -3427,5 +3622,57 @@ body.overlay-open .content {
 
   .task-select {
     width: 100%;
+  }
+}
+
+/* Capture plan, tightened for phones. A plan makes the capture sheet taller than one screen, so
+   every row loses a little height to keep the review close to the fold. */
+@media (max-width: 480px) {
+  .capture-plan {
+    margin-top: 8px;
+    padding: 9px 10px;
+  }
+
+  .capture-plan-ask,
+  .capture-plan-head,
+  .capture-plan-agenda {
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+
+  .capture-plan-row {
+    padding: 6px 0;
+  }
+
+  .capture-plan-row-bottom {
+    margin-top: 4px;
+  }
+
+  .capture-plan-title {
+    padding: 6px 8px;
+    font-size: 12.5px;
+  }
+
+  .capture-plan-select,
+  .capture-plan-due {
+    min-height: 30px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+
+  .capture-plan-remove {
+    width: 28px;
+    height: 28px;
+  }
+
+  .capture-plan-flag {
+    margin-top: 4px;
+    font-size: 11.5px;
+  }
+
+  /* Clear of the bottom tab bar. */
+  .capture-undo {
+    bottom: 76px;
+    font-size: 12.5px;
   }
 }

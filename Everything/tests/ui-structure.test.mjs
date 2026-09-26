@@ -1372,6 +1372,108 @@ check('smart capture is no longer regex-only, and the local rules still run firs
   assert.match(js, /splitCaptureClauses\(text\)\.length > 1/, 'a multi-clause sentence must reach the model');
 });
 
+check('one sentence can produce several items, and they are all saved', () => {
+  // The gap this closes: one capture used to save exactly one item, so everything after the
+  // first clause of a sentence was lost.
+  assert.match(js, /function setCapturePlan\(items, mainAsk = ""\)/, 'the plan builder is missing');
+  assert.match(js, /if \(ai\) setCapturePlan\(ai\.items,/, 'the model reply never reaches the plan');
+  assert.match(js, /items: Array\.isArray\(data\.items\) \? data\.items : \[\]/,
+    'the whole plan must survive the requestModelExtraction wrapper');
+  assert.match(js, /function buildCapturePlanItems\(main\)/, 'the plan never becomes items');
+  const save = js.slice(js.indexOf('async function saveCapture'));
+  assert.match(save, /for \(const extra of buildCapturePlanItems\(newItem\)\)/,
+    'saving must create one item per plan row');
+  assert.match(js, /planOf: main\.id/, 'the extra items must link back to the first one');
+  // Entry 0 still drives the form, so the single-item path is unchanged.
+  assert.match(js, /\.slice\(1\)/, 'entry 0 drives the form; the rest become rows');
+});
+
+check('an agenda line becomes a step on the main item, not a separate row', () => {
+  assert.match(js, /captureAgenda = entries\.filter\(\(entry\) => entry\.kind === "agenda"\)/,
+    'agenda entries must be collected apart from the rows');
+  const save = js.slice(js.indexOf('async function saveCapture'));
+  assert.match(save, /normaliseChecklist\(\[\s*\.\.\.normaliseChecklist\(newItem\.checklist\)/,
+    'agenda lines must fold into the main item checklist');
+});
+
+check('the plan is shown before saving, and every row can be edited or dropped', () => {
+  assert.match(html, /id="capturePlan" hidden/, 'the sheet has nowhere to show the plan');
+  assert.match(js, /function renderCapturePlan\(\)/, 'the plan is never rendered');
+  assert.match(js, /function editCapturePlan\(index, field, value\)/, 'plan rows must be editable');
+  assert.match(js, /function removeCapturePlan\(index\)/, 'a row the person does not want must be removable');
+  // Everything the plan prints comes from the model, so it all has to be escaped.
+  const row = js.slice(js.indexOf('function capturePlanRowHtml'));
+  assert.match(row, /escapeHtml\(entry\.title\)/, 'a model-supplied title must be escaped');
+  assert.match(row, /escapeHtml\(entry\.ambiguous\)/, 'a model-supplied question must be escaped');
+  assert.match(css, /\.capture-plan-row \{/, 'the plan rows are unstyled');
+});
+
+check('a clear sentence creates itself, and a doubtful one asks instead', () => {
+  assert.match(js, /function capturePlanIsClear\(items\)/, 'the auto-create gate is missing');
+  // Any doubt at all blocks it, which is what makes the "Done." path safe to take silently.
+  assert.match(js, /!entry\.ambiguous\)/, 'an ambiguous entry must block the auto-create');
+  assert.match(js, /if \(ai\?\.items\?\.length\) scheduleAutoSave\(ai\.items, text\)/, 'the model reply must reach the auto-create');
+  // The guard is the channel, not the detected kind: reading a sentence moves captureType off
+  // "text" to event/task, so a "text" test would block every real auto-create.
+  assert.match(js, /\["voice", "image", "file", "link"\]\.includes\(captureType\)/, 'media and link captures must never auto-save');
+  assert.match(js, /if \(!captureSmartEnabled\) return;/, 'opting out of reading must opt out of auto-create');
+  assert.match(js, /const AUTO_SAVE_SETTLE_MS = \d+/, 'there must be a settle delay before deciding');
+});
+
+check('an auto-create can be taken back in one tap', () => {
+  assert.match(html, /id="captureUndo"/, 'there is nowhere to show an undo');
+  assert.match(js, /function showCaptureUndo\(items\)/, 'the auto-create never announces itself');
+  assert.match(js, /function undoCaptureSave\(\)/, 'there is no undo');
+  // It undoes the whole capture, not one row of it.
+  const undo = js.slice(js.indexOf('async function undoCaptureSave'));
+  assert.match(undo, /for \(const item of items\.slice\(\)\.reverse\(\)\)/, 'every created item must be removed');
+  assert.match(undo, /dbDeleteItem\(item\.id, item\)/, 'undo must delete, not just hide');
+  // Only a save the app made on its own needs reversing.
+  assert.match(js, /if \(options\.auto\) showCaptureUndo\(created\)/, 'a manual save must not raise an undo bar');
+  assert.match(js, /cancelAutoSave\(\);/, 'a manual Save must cancel the pending auto-create');
+});
+
+check('the main item question is shown, not swallowed', () => {
+  // Entry 0 drives the form, which has no field for a question, so it used to be invisible.
+  assert.match(js, /captureMainAsk = String\(mainAsk/, 'the main question is dropped');
+  assert.match(js, /class="capture-plan-ask"/, 'the main question is never rendered');
+  assert.match(js, /setCapturePlan\(ai\.items, ai\.ambiguous\)/, 'the merged question must reach the plan');
+  assert.match(js, /!capturePlan\.length && !captureAgenda\.length && !captureMainAsk/, 'a lone question must still show the block');
+});
+
+check('a comma counts as a boundary between things', () => {
+  // "Meeting at 9, discuss the app, send the proposal" split into one clause, so the rules
+  // read it as confident, the model was never asked, and two thirds of the sentence was lost.
+  const split = js.slice(js.indexOf('function splitCaptureClauses'));
+  assert.match(split, /\[\.;,!\?/, 'commas must split clauses');
+});
+
+check('work is titled by the reading, but a note keeps the person own words', () => {
+  // A capture that saves itself made the whole sentence the title of every meeting, which reads
+  // badly in a list. The reading already returns a clean title, so use it for work only.
+  assert.match(js, /const CAPTURE_MODEL_TITLE_KINDS = new Set\(\["task", "event", "waiting", "openloop"\]\)/,
+    'the kinds whose title may be shortened are not declared');
+  assert.match(js, /CAPTURE_MODEL_TITLE_KINDS\.has\(realKind\)/, 'the clean title is never used');
+  // A note, a link and media must keep the typed text: there the wording IS the content.
+  assert.doesNotMatch(js, /const CAPTURE_MODEL_TITLE_KINDS = new Set\(\[[^\]]*"memory"/,
+    'a note must keep the person own words');
+  // The duplicate guard has to use the title that is actually stored, or the fingerprint and
+  // the warning disagree about what "the same capture" means.
+  const save = js.slice(js.indexOf('async function saveCapture'));
+  assert.match(save, /updateCaptureDuplicate\(realKind, title\)/, 'the duplicate check must use the final title');
+  assert.doesNotMatch(save, /updateCaptureDuplicate\(realKind, candidateTitle\)/, 'the duplicate check still uses the raw text');
+  // Nothing is lost: the original sentence is always kept.
+  assert.match(save, /rawText: text \|\| title/, 'the original sentence must still be stored');
+});
+
+check('the save button says how many items are about to be created', () => {
+  assert.match(js, /function updateCaptureSaveLabel\(\)/, 'the save label is never computed');
+  assert.match(js, /`Save \$\{total\} items`/, 'the fan-out must be visible before it lands');
+  // It must never be left stuck on "Saving…" or reset behind a stale duplicate label.
+  const save = js.slice(js.indexOf('async function saveCapture'));
+  assert.match(save, /updateCaptureSaveLabel\(\);/, 'the label must be restored after saving');
+});
+
 check('the local rules report how confident they are', () => {
   assert.match(js, /const VAGUE_TIME_RE =/, 'the vague-time pattern is missing');
   assert.match(js, /const COMMITMENT_RE =/, 'the commitment pattern is missing');
