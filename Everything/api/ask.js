@@ -2,10 +2,8 @@ import { requireUser } from './lib/auth.js';
 
 // Ask/search model provider adapter.
 //
-// The browser UI, the `/api/ask` response contract, and the offline keyword fallback are
-// all unchanged — only the upstream model is configurable. One env var picks the provider,
-// so switching models or vendors never requires another code deployment. It lives inline in
-// this route on purpose: api/ is already at Vercel Hobby's 12-function limit.
+// One env var picks the provider, so switching vendors needs no code deployment. It lives inline in
+// this route because api/ is already at Vercel Hobby's 12-function limit.
 //
 //   AI_PROVIDER=groq | gemini | openai | openrouter | anthropic   (auto-detected if unset)
 //   GROQ_API_KEY       + GROQ_MODEL         (default: openai/gpt-oss-120b)
@@ -15,20 +13,12 @@ import { requireUser } from './lib/auth.js';
 //   ANTHROPIC_API_KEY  + ANTHROPIC_MODEL
 
 const PROVIDERS = {
-  // Gemini is listed first and is the default primary: its free tier has a much larger token
-  // allowance than Groq's, which matters because a build like this also uses the model for
-  // smart-capture extraction.
-  //
-  // It is NOT assumed to be healthy. A free Gemini key returns 429 when its quota is exhausted, so
-  // the adapter remembers recent failures and skips the provider for a few minutes rather than
-  // paying the failed attempt on every request. /api/health?probe=1 reports the intended provider
-  // alongside the one that actually answered, so a silently-dead primary is visible rather than
-  // hidden behind a working fallback.
+  // Gemini first: larger free token allowance than Groq, and smart capture uses the same model.
+  // Not assumed healthy — a free key returns 429 when spent, and the adapter skips a provider that
+  // just failed rather than paying the failed attempt every request.
   gemini: { keyVar: 'GEMINI_API_KEY', modelVar: 'GEMINI_MODEL', defaultModel: 'gemini-flash-latest' },
-  // Groq is the fallback. Its free `openai/gpt-oss-120b` allows only 8K input tokens/minute, so
-  // request volume and context size are bounded on the client and server rather than assumed.
-  // NOTE: llama-3.3-70b-versatile is an Enterprise model on Groq, so the free default is a
-  // GPT-OSS model, which is what the free plan actually serves.
+  // Groq is the fallback; its free gpt-oss-120b allows only 8K input tokens/minute, so request
+  // volume and context size are bounded rather than assumed. (llama-3.3-70b is Enterprise-only.)
   groq: { keyVar: 'GROQ_API_KEY', modelVar: 'GROQ_MODEL', defaultModel: 'openai/gpt-oss-120b' },
   openai: { keyVar: 'OPENAI_API_KEY', modelVar: 'OPENAI_MODEL', defaultModel: 'gpt-4o-mini' },
   openrouter: { keyVar: 'OPENROUTER_API_KEY', modelVar: 'OPENROUTER_MODEL', defaultModel: 'openrouter/free' },
@@ -320,10 +310,8 @@ async function attempt(entry, { prompt, maxTokens, deadline }) {
 // Walks the configured providers in order and returns the first usable answer.
 // Never throws, so the route handler stays trivial.
 //
-// `trace: true` also returns which providers were tried first and why they were skipped. Without
-// it, a provider that is broken-but-not-fatal is invisible: the fallback succeeds, so `complete()`
-// reports success and the health probe shows `ok: true` while the primary is failing on every
-// single request. That is how a dead primary stayed hidden behind a working fallback.
+// `trace` makes a successful-but-degraded result say so. Without it, a dead primary hides behind a
+// working fallback and the health probe reports ok: true.
 export async function complete({ prompt, maxTokens = 300, trace = false }) {
   const chain = providerChain();
   if (!chain.length) {
@@ -405,15 +393,8 @@ export async function probeProvider() {
   };
 }
 
-// Free tiers (Groq in particular) cap input tokens per minute, so the context is bounded
-// rather than sending every item. Newest items are the useful ones, and each line is
-// truncated so one very long title cannot consume the whole budget.
-//
-// 30 was far more than any free tier can absorb: Groq's free `openai/gpt-oss-120b` allows only
-// 8K input tokens/minute, and a 30-item context is roughly 4-6K tokens on its own — two or three
-// searches a minute before the provider starts returning 429. The client already ranks and sends
-// only the best matches (ASK_CONTEXT_MATCHES = 12), so 10 here is a backstop for the in-artifact
-// path, not a downgrade: the first 10 ranked items are what actually answer the question.
+// Free tiers cap input tokens per minute, so the context is bounded. 10 fits the budget; the client
+// already sends only the top ranked matches (ASK_CONTEXT_MATCHES = 12).
 const MAX_CONTEXT_ITEMS = 10;
 const MAX_FIELD = 120;
 

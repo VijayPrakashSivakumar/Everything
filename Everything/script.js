@@ -1078,7 +1078,7 @@ async function ensureHousehold(userId) {
 }
 
 async function getInviteCode() {
-  // maybeSingle() so a household with no invite_code yet is a null result rather than a 406.
+  // maybeSingle(): a household with no invite_code yet is a null result, not a 406.
   const { data } = await sb
     .from("households")
     .select("invite_code")
@@ -1185,9 +1185,7 @@ async function joinHousehold() {
     .from("households")
     .select("id")
     .eq("invite_code", code)
-    // maybeSingle(), not single(): an invite code that matches nothing returns 406 from PostgREST
-    // rather than a null row, so the "Invalid invite code." branch below was unreachable and the
-    // console filled with a 406 every time somebody mistyped a code.
+    // maybeSingle(): a code matching nothing returns 406, not a null row.
     .maybeSingle();
   if (!house) {
     msg.style.color = "var(--red-fg)";
@@ -1317,11 +1315,8 @@ function renderSettings() {
 async function loadProfile() {
   if (syncReadyPromise) await syncReadyPromise;
   if (!sbUser) return;
-  // maybeSingle() rather than single(). PostgREST answers a .single() that matches no row with HTTP
-  // 406 PGRST116 ("Cannot coerce the result to a single JSON object"), so a brand-new account —
-  // which legitimately has no profile row until the first save — logged a console error on every
-  // page load and on every visit to Settings. maybeSingle() returns null for zero rows, which is
-  // the state this code already expects and already handles via the defaults below.
+  // maybeSingle(), not single(): PostgREST returns 406 PGRST116 for zero rows, and a new account
+  // has no profile row until the first save.
   const { data } = await sb
     .from("profiles")
     .select("*")
@@ -1345,8 +1340,7 @@ async function loadProfile() {
     document.documentElement.getAttribute("data-theme") === "dark"
       ? "dark"
       : "light";
-  // The email is already on the session Supabase handed us at sign-in, so reading it back from
-  // /auth/v1/user is a second network round trip on every Settings visit for data already in memory.
+  // The session already has the email, so skip the /auth/v1/user round trip.
   const email = currentUserEmail || "";
   if (email) {
     document.getElementById("profileEmail").value = email;
@@ -2420,11 +2414,8 @@ function renderToday() {
       recent.appendChild(el);
     });
 
-  // The compact strip on Today, and the full Insights view, are the same data. Only the strip is
-  // filled in here; the full view renders itself when it is opened (see renderInsights).
-  //
-  // Both call sites escape the text. getInsights() interpolates user-supplied titles, project names
-  // and person names, and this strip was injecting them into innerHTML unescaped.
+  // The compact strip on Today, and the full Insights view, are the same data.
+  // Both escape the text: getInsights() interpolates user titles, project and person names.
   const insights = document.getElementById("insightsList");
   const insightData = getInsights();
   insights.innerHTML = insightData
@@ -2435,12 +2426,8 @@ function renderToday() {
     .join("");
 }
 
-/* Renders the Insights view.
-
-   This used to be the tail of renderToday(), so the Insights page was only ever populated as a side
-   effect of visiting Today. Opening Insights directly — from a deep link, a restored session, or
-   simply tapping it first — showed empty stat tiles and "Nothing to show yet." even when there was
-   plenty to show. Every other view has its own render call in switchView(); this one now does too. */
+/* Renders the Insights view. This was the tail of renderToday(), so Insights was only ever populated
+   as a side effect of visiting Today, and showed an empty page when opened first. */
 function renderInsights() {
   const insightData = getInsights();
   const full = document.getElementById("insightsFull");
@@ -5495,12 +5482,9 @@ function runSearch(q) {
   }
 
   const matches = searchMatches(q);
-  // The AI answer lives in its own slot so re-rendering the hit list never disturbs it.
-  //
-  // That slot must be REUSED, not recreated. Replacing the dropdown's innerHTML on every
-  // keystroke would detach the node askAI captured, and its answer would be discarded — leaving
-  // the dropdown stuck on "Thinking…" forever. The existing answer is also carried over so a
-  // half-typed word does not blank a finished answer.
+  // The AI answer lives in its own slot so re-rendering the hit list never disturbs it. The slot
+  // must be REUSED, not recreated: replacing the markup detaches the node askAI captured, and its
+  // answer would be discarded, leaving the dropdown stuck on "Thinking…".
   const previousAnswer = document.getElementById("searchAskSlot")?.innerHTML || "";
   dd.innerHTML =
     (matches.length
@@ -5625,27 +5609,19 @@ let askRequestSeq = 0;
 
 /* ---------- Cost control ----------
 
-   Every /api/ask call spends a completion against a free-tier quota. Groq's free
-   `openai/gpt-oss-120b` is capped at 8K input tokens/minute, which a full 12-item context can
-   consume in two or three calls, and the 550/650ms debounces mean a single typed question could
-   fire several. The result was constant 429s and a search that felt broken.
-
-   The ranked local search already answers most queries on its own — it scores title, whole phrase,
-   aliases, status and due date across every field. So the model is a bonus, not the engine. It is
-   now asked only when the query actually reads as a question, and never more often than the quota
-   can absorb. Everything else answers instantly, offline and free. */
+   Groq's free tier allows 8K input tokens/minute, and a full context eats several thousand, so the
+   model is only asked when the query reads as a question. A lookup is answered by the ranked local
+   search, which is instant, private and free. */
 
 const MODEL_MIN_INTERVAL_MS = 6000;
 const ASK_MODEL_MIN_LENGTH = 14;
 let lastModelCallAt = 0;
 
-// Words that mark a real question, as opposed to a lookup. "gym" is a search; "what did I say
-// about the gym membership" is a question worth a model call.
+// "gym" is a search; "what did I say about the gym membership" is a question.
 const QUESTION_WORDS =
   /\b(what|whats|when|where|which|who|whom|whose|why|how|is|are|was|were|do|does|did|can|could|should|would|will|has|have|had|am|any|tell|remind|need|list|show|summar|explain|suggest|help)\b/i;
 
-// A question needs a real question word AND enough words to be one. A bare keyword is a lookup,
-// and those are better served by the instant ranked results than by a slow round trip.
+// Needs a question word and at least three words. A bare keyword is a lookup.
 function shouldAskModel(q) {
   const text = String(q || "").trim();
   if (text.length < ASK_MODEL_MIN_LENGTH) return false;
@@ -5653,9 +5629,7 @@ function shouldAskModel(q) {
   return text.split(/\s+/).length >= 3;
 }
 
-/* Builds the answer from local data alone, and returns null when the query is a real question the
-   ranking cannot settle on its own. A lookup gets a clean instant answer; a question is passed to
-   the model. This is what keeps a normal search session off the free-tier quota entirely. */
+// Answers from local data alone, or null when the query is a real question for the model.
 function buildLocalAnswer(q) {
   const matches = searchMatches(q);
   if (!matches.length) return null;
@@ -5672,8 +5646,7 @@ function buildLocalAnswer(q) {
     .join("\n")}`;
 }
 
-// Rate-limits the model path. Returns false when a call was made very recently, in which case the
-// caller keeps the local answer instead of queueing a call that would only be rate limited.
+// False when a call was made recently; the caller keeps the local answer instead.
 function modelCallAllowed() {
   const now = Date.now();
   if (now - lastModelCallAt < MODEL_MIN_INTERVAL_MS) return false;
@@ -5686,19 +5659,15 @@ async function askAI(q, opts = {}) {
   const extra = opts.extra || "";
   const mountId = opts.mount ? opts.mount.id : "aiAnswerSlot";
 
-  /* Resolves the slot live rather than holding on to one node.
-     The header dropdown rebuilds its own markup on every keystroke, so a node captured at the
-     start of the call is detached by the time the answer arrives; writing to it would either do
-     nothing or, worse, be dropped by a naive "is it still connected?" check — which is what left
-     the dropdown stuck on "Thinking…". Looking the element up again by id always finds the node
-     the user is actually looking at. */
+  /* Resolves the slot live rather than holding one node. The dropdown rebuilds its markup on every
+     keystroke, so a captured node is detached by the time the answer arrives — which is what left
+     the dropdown stuck on "Thinking…". */
   const slot = () => (mountId ? document.getElementById(mountId) : null);
   const first = slot();
   if (!first) return;
   first.innerHTML = `<div class="ask-answer">Thinking…</div>`;
 
-  // Only a *newer* call supersedes this one. A re-rendered dropdown is not a newer question, so
-  // it must not throw away an answer the user is waiting for.
+  // Only a newer call supersedes this one; a re-render is not a newer question.
   const isSuperseded = () => ticket !== askRequestSeq;
   const show = (html) => {
     if (isSuperseded()) return;
@@ -5709,18 +5678,13 @@ async function askAI(q, opts = {}) {
   const contextItems = searchMatches(q);
   const contextPool = askContextPool(q);
 
-  // A lookup is answered from local data alone: instant, private, and it costs no quota at all.
-  // `renderFallback` reuses this, so the local answer stays on screen if the model is skipped,
-  // slow, rate limited, or offline.
+  // A lookup is answered locally: instant, private, no quota. This is also what stays on screen if
+  // the model is skipped, throttled or offline.
   const localAnswer = buildLocalAnswer(q);
   const wantsModel = localAnswer === null;
-
-  // The model is rate limited locally too. A second call within the window keeps the local answer
-  // rather than firing a request the free tier is likely to reject anyway.
   const callModel = wantsModel && modelCallAllowed();
 
-  // The model given today's date so relative questions ("today", "this week", "overdue")
-  // are answerable instead of guessed.
+  // Today, so relative questions ("today", "this week") are answerable.
   const today = new Date().toLocaleDateString(undefined, {
     weekday: "long",
     year: "numeric",
@@ -5753,8 +5717,7 @@ async function askAI(q, opts = {}) {
   }
 
   const renderFallback = (note) => {
-    // `localAnswer` is reused rather than rebuilding a generic line, so an answer that was already
-    // computed locally is never thrown away when the model is skipped or fails.
+    // Reuse the local answer rather than rebuilding a generic line.
     const body =
       localAnswer ||
       (contextItems.length
@@ -5773,8 +5736,7 @@ async function askAI(q, opts = {}) {
     show(`<div class="ask-answer">${escapeHtml(body).replace(/\n/g, "<br>")}${hint}${sources}</div>`);
   };
 
-  // Nothing to spend: a lookup, or a second question inside the rate-limit window. The local answer
-  // is the whole answer here, so no network call is made at all.
+  // A lookup, or a second question inside the rate-limit window. No network call at all.
   if (!callModel) {
     renderFallback(
       wantsModel ? "Showing your matching items — the AI answer is rate limited just now." : "",

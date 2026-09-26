@@ -259,14 +259,8 @@ const searchSource = [
   between('function searchScore', '\n}'),
   between('function searchMatches', '\n}'),
   between('const ASK_CONTEXT_MATCHES', '\n}'),
-  // One slice covers the whole cost-control block: MODEL_MIN_INTERVAL_MS, lastModelCallAt,
-  // ASK_MODEL_MIN_LENGTH, QUESTION_WORDS, shouldAskModel, buildLocalAnswer and modelCallAllowed.
-  // Slicing them separately would re-declare QUESTION_WORDS and throw.
-  //
-  // The end anchor is the *next declaration after the whole block*. A plain "\n}\n" marker would
-  // latch onto shouldAskModel's closing brace and silently truncate the slice, so the later
-  // functions would never reach the harness. Anchoring on the next `async function` line is
-  // unambiguous, and that line is excluded from the slice so no dangling body is evaluated.
+  // One slice for the whole cost-control block; splitting it re-declares QUESTION_WORDS. Anchor on
+  // the next declaration, since a "\n}\n" marker would latch onto an earlier closing brace.
   betweenBlock('const MODEL_MIN_INTERVAL_MS', 'async function askAI'),
 ].join('\n');
 const runSearch = (deps, expr) =>
@@ -410,9 +404,9 @@ check('read queries that can match no row use maybeSingle, not single', () => {
   const insertSingle = /insert\([^)]*\)[\s\S]{0,80}?\.single\(\)/.test(code);
   assert.ok(insertSingle, 'the household insert should still use .single() — it always returns one row');
   assert.equal(singleCalls, 1, `only the guaranteed-row insert may use .single(), found ${singleCalls}`);
-  // And the reason must actually be written down, so the next reader does not "fix" it back.
-  assert.match(js, /maybeSingle\(\) rather than single\(\)/,
-    'the reason for maybeSingle() must be documented in the code');
+  // And the reason must be written down, so the next reader does not "fix" it back.
+  assert.match(js, /maybeSingle\(\)[^\n]*not single\(\)|not single\(\)[^\n]*maybeSingle\(\)/,
+    'the reason for maybeSingle() must be documented next to the call');
 });
 
 check('a new account with no profile row is a normal state, not an error', () => {
