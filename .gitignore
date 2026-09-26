@@ -6,3 +6,7 @@ node_modules/
 # committed. Screenshots from browser checks are build artefacts, not source.
 .browser-profile/
 *.png
+# Scratch files from browser checks and commit messages. These are local tooling, not source, and a
+# `git add -A` should never be able to sweep one into a commit.
+tmp-*
+shot-*.png
