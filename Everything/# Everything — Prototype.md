@@ -25,6 +25,10 @@ inbox, calendar, projects, goals, and AI-assisted search.
   +1 week, clear) instead of editing the date by hand.
 - **Task workflow** — tasks support Planned, Today, In progress, Waiting, Someday, and Completed states, with a Priority view, persisted checklist steps, quick conversion, duplication, rescheduling, priority-aware ordering, and reversible Archive/Restore.
 - **Reports** — 14-day chart of captures vs completions (completions are logged locally).
+- **Insights** — patterns noticed locally: open loops, most active project, most mentioned person,
+  busiest weekday, and overdue count, over total/completed/active-day tiles. Computed from your own
+  data, so it works offline and costs nothing. Each view renders itself when opened, so Insights is
+  correct whether or not Today was visited first.
 - **Backup** — Settings → Account → *Export backup* / *Import backup* (JSON round-trip).
 - **Keyboard shortcuts** — `Ctrl/⌘ + K` search, `C` quick capture, `/` focus search,
   `Esc` close the top-most dialog.

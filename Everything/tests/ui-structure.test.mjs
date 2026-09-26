@@ -345,6 +345,56 @@ check('the server bounds the context to what a free tier can actually accept', (
   assert.ok(maxItems <= 12, `context must fit a free-tier minute, found ${maxItems} items`);
 });
 
+/* ---------- Every view must render itself ----------
+
+   Insights was the only view with no render call in switchView(): its tiles and cards were filled
+   in as a side effect of renderToday(), so opening Insights first — from a deep link, a restored
+   session, or simply tapping it before Today — showed empty stats and "Nothing to show yet." even
+   with plenty of data. Every other view renders on switch. */
+
+check('every view is rendered when it is opened, not as a side effect of another', () => {
+  const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const views = [...html.matchAll(/id="view-(\w+)"/g)].map((m) => m[1]);
+  assert.ok(views.length > 0, 'no views found in index.html');
+
+  const switchView = js.slice(js.indexOf('function switchView'), js.indexOf('function syncSidebarMode'));
+  // `today` is the landing view and renders on load; `logout` is a static card with no data.
+  const dataDriven = views.filter((v) => v !== 'today' && v !== 'logout');
+  const missing = dataDriven.filter((v) => !switchView.includes(`id === "${v}"`));
+  assert.deepEqual(missing, [], `views with no render call in switchView(): ${missing.join(', ')}`);
+});
+
+check('the Insights view renders itself rather than borrowing renderToday', () => {
+  assert.match(js, /function renderInsights\(\)/, 'renderInsights must exist');
+  assert.match(js, /if \(id === "insights"\) renderInsights\(\);/,
+    'switchView must render Insights when it is opened');
+
+  // The full view owns #insightsFull and #insightsStats. If renderToday still wrote them, the bug
+  // would come straight back the moment anyone reordered the two.
+  const insights = js.slice(js.indexOf('function renderInsights'), js.indexOf('function getInsights'));
+  assert.match(insights, /getElementById\("insightsFull"\)/, 'renderInsights owns the full card');
+  assert.match(insights, /getElementById\("insightsStats"\)/, 'renderInsights owns the stat tiles');
+
+  const today = js.slice(js.indexOf('function renderToday'), js.indexOf('function renderInsights'));
+  assert.doesNotMatch(today, /getElementById\("insightsFull"\)/,
+    'renderToday must not fill the Insights view as a side effect');
+  assert.doesNotMatch(today, /getElementById\("insightsStats"\)/,
+    'renderToday must not fill the Insights stat tiles as a side effect');
+});
+
+check('insight text is escaped, because it is built from user-supplied titles', () => {
+  // getInsights() interpolates item titles, project names and person names into its strings, so
+  // every render site must escape. The Today strip did not, which was a latent injection.
+  const strip = js.slice(js.indexOf('function renderToday'), js.indexOf('function renderInsights'));
+  assert.match(strip, /insight-title">\$\{escapeHtml\(i\.title\)\}/,
+    'the Today insight strip must escape the title');
+  assert.match(strip, /insight-sub">\$\{escapeHtml\(i\.sub\)\}/,
+    'the Today insight strip must escape the sub text');
+  const full = js.slice(js.indexOf('function renderInsights'), js.indexOf('function getInsights'));
+  assert.match(full, /insight-title">\$\{escapeHtml\(i\.title\)\}/,
+    'the Insights view must escape the title');
+});
+
 check('matches are ranked, not in insertion order', () => {
   assert.deepEqual(titles(searchApi.searchMatches('proposal')), ['Draft Atlas proposal']);
 });

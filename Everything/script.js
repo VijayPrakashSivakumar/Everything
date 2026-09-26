@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.2";
+const APP_BUILD = "2026-09-26.3";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -2210,6 +2210,7 @@ function switchView(id) {
   if (id === "inbox") renderInbox();
   if (id === "memory") renderMemory();
   if (id === "people") renderPeople();
+  if (id === "insights") renderInsights();
   if (id === "settings") renderSettings();
 
   const content = document.querySelector(".content");
@@ -2403,31 +2404,57 @@ function renderToday() {
       recent.appendChild(el);
     });
 
+  // The compact strip on Today, and the full Insights view, are the same data. Only the strip is
+  // filled in here; the full view renders itself when it is opened (see renderInsights).
+  //
+  // Both call sites escape the text. getInsights() interpolates user-supplied titles, project names
+  // and person names, and this strip was injecting them into innerHTML unescaped.
   const insights = document.getElementById("insightsList");
   const insightData = getInsights();
   insights.innerHTML = insightData
     .map(
       (i) =>
-        `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${i.title}</div><div class="insight-sub">${i.sub}</div></div></div>`,
+        `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div></div></div>`,
     )
     .join("");
-  document.getElementById("insightsFull").innerHTML =
-    insights.innerHTML || '<p class="empty">Nothing to show yet.</p>';
-  const statsEl = document.getElementById("insightsStats");
-  if (statsEl) {
+}
+
+/* Renders the Insights view.
+
+   This used to be the tail of renderToday(), so the Insights page was only ever populated as a side
+   effect of visiting Today. Opening Insights directly — from a deep link, a restored session, or
+   simply tapping it first — showed empty stat tiles and "Nothing to show yet." even when there was
+   plenty to show. Every other view has its own render call in switchView(); this one now does too. */
+function renderInsights() {
+  const insightData = getInsights();
+  const full = document.getElementById("insightsFull");
+  if (full) {
+    full.innerHTML = insightData.length
+      ? insightData
+          .map(
+            (i) =>
+              `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div></div></div>`,
+          )
+          .join("")
+      : '<p class="empty">Nothing to show yet. Capture a few things and patterns will appear here.</p>';
+  }
+
   const activeItems = state.items.filter((i) => !isArchived(i));
   const totalItems = activeItems.length;
   const completedCount = activeItems.filter((i) => i.done).length;
   const activeDays = new Set(
     activeItems.map((i) => new Date(i.created).toDateString()),
   ).size;
+
+  const statsEl = document.getElementById("insightsStats");
+  if (statsEl) {
     statsEl.innerHTML = `
       <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${totalItems}</div><div class="stat-label">Total captured</div></div></div>
       <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${completedCount}</div><div class="stat-label">Completed</div></div></div>
       <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);"><i data-lucide="calendar-days"></i></div><div><div class="stat-num">${activeDays}</div><div class="stat-label">Active days</div></div></div>
     `;
-    refreshIcons();
   }
+  refreshIcons();
 }
 
 function getInsights() {
