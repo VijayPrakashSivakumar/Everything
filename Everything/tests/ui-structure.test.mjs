@@ -395,6 +395,74 @@ check('insight text is escaped, because it is built from user-supplied titles', 
     'the Insights view must escape the title');
 });
 
+/* ---------- No .single() on a query that can legitimately match nothing ----------
+
+   PostgREST answers `.single()` with HTTP 406 PGRST116 when zero rows come back, not with a null
+   row. Every one of these queries is reachable with no matching row — a new account has no profile,
+   a mistyped invite code matches no household — so each was logging a 406 on a normal path. The
+   browser check that found this reported: "failures on a SECOND Settings visit: 1  406 .../profiles". */
+
+check('read queries that can match no row use maybeSingle, not single', () => {
+  // Strip comments before counting: the code carries comments that explain why .single() is wrong,
+  // and those mention the method by name. Counting raw text would count the explanation, not a call.
+  const code = js.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const singleCalls = (code.match(/\.single\(\)/g) || []).length;
+  const insertSingle = /insert\([^)]*\)[\s\S]{0,80}?\.single\(\)/.test(code);
+  assert.ok(insertSingle, 'the household insert should still use .single() — it always returns one row');
+  assert.equal(singleCalls, 1, `only the guaranteed-row insert may use .single(), found ${singleCalls}`);
+  // And the reason must actually be written down, so the next reader does not "fix" it back.
+  assert.match(js, /maybeSingle\(\) rather than single\(\)/,
+    'the reason for maybeSingle() must be documented in the code');
+});
+
+check('a new account with no profile row is a normal state, not an error', () => {
+  const loadProfile = js.slice(js.indexOf('async function loadProfile'), js.indexOf('function updateAvatarDisplay'));
+  assert.match(loadProfile, /\.from\("profiles"\)[\s\S]*?\.maybeSingle\(\)/,
+    'the profile read must use maybeSingle()');
+  assert.match(loadProfile, /const profile = data \|\| \{/,
+    'and must still fall back to defaults when there is no row');
+});
+
+check('an invalid invite code reports the message instead of a 406', () => {
+  // Slice to the next top-level function after joinHousehold. Joining to persistMembershipToBackend
+  // looks right but that function is defined *earlier* in the file, so the slice is empty and the
+  // assertions below would silently pass or fail for the wrong reason.
+  const start = js.indexOf('async function joinHousehold');
+  const end = js.indexOf('\nfunction ', start + 10);
+  const raw = js.slice(start, end > start ? end : start + 1200);
+  assert.ok(raw.includes('joinHousehold'), 'joinHousehold must exist');
+  // Strip comments: a multi-line comment between .eq() and .maybeSingle() is the whole reason this
+  // test exists, and matching across raw text would not survive it.
+  const join = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.match(join, /\.eq\("invite_code", code\)[\s\S]*?\.maybeSingle\(\)/,
+    'the invite-code lookup must use maybeSingle() so the "Invalid invite code." branch is reachable');
+  assert.match(join, /msg\.textContent = "Invalid invite code\.";/,
+    'the invalid-code message must still be shown to the user');
+  // The branch must actually be reachable, i.e. the null check has to come after the query.
+  const queryAt = join.indexOf('.maybeSingle()');
+  const checkAt = join.indexOf('if (!house)');
+  assert.ok(queryAt > -1 && checkAt > queryAt, 'the !house guard must follow the query to be reachable');
+});
+
+check('loadProfile does not re-fetch the user it already has in memory', () => {
+  const loadProfile = js.slice(js.indexOf('async function loadProfile'), js.indexOf('function updateAvatarDisplay'));
+  assert.doesNotMatch(loadProfile, /sb\.auth\.getUser\(\)/,
+    'reading the email back from /auth/v1/user is a redundant round trip — the session has it');
+  assert.match(loadProfile, /const email = currentUserEmail \|\| "";/,
+    'the email must come from the session already held in memory');
+  assert.match(js, /let currentUserEmail = "";/, 'currentUserEmail must be declared');
+  assert.match(js, /currentUserEmail = session\.user\.email \|\| "";/,
+    'currentUserEmail must be set from the session on sign-in');
+  assert.match(js, /currentUserEmail = "";/,
+    'and cleared on sign-out so a stale address cannot be shown to the next user');
+});
+
+check('applyFormatPrefs is not called twice in a row', () => {
+  const loadProfile = js.slice(js.indexOf('async function loadProfile'), js.indexOf('function updateAvatarDisplay'));
+  const calls = (loadProfile.match(/applyFormatPrefs\(/g) || []).length;
+  assert.equal(calls, 1, `applyFormatPrefs must run once per load, found ${calls}`);
+});
+
 check('matches are ranked, not in insertion order', () => {
   assert.deepEqual(titles(searchApi.searchMatches('proposal')), ['Draft Atlas proposal']);
 });

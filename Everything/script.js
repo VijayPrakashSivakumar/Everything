@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.3";
+const APP_BUILD = "2026-09-26.4";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -664,6 +664,10 @@ async function confirmLogoutPage() {
 let sbUser = null;
 let sbChannel = null;
 let structuredChannels = [];
+// The signed-in email, kept from the session Supabase already handed us. loadProfile() needs it for
+// the Settings field and the greeting, and reading it back from /auth/v1/user is a second network
+// round trip on every Settings visit for data already in memory.
+let currentUserEmail = "";
 let syncReadyPromise = null;
 let hasCompletedAt = false;
 let hasReminderColumns = false;
@@ -1074,11 +1078,12 @@ async function ensureHousehold(userId) {
 }
 
 async function getInviteCode() {
+  // maybeSingle() so a household with no invite_code yet is a null result rather than a 406.
   const { data } = await sb
     .from("households")
     .select("invite_code")
     .eq("id", currentHouseholdId)
-    .single();
+    .maybeSingle();
   return data ? data.invite_code : null;
 }
 
@@ -1096,7 +1101,7 @@ async function loadHouseholdName() {
     .from("households")
     .select("name")
     .eq("id", currentHouseholdId)
-    .single();
+    .maybeSingle();
   const input = document.getElementById("householdNameInput");
   if (input && data) input.value = data.name || "My Household";
 }
@@ -1180,7 +1185,10 @@ async function joinHousehold() {
     .from("households")
     .select("id")
     .eq("invite_code", code)
-    .single();
+    // maybeSingle(), not single(): an invite code that matches nothing returns 406 from PostgREST
+    // rather than a null row, so the "Invalid invite code." branch below was unreachable and the
+    // console filled with a 406 every time somebody mistyped a code.
+    .maybeSingle();
   if (!house) {
     msg.style.color = "var(--red-fg)";
     msg.textContent = "Invalid invite code.";
@@ -1236,6 +1244,7 @@ sb.auth.onAuthStateChange((event, session) => {
   }
   if (session) {
     authScreen.style.display = "none";
+    currentUserEmail = session.user.email || "";
     switchView("today");
     if (syncedUserId !== session.user.id) {
       syncedUserId = session.user.id;
@@ -1255,6 +1264,7 @@ sb.auth.onAuthStateChange((event, session) => {
   } else {
     syncedUserId = null;
     sbUser = null;
+    currentUserEmail = "";
     currentHouseholdId = null;
     syncReadyPromise = null;
     authScreen.style.display = "flex";
@@ -1307,11 +1317,16 @@ function renderSettings() {
 async function loadProfile() {
   if (syncReadyPromise) await syncReadyPromise;
   if (!sbUser) return;
+  // maybeSingle() rather than single(). PostgREST answers a .single() that matches no row with HTTP
+  // 406 PGRST116 ("Cannot coerce the result to a single JSON object"), so a brand-new account —
+  // which legitimately has no profile row until the first save — logged a console error on every
+  // page load and on every visit to Settings. maybeSingle() returns null for zero rows, which is
+  // the state this code already expects and already handles via the defaults below.
   const { data } = await sb
     .from("profiles")
     .select("*")
     .eq("user_id", sbUser)
-    .single();
+    .maybeSingle();
   const profile = data || {
     full_name: "",
     phone: "",
@@ -1321,7 +1336,6 @@ async function loadProfile() {
   };
   applyFormatPrefs(profile);
   document.getElementById("profileFullName").value = profile.full_name || "";
-  applyFormatPrefs(profile);
   document.getElementById("profilePhone").value = profile.phone || "";
   document.getElementById("dateFormatSelect").value =
     profile.date_format || "MM/DD/YYYY";
@@ -1331,10 +1345,12 @@ async function loadProfile() {
     document.documentElement.getAttribute("data-theme") === "dark"
       ? "dark"
       : "light";
-  const { data: authData } = await sb.auth.getUser();
-  if (authData?.user) {
-    document.getElementById("profileEmail").value = authData.user.email;
-    const fallbackName = authData.user.email.split("@")[0];
+  // The email is already on the session Supabase handed us at sign-in, so reading it back from
+  // /auth/v1/user is a second network round trip on every Settings visit for data already in memory.
+  const email = currentUserEmail || "";
+  if (email) {
+    document.getElementById("profileEmail").value = email;
+    const fallbackName = email.split("@")[0];
     const displayName = profile.full_name?.trim() || fallbackName;
     const greetEl = document.getElementById("greeting");
     if (greetEl)
