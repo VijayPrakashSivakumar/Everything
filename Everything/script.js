@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.4";
+const APP_BUILD = "2026-09-26.5";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -2975,6 +2975,16 @@ function renderMemory() {
     .join("");
 }
 
+/* Person and project names are free text, so "Ravi", "ravi" and "RAVI" are the same person. These
+   were matched with ===, so a case difference looked like a different person: the People list showed
+   0 linked items while the duplicate check — already case-insensitive — refused the name again.
+   Empty never matches, including empty against empty. */
+const sameName = (a, b) => {
+  const x = String(a || "").trim().toLowerCase();
+  const y = String(b || "").trim().toLowerCase();
+  return x !== "" && x === y;
+};
+
 function renderPeople() {
   const el = document.getElementById("peopleList");
   if (!el) return;
@@ -2982,7 +2992,7 @@ function renderPeople() {
     ...new Set(state.items.filter((i) => i.person && !isArchived(i)).map((i) => i.person)),
   ];
   const knownNames = state.people.map((p) => p.name);
-  const inferredOnly = namesFromItems.filter((n) => !knownNames.includes(n));
+  const inferredOnly = namesFromItems.filter((n) => !knownNames.some((k) => sameName(k, n)));
 
   const rows = [
     ...state.people.map((p) => ({
@@ -3002,7 +3012,7 @@ function renderPeople() {
 
   el.innerHTML = rows
     .map((p) => {
-      const count = state.items.filter((i) => i.person === p.name && !isArchived(i)).length;
+      const count = state.items.filter((i) => sameName(i.person, p.name) && !isArchived(i)).length;
       return `<div class="task-row" onclick="openPersonModal(${p.id ? `'${p.id}'` : "null"}, '${escapeHtml(p.name)}')">
       <div class="avatar" style="width:32px;height:32px;font-size:12px;">${p.name.charAt(0).toUpperCase()}</div>
       <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count !== 1 ? "s" : ""}${p.notes ? " · has notes" : ""}</div></div>
@@ -3013,12 +3023,12 @@ function renderPeople() {
 let currentPersonName = null;
 function openPersonModal(id, name) {
   currentPersonName = name;
-  const person = state.people.find((p) => p.name === name);
+  const person = state.people.find((p) => sameName(p.name, name));
   document.getElementById("personModalName").textContent = name;
   document.getElementById("personNotes").value = person
     ? person.notes || ""
     : "";
-  const items = state.items.filter((i) => i.person === name && !isArchived(i));
+  const items = state.items.filter((i) => sameName(i.person, name) && !isArchived(i));
   const list = document.getElementById("personItemsList");
   list.innerHTML = items.length
     ? items
@@ -3039,7 +3049,7 @@ function closePersonModal() {
 }
 async function savePersonNotes() {
   if (!currentPersonName) return;
-  let person = state.people.find((p) => p.name === currentPersonName);
+  let person = state.people.find((p) => sameName(p.name, currentPersonName));
   const notes = document.getElementById("personNotes").value.trim();
   if (!person) {
     person = { id: cid(), name: currentPersonName, notes, created: Date.now() };
@@ -3055,7 +3065,7 @@ async function addPersonManual() {
   const input = document.getElementById("newPersonInput");
   const name = input.value.trim();
   if (!name) return;
-  if (state.people.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+  if (state.people.some((p) => sameName(p.name, name))) {
     input.value = "";
     return;
   }
@@ -3085,7 +3095,7 @@ function renderProjects() {
   }
   el.innerHTML = state.projects
     .map((p) => {
-      const items = state.items.filter((i) => i.project === p.name && !isArchived(i));
+      const items = state.items.filter((i) => sameName(i.project, p.name) && !isArchived(i));
       const done = items.filter((i) => i.done).length;
       const total = items.length;
       const pct = total ? Math.round((done / total) * 100) : 0;
@@ -3675,8 +3685,8 @@ function renderRelatedChips(item) {
       (i) =>
         i.id !== item.id &&
         !isArchived(i) &&
-        ((item.person && i.person === item.person) ||
-          (item.project && i.project === item.project)),
+        ((item.person && sameName(i.person, item.person)) ||
+          (item.project && sameName(i.project, item.project))),
     )
     .slice(0, 5);
 

@@ -346,6 +346,37 @@ check('the server bounds the context to what a free tier can actually accept', (
    session, or simply tapping it before Today — showed empty stats and "Nothing to show yet." even
    with plenty of data. Every other view renders on switch. */
 
+check('person and project names match case-insensitively, not with ===', () => {
+  // A person saved as "ravi" with an item tagged "Ravi" showed 0 linked items and an empty modal,
+  // while the duplicate check — already case-insensitive — refused to add the name again. One
+  // helper, so the two paths cannot disagree again.
+  assert.match(js, /const sameName = \(a, b\) =>/, 'sameName helper must exist');
+
+  const code = js.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // Every name comparison goes through the helper; no raw === remains.
+  const raw = [...code.matchAll(/i\.person === |i\.project === |=== p\.name|=== currentPersonName|knownNames\.includes\(/g)];
+  assert.deepEqual(raw.map((m) => m[0]), [],
+    `name matching must use sameName(), found raw comparisons: ${raw.map((m) => m[0]).join(', ')}`);
+
+  // And each of the five sites that used === is now covered.
+  const uses = (code.match(/sameName\(/g) || []).length;
+  assert.ok(uses >= 8, `all name comparisons should route through sameName(), found ${uses} uses`);
+
+  // Empty must never match, including empty against empty: an untagged item would otherwise count
+  // as linked to every untagged person.
+  const start = js.indexOf('const sameName = (a, b) =>');
+  const src = js.slice(start, js.indexOf('\n}', start) + 2);
+  const sameName = new Function(`${src}\nreturn sameName;`)();
+  const cases = [
+    ['Ravi', 'ravi', true], ['RAVI', 'Ravi', true], ['  ravi ', 'Ravi', true],
+    ['Ravi', 'Ravi Kumar', false], ['Ravi', '', false], ['', '', false],
+    [null, undefined, false], [undefined, 'Ravi', false],
+  ];
+  for (const [a, b, want] of cases) {
+    assert.equal(sameName(a, b), want, `sameName(${JSON.stringify(a)}, ${JSON.stringify(b)})`);
+  }
+});
+
 check('every view is rendered when it is opened, not as a side effect of another', () => {
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const views = [...html.matchAll(/id="view-(\w+)"/g)].map((m) => m[1]);
