@@ -392,6 +392,59 @@ check('a real question reaches the model even when nothing matches', () => {
     'a lookup with no matches is answered locally rather than spending a model call');
 });
 
+check('a project name with an apostrophe still produces a working button', () => {
+  // Proven in a real browser: the Delete handler rendered as
+  //   onclick="deleteProject('i_abc','Mom&#39;s Project')"
+  // and the browser decodes entities *before* compiling the handler, so it reached the parser as
+  // deleteProject('i_abc','Mom's Project') — a SyntaxError. The button silently did nothing, and
+  // the only trace was a console error. escapeHtml is not sufficient inside an inline handler.
+  assert.match(js, /const jsStr = \(v\) => escapeHtml\(JSON\.stringify\(String\(v \?\? ""\)\)\);/,
+    'jsStr helper must exist: JSON.stringify for the JS literal, escapeHtml for the attribute');
+
+  // No inline handler may pass escaped text straight through as a single-quoted JS string again.
+  for (const fn of ['deleteProject', 'openPersonModal', 'answerCaptureQuestion']) {
+    const call = new RegExp(`onclick="${fn}\\([^"]*'\\$\\{escapeHtml`, 'g');
+    assert.deepEqual([...js.matchAll(call)].map((m) => m[0]), [],
+      `${fn} must use jsStr(), not a quoted escapeHtml()`);
+  }
+
+  // Behaviour: build the attribute the way renderProjects does, decode it the way a browser does,
+  // then check the handler actually parses and receives the exact name.
+  const start = js.indexOf('function escapeHtml(');
+  const src = js.slice(start, js.indexOf('const jsStr'));
+  const jsStr = new Function(`${src}\nconst jsStr = (v) => escapeHtml(JSON.stringify(String(v ?? "")));\nreturn jsStr;`)();
+  const decode = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g,
+    (_, n) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[n]);
+
+  for (const name of ["Mom's Project", 'Home', 'Bob & Sue "Q" <x>', 'back\\slash', 'line\nbreak']) {
+    const attr = `deleteProject("i_abc", ${jsStr(name)})`;
+    let got;
+    try {
+      got = new Function('deleteProject', `return (${decode(attr)});`)((...a) => a);
+    } catch (e) {
+      assert.fail(`handler for ${JSON.stringify(name)} does not parse: ${e.message}`);
+    }
+    assert.equal(got[1], name, `the name must survive to the handler intact for ${JSON.stringify(name)}`);
+    assert.equal(got[0], 'i_abc', 'the id must survive too');
+  }
+});
+
+check('a project cannot be created twice under names that differ only by case or spaces', () => {
+  // Confirmed in a real browser: "Home", "home" and "  Home  " all created cards, and since items
+  // are matched to projects by name via sameName(), every card then showed the same items — so the
+  // open count appeared two or three times for work that existed once. People already had this
+  // guard; projects did not.
+  const start = js.indexOf('async function addProject()');
+  const src = js.slice(start, js.indexOf('\n}', start));
+  assert.match(src, /if \(state\.projects\.some\(\(p\) => sameName\(p\.name, name\)\)\)/,
+    'addProject must refuse a duplicate using sameName(), like addPersonManual does');
+  assert.ok(src.indexOf('sameName') < src.indexOf('state.projects.unshift'),
+    'the duplicate check must run before the project is added');
+  // The guard must clear the input even on a refusal, so the same name is not silently re-sent.
+  assert.match(src, /sameName[\s\S]*?input\.value = "";/,
+    'a refused duplicate must clear the input');
+});
+
 check('every view is rendered when it is opened, not as a side effect of another', () => {
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const views = [...html.matchAll(/id="view-(\w+)"/g)].map((m) => m[1]);

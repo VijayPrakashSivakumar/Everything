@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node Everything/tests/ui-structure.test.mjs && node Everything/tests/ask-adapter.test.mjs && node Everything/tests/mobile-audit.mjs",
+    "serve": "node serve.mjs",
+    "audit": "node audit.mjs",
+    "probe:projects": "node projects-probe.mjs"
   },
   "repository": {
     "type": "git",

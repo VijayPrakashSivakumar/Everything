@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.6";
+const APP_BUILD = "2026-09-26.7";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -3013,7 +3013,7 @@ function renderPeople() {
   el.innerHTML = rows
     .map((p) => {
       const count = state.items.filter((i) => sameName(i.person, p.name) && !isArchived(i)).length;
-      return `<div class="task-row" onclick="openPersonModal(${p.id ? `'${p.id}'` : "null"}, '${escapeHtml(p.name)}')">
+      return `<div class="task-row" onclick="openPersonModal(${p.id ? `'${p.id}'` : "null"}, ${jsStr(p.name)})">
       <div class="avatar" style="width:32px;height:32px;font-size:12px;">${p.name.charAt(0).toUpperCase()}</div>
       <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count !== 1 ? "s" : ""}${p.notes ? " · has notes" : ""}</div></div>
     </div>`;
@@ -3080,6 +3080,12 @@ async function addProject() {
   const input = document.getElementById("newProjectInput");
   const name = input.value.trim();
   if (!name) return;
+  // Same guard as addPersonManual. Without it, "Home" and "home" both get created, and because
+  // items are matched to projects by name each card then shows the same items — the counts double.
+  if (state.projects.some((p) => sameName(p.name, name))) {
+    input.value = "";
+    return;
+  }
   const p = { id: cid(), name, created: Date.now() };
   state.projects.unshift(p);
   input.value = "";
@@ -3104,7 +3110,7 @@ function renderProjects() {
         <h3>${escapeHtml(p.name)}</h3>
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="badge task">${total - done} open</span>
-          <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteProject('${p.id}','${escapeHtml(p.name)}')">Delete</button>
+          <button class="btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteProject(${jsStr(p.id)}, ${jsStr(p.name)})">Delete</button>
         </div>
       </div>
       ${
@@ -4732,7 +4738,7 @@ function renderCaptureQuestion() {
       ${question.options
         .map(
           (option) =>
-            `<button type="button" class="btn" onclick="answerCaptureQuestion('${escapeHtml(option.value)}')">${escapeHtml(option.label)}</button>`,
+            `<button type="button" class="btn" onclick="answerCaptureQuestion(${jsStr(option.value)})">${escapeHtml(option.label)}</button>`,
         )
         .join("")}
       <button type="button" class="capture-question-skip" onclick="dismissCaptureQuestion()">Dismiss</button>
@@ -6154,6 +6160,13 @@ function escapeHtml(str) {
       ],
   );
 }
+
+/* A JS string literal that is safe to drop into an inline onclick handler. escapeHtml alone is not
+   enough: the browser decodes entities *before* it compiles the handler, so `&#39;` turns back into
+   an apostrophe and `deleteProject('id','Mom&#39;s Project')` fails to parse — the button just stops
+   working, with only a console error to show for it. JSON.stringify quotes the value correctly and
+   escapeHtml then makes the result safe inside the attribute; both halves are required. */
+const jsStr = (v) => escapeHtml(JSON.stringify(String(v ?? "")));
 
 function renderAll() {
   renderNav();
