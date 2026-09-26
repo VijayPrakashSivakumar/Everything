@@ -46,10 +46,18 @@ function setEnv(next) {
   Object.assign(process.env, next);
 }
 
-const { complete, aiStatus, probeProvider, parseExtraction, buildExtractionPrompt } = await import('../api/ask.js');
+const { complete, aiStatus, probeProvider, parseExtraction, buildExtractionPrompt, resetFailureMemory } = await import('../api/ask.js');
+
+// Every scenario starts with an empty provider-failure memory. The adapter deliberately remembers
+// which providers just failed so it can skip them, and that memory is module state shared across
+// tests — without this reset one test's failure silently changes the next test's provider order.
+function freshEnv(next) {
+  resetFailureMemory();
+  setEnv(next);
+}
 
 await check('primary success returns the answer and calls nothing else', async () => {
-  setEnv({ GROQ_API_KEY: 'k' });
+  freshEnv({ GROQ_API_KEY: 'k' });
   seen = [];
   handler = () => ({ status: 200, body: { choices: [{ message: { content: 'Pay it Friday.' } }] } });
   const r = await complete({ prompt: 'q' });
@@ -59,7 +67,7 @@ await check('primary success returns the answer and calls nothing else', async (
 });
 
 await check('429 on the primary falls back to the next configured provider', async () => {
-  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   seen = [];
   handler = (url) => (url.includes('googleapis')
     ? { status: 429, body: { error: { message: 'rate limited' } } }
@@ -71,7 +79,7 @@ await check('429 on the primary falls back to the next configured provider', asy
 });
 
 await check('401 is not retried elsewhere and reports an actionable reason', async () => {
-  setEnv({ GEMINI_API_KEY: 'bad', GROQ_API_KEY: 'k' });
+  freshEnv({ GEMINI_API_KEY: 'bad', GROQ_API_KEY: 'k' });
   seen = [];
   handler = () => ({ status: 401, body: { error: { message: 'Invalid API Key' } } });
   const r = await complete({ prompt: 'q' });
@@ -85,7 +93,7 @@ await check('401 is not retried elsewhere and reports an actionable reason', asy
    `content` because GPT-OSS is a reasoning model and the token budget went to `reasoning`.
    The old parser read only `content`, so a successful call was reported as "groq:empty". */
 await check('a reasoning model that spends its budget returns a usable answer', async () => {
-  setEnv({ GROQ_API_KEY: 'k' });
+  freshEnv({ GROQ_API_KEY: 'k' });
   seen = [];
   handler = () => ({
     status: 200,
@@ -97,8 +105,121 @@ await check('a reasoning model that spends its budget returns a usable answer', 
   assert.equal(seen.length, 1, 'an answer found in reasoning must not trigger a fallback');
 });
 
+/* Regression: the live app ran with a dead primary and a working fallback, and the health probe
+   reported `ok: true, provider: "groq"` because it only ever described whoever answered last.
+   Gemini was failing on every request while the probe looked completely healthy. `trace` makes a
+   successful-but-degraded result say so. */
+const GEMINI_OK = { status: 200, body: { candidates: [{ content: { parts: [{ text: 'ok' }] } }] } };
+const GROQ_OK = { status: 200, body: { choices: [{ message: { content: 'ok' } }] } };
+
+await check('trace reports a silent fallback as degraded, not as a clean success', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  seen = [];
+  // 429 is retryable, so the adapter is expected to fall through to groq.
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 429, body: { error: { message: 'resource exhausted' } } }
+    : GROQ_OK);
+  const r = await complete({ prompt: 'q', trace: true });
+  assert.equal(r.answer, 'ok', 'the fallback still answers');
+  assert.equal(r.provider, 'groq');
+  assert.equal(r.degraded, true, 'a fallback answer must be flagged as degraded');
+  assert.ok(Array.isArray(r.attempted) && r.attempted.length > 0, 'the primary failure must be listed');
+  assert.match(r.attempted[0], /^gemini:/, 'the failure must name the provider that failed');
+});
+
+await check('a clean primary success is not reported as degraded', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g' });
+  seen = [];
+  handler = () => GEMINI_OK;
+  const r = await complete({ prompt: 'q', trace: true });
+  assert.equal(r.provider, 'gemini');
+  assert.equal(r.degraded, false, 'a healthy primary must not be flagged');
+  assert.deepEqual(r.attempted, [], 'nothing should be listed as attempted');
+});
+
+await check('without trace the result shape is unchanged', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 400, body: { error: { message: 'bad key' } } }
+    : { status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+  const r = await complete({ prompt: 'q' });
+  assert.equal('attempted' in r, false, 'attempted must be opt-in, not added to every response');
+  assert.equal('degraded' in r, false, 'degraded must be opt-in too');
+});
+
+await check('a provider that just failed is skipped on the next call', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 429, body: { error: { message: 'rate limited' } } }
+    : { status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+
+  // First call: Gemini fails, so the caller pays for the failure once.
+  await complete({ prompt: 'q' });
+  assert.equal(seen.filter((u) => u.includes('googleapis')).length, 1, 'first call tries Gemini');
+
+  // Second call: Gemini is skipped entirely, so the user is not billed the latency twice.
+  seen = [];
+  await complete({ prompt: 'q' });
+  assert.equal(seen.filter((u) => u.includes('googleapis')).length, 0,
+    'a provider that just failed must not be tried again immediately');
+  assert.equal(seen.length, 1, 'the fallback still answers');
+});
+
+await check('the skip expires on its own, so a fixed key recovers without a redeploy', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 429, body: { error: { message: 'rate limited' } } }
+    : { status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+  await complete({ prompt: 'q' });  // gemini fails and is remembered
+  await complete({ prompt: 'q' });  // gemini skipped
+  seen = [];
+  await complete({ prompt: 'q' });
+  assert.equal(seen.filter((u) => u.includes('googleapis')).length, 0, 'skipped while cooling down');
+
+  // Simulate the cooldown lapsing. Real deployments get this for free from the clock, so a key
+  // fixed in Vercel starts being used again within minutes with no redeploy and no manual reset.
+  resetFailureMemory();
+  handler = () => GEMINI_OK;
+  seen = [];
+  const r = await complete({ prompt: 'q' });
+  assert.equal(r.provider, 'gemini', 'the recovered provider is preferred again');
+  assert.equal(seen.length, 1, 'and it answers on the first attempt');
+});
+
+await check('every provider cooling down still falls back to trying them', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 429, body: { error: { message: 'rate limited' } } }
+    : { status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+  await complete({ prompt: 'q' });   // gemini remembered as failing
+  // Now make groq fail too, so both providers are on record. Giving up would be worse than retrying.
+  handler = () => ({ status: 500, body: { error: { message: 'server error' } } });
+  const r = await complete({ prompt: 'q' });
+  assert.ok(seen.length >= 2, 'a remembered failure must not reduce the chain to nothing');
+  assert.equal(r.answer, undefined, 'both really are failing, so no answer is correct');
+});
+
+await check('a provider that succeeds has its failure record cleared', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 429, body: { error: { message: 'rate limited' } } }
+    : { status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+  await complete({ prompt: 'q' });            // gemini fails -> recorded
+  handler = () => ({ status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
+  seen = [];
+  await complete({ prompt: 'q' });            // groq alone, gemini skipped
+  // If gemini is still in the map but groq was the one that succeeded, the map must not be cleared
+  // wholesale: groq succeeding says nothing about gemini.
+  assert.equal(seen.filter((u) => u.includes('googleapis')).length, 0, 'gemini stays skipped');
+});
+
 await check('the parser handles every known response shape', async () => {
-  setEnv({ GROQ_API_KEY: 'k' });
+  freshEnv({ GROQ_API_KEY: 'k' });
   const shape = async (body) => {
     seen = [];
     handler = () => ({ status: 200, body });
@@ -117,7 +238,7 @@ await check('the parser handles every known response shape', async () => {
 });
 
 await check('GPT-OSS models request light reasoning so the budget survives', async () => {
-  setEnv({ GROQ_API_KEY: 'k' });
+  freshEnv({ GROQ_API_KEY: 'k' });
   seen = [];
   let sent = '';
   try {
@@ -132,7 +253,7 @@ await check('GPT-OSS models request light reasoning so the budget survives', asy
     assert.equal(body.reasoning_effort, 'low', 'a GPT-OSS model must be asked for light reasoning');
 
     // A non-reasoning model must not receive the parameter, which some providers reject.
-    setEnv({ GROQ_API_KEY: 'k', GROQ_MODEL: 'llama-3.3-70b-versatile' });
+    freshEnv({ GROQ_API_KEY: 'k', GROQ_MODEL: 'llama-3.3-70b-versatile' });
     sent = '';
     await complete({ prompt: 'q' });
     assert.equal(JSON.parse(sent).reasoning_effort, undefined, 'non-reasoning models must not get reasoning_effort');
@@ -142,7 +263,7 @@ await check('GPT-OSS models request light reasoning so the budget survives', asy
 });
 
 await check('a successful but empty completion is treated as failure and retried', async () => {
-  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   seen = [];
   handler = (url) => (url.includes('googleapis')
     ? { status: 200, body: { candidates: [{ content: { parts: [{ text: '   ' }] } }] } }
@@ -153,7 +274,7 @@ await check('a successful but empty completion is treated as failure and retried
 });
 
 await check('every provider failing reports the whole trail', async () => {
-  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   seen = [];
   handler = (url) => (url.includes('googleapis') ? { status: 429, body: {} } : { status: 503, body: {} });
   const r = await complete({ prompt: 'q' });
@@ -162,7 +283,7 @@ await check('every provider failing reports the whole trail', async () => {
 });
 
 await check('no keys configured is a 503 and contacts nobody', async () => {
-  setEnv({});
+  freshEnv({});
   seen = [];
   handler = () => ({ status: 200, body: {} });
   const r = await complete({ prompt: 'q' });
@@ -174,7 +295,7 @@ await check('no keys configured is a 503 and contacts nobody', async () => {
 // Regression guard: a hung provider must not push the function past the platform duration
 // limit, and the request must be aborted rather than left dangling.
 await check('a hung provider stays inside the total budget and aborts the socket', async () => {
-  setEnv({ GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
+  freshEnv({ GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
   let abortSeen = false;
   globalThis.fetch = (url, init) => new Promise((_, reject) => {
     init.signal.addEventListener('abort', () => { abortSeen = true; reject(new Error('aborted')); });
@@ -191,7 +312,7 @@ await check('a hung provider stays inside the total budget and aborts the socket
 });
 
 await check('aiStatus reports the primary and the configured fallbacks', async () => {
-  setEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
   const s = aiStatus();
   assert.equal(s.configured, true);
   // Gemini is the default primary: its free tier allows far more tokens, and Ask now also
@@ -205,7 +326,7 @@ await check('aiStatus reports the primary and the configured fallbacks', async (
    A key can be present and still be rejected, which is exactly how a broken provider hid for so
    long: /api/health reported "ready" while every real completion failed. */
 await check('probeProvider reports a working provider, a failure, and an unconfigured state', async () => {
-  setEnv({ GROQ_API_KEY: 'k' });
+  freshEnv({ GROQ_API_KEY: 'k' });
   seen = [];
   handler = () => ({ status: 200, body: { choices: [{ message: { content: 'ok' } }] } });
   const good = await probeProvider();
@@ -223,14 +344,44 @@ await check('probeProvider reports a working provider, a failure, and an unconfi
   assert.equal(bad.sample, null, 'no sample text may be invented on failure');
 
   // Unconfigured must be distinguishable from a failed call.
-  setEnv({});
+  freshEnv({});
   const none = await probeProvider();
   assert.equal(none.ok, false);
   assert.equal(none.reason, 'not-configured');
 });
 
+/* The live bug this whole feature exists for: the probe answered "ok" and named the fallback,
+   so /api/health looked completely healthy while the primary was failing on every request. */
+await check('the probe cannot report a working fallback as a healthy app', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g', GROQ_API_KEY: 'k' });
+  seen = [];
+  handler = (url) => (url.includes('googleapis')
+    ? { status: 429, body: { error: { message: 'resource exhausted' } } }
+    : GROQ_OK);
+  const p = await probeProvider();
+  assert.equal(p.ok, true, 'the fallback genuinely answers, so ok stays true');
+  assert.equal(p.provider, 'groq', 'it names whoever actually answered');
+  // These three are what make the failure impossible to miss from the outside.
+  assert.equal(p.configuredProvider, 'gemini', 'it also names who was meant to answer');
+  assert.notEqual(p.configuredProvider, p.provider, 'a silent fallback must be visible');
+  assert.equal(p.degraded, true, 'and it must not look like a clean success');
+  assert.match(p.attempted[0], /^gemini:/, 'with the primary failure reason listed');
+});
+
+await check('the probe reports a healthy primary as not degraded', async () => {
+  freshEnv({ GEMINI_API_KEY: 'g' });
+  seen = [];
+  handler = () => GEMINI_OK;
+  const p = await probeProvider();
+  assert.equal(p.ok, true);
+  assert.equal(p.provider, 'gemini');
+  assert.equal(p.configuredProvider, 'gemini', 'the intended provider did answer');
+  assert.equal(p.degraded, false, 'a healthy app must not be flagged degraded');
+  assert.deepEqual(p.attempted, []);
+});
+
 await check('the probe stays cheap and sends no user data', async () => {
-  setEnv({ GROQ_API_KEY: 'k' });
+  freshEnv({ GROQ_API_KEY: 'k' });
   seen = [];
   let sentBody = '';
   // try/finally: if an assertion below throws, the shared transport must still be restored,
@@ -258,7 +409,7 @@ await check('the probe stays cheap and sends no user data', async () => {
 /* The empty-200 shape is what makes the provider diagnosable from outside the function, so it
    must be safe: structure and lengths only, never values and never anything key-derived. */
 await check('an empty completion reports the response shape, never its contents', async () => {
-  setEnv({ GROQ_API_KEY: 'sk-super-secret-value' });
+  freshEnv({ GROQ_API_KEY: 'sk-super-secret-value' });
   handler = () => ({
     status: 200,
     body: {
@@ -285,7 +436,7 @@ await check('an empty completion reports the response shape, never its contents'
 });
 
 await check('probeProvider surfaces the upstream shape on failure', async () => {
-  setEnv({ GROQ_API_KEY: 'k' });
+  freshEnv({ GROQ_API_KEY: 'k' });
   handler = () => ({ status: 200, body: { choices: [{ finish_reason: 'length', message: { content: '' } }] } });
   const bad = await probeProvider();
   assert.equal(bad.ok, false);
@@ -299,7 +450,7 @@ await check('probeProvider surfaces the upstream shape on failure', async () => 
 });
 
 await check('an explicit AI_PROVIDER pins the primary', async () => {
-  setEnv({ AI_PROVIDER: 'gemini', GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
+  freshEnv({ AI_PROVIDER: 'gemini', GROQ_API_KEY: 'k', GEMINI_API_KEY: 'g' });
   seen = [];
   handler = (url) => (url.includes('groq')
     ? { status: 200, body: { choices: [{ message: { content: 'wrong provider' } }] } }
@@ -358,7 +509,7 @@ await check('the extraction prompt refuses to invent a date and carries the date
 await check('the Gemini path is a working default, not just a reordered list', async () => {
   // Guards the change that made Gemini primary: it must be tried first, must speak its own
   // response shape, and must not carry an OpenAI-only parameter.
-  setEnv({ GEMINI_API_KEY: 'g' });
+  freshEnv({ GEMINI_API_KEY: 'g' });
   seen = [];
   let sent = '';
   try {
@@ -385,7 +536,7 @@ await check('the Gemini path is a working default, not just a reordered list', a
 
 await check('an OpenAI-style reply is never trusted from the Gemini path', async () => {
   // A cross-wired or misconfigured proxy must not be able to make the parser read the wrong field.
-  setEnv({ GEMINI_API_KEY: 'g' });
+  freshEnv({ GEMINI_API_KEY: 'g' });
   seen = [];
   handler = () => ({ status: 200, body: { choices: [{ message: { content: 'wrong shape' } }] } });
   const r = await complete({ prompt: 'q' });

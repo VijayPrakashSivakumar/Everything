@@ -78,6 +78,40 @@ function providerChain() {
     }));
 }
 
+// How long a provider is skipped after a failure. Long enough that a user does not pay the failure
+// again on their next few queries, short enough that a fixed key recovers on its own.
+const FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
+
+// Per-instance memory of which providers just failed. A module-scope Map survives between requests
+// in a warm function instance, which is what makes the skip stick; a cold start simply starts empty
+// and tries the normal order. Best effort by design — correctness never depends on this.
+const failureMemory = new Map();
+
+function noteFailure(provider) {
+  failureMemory.set(provider, Date.now() + FAILURE_COOLDOWN_MS);
+}
+
+function clearFailure(provider) {
+  failureMemory.delete(provider);
+}
+
+function isCoolingDown(provider) {
+  const until = failureMemory.get(provider);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    failureMemory.delete(provider);
+    return false;
+  }
+  return true;
+}
+
+// Clears the remembered failures. Production never calls this — the point is that a warm instance
+// keeps the memory. It exists so a test run starts from a clean slate instead of inheriting another
+// test's failures, which is the same isolation the provider tests had before this feature existed.
+export function resetFailureMemory() {
+  failureMemory.clear();
+}
+
 // An explicit AI_PROVIDER always wins, so a key left over from a previous setup can never
 // silently take over. Without it, the first configured provider is used.
 function resolveProvider() {
@@ -279,7 +313,12 @@ async function attempt(entry, { prompt, maxTokens, deadline }) {
 
 // Walks the configured providers in order and returns the first usable answer.
 // Never throws, so the route handler stays trivial.
-export async function complete({ prompt, maxTokens = 300 }) {
+//
+// `trace: true` also returns which providers were tried first and why they were skipped. Without
+// it, a provider that is broken-but-not-fatal is invisible: the fallback succeeds, so `complete()`
+// reports success and the health probe shows `ok: true` while the primary is failing on every
+// single request. That is how a dead primary stayed hidden behind a working fallback.
+export async function complete({ prompt, maxTokens = 300, trace = false }) {
   const chain = providerChain();
   if (!chain.length) {
     const resolved = resolveProvider();
@@ -288,13 +327,34 @@ export async function complete({ prompt, maxTokens = 300 }) {
       : { status: 503, error: 'AI search is not configured. Add a model provider API key.', reason: 'not-configured' };
   }
 
+  // A provider that just failed is skipped for a few minutes so it cannot burn the whole per-attempt
+  // budget on every single query. This is per warm instance and best effort — a cold start simply
+  // has no memory and retries the normal order, which is correct, just slower.
+  const usable = chain.filter((entry) => !isCoolingDown(entry.provider));
+  // Never skip everything: if every provider is cooling down, the fastest route to a real answer is
+  // to try them again rather than give up.
+  const candidates = usable.length ? usable : chain;
+
   const deadline = Date.now() + TOTAL_BUDGET_MS;
   const tried = [];
   const shapes = [];
   let last = { status: 502, error: 'AI search is temporarily unavailable.', reason: 'unknown' };
-  for (const entry of chain) {
+  for (const entry of candidates) {
     const result = await attempt(entry, { prompt, maxTokens, deadline });
-    if (result.answer) return result;
+    if (result.answer) {
+      clearFailure(entry.provider);
+      const skipNote = usable.length ? [] : ['all-providers-retried-after-failure'];
+      return trace
+        ? {
+            ...result,
+            // `attempted` makes a silent fallback visible: non-empty means the primary did not
+            // answer, even though the overall result looks like a success.
+            attempted: [...skipNote, ...tried],
+            degraded: tried.length > 0 || skipNote.length > 0,
+          }
+        : result;
+    }
+    noteFailure(entry.provider);
     tried.push(result.reason || `${entry.provider}:error`);
     if (result.shape) shapes.push({ provider: entry.provider, model: entry.model, ...result.shape });
     last = result;
@@ -311,11 +371,14 @@ export async function complete({ prompt, maxTokens = 300 }) {
    health polling never spends quota, and the answer is a fixed "ping" rather than user data. */
 export async function probeProvider() {
   const started = Date.now();
+  // `trace` is what makes a silently-broken primary visible. Without it the probe reports the
+  // fallback that succeeded and reports `ok: true`, hiding the fact that the primary failed.
   const result = await complete({
     prompt: 'Reply with the single word: ok',
     // A reasoning model needs headroom before it produces any visible text; a tiny budget
     // returns 200 with an empty body and would look like a failure.
     maxTokens: 64,
+    trace: true,
   });
   return {
     ok: Boolean(result.answer),
@@ -325,6 +388,11 @@ export async function probeProvider() {
     status: result.status || null,
     sample: result.answer ? String(result.answer).slice(0, 40) : null,
     durationMs: Date.now() - started,
+    // `configuredProvider` is who was *intended* to answer, so a fallback answering is visible even
+    // without a failure. `attempted` lists the failures that led to the fallback.
+    configuredProvider: aiStatus().provider || null,
+    degraded: Boolean(result.degraded),
+    ...(result.attempted ? { attempted: result.attempted } : {}),
     // Present on failure: the shape of the upstream response, so an empty 200 is diagnosable
     // without access to the function's logs. Key names and lengths only, never values.
     ...(result.shapes ? { shapes: result.shapes } : {}),

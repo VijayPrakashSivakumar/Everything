@@ -221,11 +221,22 @@ Ask is only as good as the context it is given, so retrieval matters more than t
   clock may be UTC) and every item line states its status, project, due date and checklist
   progress, so "what is due today" and "what am I waiting on" are answerable at all.
 
-A stale answer can never overwrite a newer one. Each call takes a ticket and only the
-newest wins — but a *re-render* is not a newer question, so it must not discard an answer that is
-already on screen. `askAI()` therefore re-resolves its slot by id on every write instead of
-holding the original node, which the dropdown detaches on each keystroke. Getting this wrong left
-the header search sitting on "Thinking…" forever.
+A stale answer can never overwrite a newer one. Each call takes a ticket and only the newest wins
+— but a *re-render* is not a newer question, so it must not discard an answer that is already on
+screen. `askAI()` therefore re-resolves its slot by id on every write instead of holding the
+original node, which the dropdown detaches on each keystroke. Getting this wrong left the header
+search sitting on "Thinking…" forever.
+
+A silent fallback is never reported as a healthy app. `complete()` takes an opt-in `trace`
+flag; when set, a successful result also carries `attempted` (what was tried and why it failed)
+and `degraded`. `/api/health?probe=1` uses it, so a dead primary can no longer hide behind a
+working fallback — the probe reports `ok: true` *and* `degraded: true` with the real reason,
+plus `configuredProvider` (who was meant to answer) next to `provider` (who did).
+
+A provider that just failed is skipped for five minutes so it cannot burn the per-attempt budget on
+every query. This is per warm instance and best effort: correctness never depends on it, a cold
+start simply tries the normal order, and the skip expires on its own so a key fixed in Vercel
+starts being used again within minutes with no redeploy.
 
 ## Back gesture on mobile
 A history entry is pushed while a dismissible layer is open (Capture sheet, Ask overlay, item
