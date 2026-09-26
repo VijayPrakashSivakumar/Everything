@@ -2,3 +2,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+# Playwright's local browser profile. It holds a real Supabase session, so it must never be
+# committed. Screenshots from browser checks are build artefacts, not source.
+.browser-profile/
+*.png
