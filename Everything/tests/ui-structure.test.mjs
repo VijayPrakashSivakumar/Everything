@@ -586,6 +586,127 @@ check('cancelling the confirm keeps the person, the record and every tag', async
   assert.deepEqual(saved.items, []);
 });
 
+check('merging two records for one person carries the items and deletes the duplicate', async () => {
+  // Nothing keeps "Ravi" and "Ravi Kumar" apart: the name is typed by hand, and renderPeople() also
+  // infers people straight from the item tags. Rename can only correct one of the two and leaves the
+  // other behind, so merging is the repair — the survivor keeps every item and the duplicate goes.
+  const { world, saved } = makeWorld();
+  world.state.people[0].notes = 'Prefers mornings';
+  world.state.people.push({ id: 'p2', name: 'Ravi Kumar', notes: 'Met at the climbing gym', created: 2 });
+  const api = runRename(world, '({ mergePerson })');
+  await api.mergePerson('Ravi', 'Ravi Kumar');
+  assert.deepEqual(peopleOf(world), ['Ravi Kumar', 'Ravi Kumar', 'Priya'],
+    'every spelling of the tag must follow the survivor');
+  assert.deepEqual(world.state.people.map((p) => p.name), ['Ravi Kumar'],
+    'the duplicate record must be deleted, not merely hidden');
+  assert.deepEqual(saved.items.sort(), ['i1', 'i2'], 'only the retagged items are rewritten');
+  assert.deepEqual(saved.people, ['p2'], 'the survivor is saved and the duplicate is not re-saved');
+  assert.match(world.state.people[0].notes, /climbing gym/);
+  assert.match(world.state.people[0].notes, /Prefers mornings/, 'notes from both sides are kept');
+
+  // Merging the same pair again is a repeat, and must not append the notes a second time.
+  await api.mergePerson('Ravi', 'Ravi Kumar');
+  assert.equal(world.state.people[0].notes.match(/Prefers mornings/g).length, 1,
+    'a repeated merge must not duplicate the notes');
+  assert.deepEqual(world.state.people.map((p) => p.name), ['Ravi Kumar']);
+});
+
+check('a merge fills in contact details without overwriting the survivor', async () => {
+  const { world } = makeWorld();
+  world.state.people[0].phone = '+91 90000 00000';
+  world.state.people[0].email = 'ravi@old.example';
+  world.state.people[0].birthday = '1994-04-02';
+  world.state.people.push({ id: 'p2', name: 'Ravi Kumar', email: 'ravi@work.example' });
+  const api = runRename(world, '({ mergePerson })');
+  await api.mergePerson('Ravi', 'Ravi Kumar');
+  const survivor = world.state.people[0];
+  assert.equal(survivor.phone, '+91 90000 00000', 'a blank field is filled from the duplicate');
+  assert.equal(survivor.birthday, '1994-04-02');
+  assert.equal(survivor.email, 'ravi@work.example', 'a field the survivor already has must win');
+});
+
+check('a merge refuses a self-merge, an unknown target, or a cancelled confirm', async () => {
+  const { world, saved } = makeWorld();
+  const api = runRename(world, '({ mergePerson })');
+  await api.mergePerson('Ravi', 'ravi');
+  assert.match(world.alerted || '', /different person/i,
+    'merging a person into themselves must be refused, not silently skipped');
+  await api.mergePerson('Ravi', 'Nobody');
+  assert.match(world.alerted || '', /not in your people list/i);
+  world.state.people.push({ id: 'p2', name: 'Ravi Kumar', created: 2 });
+  // runRename() binds its dependencies when it builds the function, so a later world.confirm swap
+  // would never be seen — the cancelled case needs its own instance.
+  const cancelled = runRename({ ...world, confirm: () => false }, '({ mergePerson })');
+  await cancelled.mergePerson('Ravi', 'Ravi Kumar');
+  assert.deepEqual(world.state.people.map((p) => p.name), ['Ravi', 'Ravi Kumar'],
+    'a cancelled merge must leave both records alone');
+  assert.deepEqual(peopleOf(world), ['ravi', '  RAVI ', 'Priya']);
+  assert.deepEqual(saved.items, [], 'a cancelled merge must not rewrite items');
+  assert.deepEqual(saved.people, []);
+});
+
+check('contact details survive a sync round trip', () => {
+  // The people table stores name and notes only. A phone number hung directly on the record would be
+  // dropped by the server on the way out and gone by the next load, so the fields travel inside the
+  // metadata column and have to be lifted back out on read.
+  const src = [
+    betweenBlock('function normaliseStructuredRecord', 'function mergeStructuredStateRecord'),
+    betweenBlock('function buildStructuredRecordPayload', 'const VAPID_PUBLIC_KEY'),
+  ].join('\n');
+  const api = new Function('currentHouseholdId', 'sbUser',
+    `${src}\nreturn { buildStructuredRecordPayload, normaliseStructuredRecord };`)('house-1', 'user-1');
+  const person = {
+    id: 'p1', name: 'Ravi', notes: 'Prefers mornings',
+    phone: '+91 90000 00000', email: 'ravi@work.example', birthday: '1994-04-02',
+  };
+  const payload = api.buildStructuredRecordPayload('person', person);
+  assert.equal(payload.metadata.phone, '+91 90000 00000', 'the phone number must be sent');
+  assert.equal(payload.metadata.email, 'ravi@work.example');
+  assert.equal(payload.metadata.birthday, '1994-04-02');
+  assert.equal(payload.metadata.originalId, 'p1', 'the metadata the sync already relied on is intact');
+  assert.equal(payload.notes, 'Prefers mornings');
+
+  // The API hands back a row whose metadata carries them, not a record with the fields on it.
+  const row = { id: 'row-1', client_id: 'p1', name: 'Ravi', notes: 'Prefers mornings', metadata: payload.metadata };
+  const back = api.normaliseStructuredRecord('person', row);
+  assert.equal(back.phone, '+91 90000 00000', 'a phone number must not vanish on the next load');
+  assert.equal(back.email, 'ravi@work.example');
+  assert.equal(back.birthday, '1994-04-02');
+  assert.equal(back.id, 'p1', 'the record still keys off client_id');
+  // A person saved before these fields existed has no metadata at all, and must not throw.
+  assert.equal(api.normaliseStructuredRecord('person', { id: 'p2', name: 'Priya' }).phone, undefined);
+  // Goals have no such fields and must not quietly gain empty ones.
+  assert.equal(api.normaliseStructuredRecord('goal', { id: 'g1', title: 'Ship', metadata: {} }).phone, undefined);
+});
+
+check('the person dialog holds the contact fields and a merge control that reads them back', () => {
+  const dialog = html.slice(html.indexOf('id="personModalName"'), html.indexOf('id="personItemsList"'));
+  assert.deepEqual(
+    [...dialog.matchAll(/id="(person[A-Za-z]+)"/g)].map((m) => m[1]).sort(),
+    ['personBirthday', 'personEmail', 'personMergeTarget', 'personModalName', 'personNotes', 'personPhone'],
+    'the dialog must offer phone, email, birthday and somewhere to merge to');
+
+  // The fields are read by id string in script.js, so a rename on either side would save a blank
+  // value and look like the details had been lost rather than never read.
+  const reader = betweenBlock('function readPersonProfile', 'function fillPersonProfile');
+  for (const field of ['personPhone', 'personEmail', 'personBirthday']) {
+    assert.match(reader, new RegExp(`"${field}"`), `${field} must be read by the id the dialog uses`);
+  }
+
+  assert.match(html, /onclick="startMergePerson\(\)"/, 'the dialog needs the merge button');
+  assert.match(betweenBlock('function startMergePerson', '/* ---------- Projects'),
+    /getElementById\("personMergeTarget"\)/, 'the button must read the chosen target');
+  assert.match(js, /p\.contact \? " · has contact details"/,
+    'the people list should show who has contact details');
+
+  // Names are free text, so an option built by string concatenation would break on a quote and take
+  // the whole control with it — the same defect class as the inline handlers.
+  const fill = betweenBlock('function fillMergeTargets', 'async function savePersonNotes');
+  assert.doesNotMatch(fill, /innerHTML/, 'options must be built with the DOM API, not concatenation');
+  assert.match(fill, /createElement\("option"\)/);
+  assert.match(fill, /!sameName\(p\.name, name\)/, 'nobody may be offered as their own merge target');
+});
+
 check('a captured item with no kind cannot break the Today view', () => {
   // A backup edited by hand, or one predating the kind field, arrives without one. renderToday()
   // interpolated item.kind.charAt() directly, so a single kindless item threw a TypeError and left

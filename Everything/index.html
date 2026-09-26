@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-26.11" />
+    <meta name="everything-build" content="2026-09-26.12" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -2016,6 +2016,31 @@
         ></textarea>
         <div class="card-head" style="margin-top: 14px">
           <h3 style="font-size: 14px">Linked items</h3>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px">
+          <div>
+            <label style="font-size: 12.5px; color: var(--muted)">Phone</label>
+            <input class="capture-input" id="personPhone" placeholder="+91 90000 00000" style="margin: 4px 0 0" />
+          </div>
+          <div>
+            <label style="font-size: 12.5px; color: var(--muted)">Email</label>
+            <input class="capture-input" id="personEmail" placeholder="name@example.com" style="margin: 4px 0 0" />
+          </div>
+        </div>
+        <div style="margin-top: 8px">
+          <label style="font-size: 12.5px; color: var(--muted)">Birthday</label>
+          <input class="capture-input" id="personBirthday" type="date" style="margin: 4px 0 0" />
+        </div>
+        <div class="card-head" style="margin-top: 14px">
+          <h3 style="font-size: 14px">Merge a duplicate</h3>
+        </div>
+        <p style="font-size: 12px; color: var(--muted); margin: 0 0 8px">
+          A name is free text, so the same person can end up twice. Merging moves every item onto the
+          person you pick and deletes this record.
+        </p>
+        <div style="display: flex; gap: 8px; align-items: center">
+          <select class="capture-input" id="personMergeTarget" style="margin: 0; flex: 1"></select>
+          <button class="btn" onclick="startMergePerson()">Merge into</button>
         </div>
         <div id="personItemsList"></div>
         <div class="modal-actions">

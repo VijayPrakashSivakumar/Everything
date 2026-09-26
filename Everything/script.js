@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.11";
+const APP_BUILD = "2026-09-26.12";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -241,6 +241,12 @@ function normaliseStructuredRecord(kind, row) {
     created: row.created ?? (row.created_at ? Date.parse(row.created_at) : Date.now()),
   };
   if (kind === "goal") normalized.done = row.done ?? row.status === "completed";
+  if (kind === "person") {
+    // Contact details are stored in metadata, so without this they would be dropped on the next load.
+    ["phone", "email", "birthday"].forEach((field) => {
+      if (!normalized[field] && row.metadata && row.metadata[field]) normalized[field] = row.metadata[field];
+    });
+  }
   return normalized;
 }
 
@@ -302,7 +308,14 @@ function buildStructuredRecordPayload(kind, record) {
     name: record.name || "",
     notes: record.notes || "",
     client_id: record.id,
-    metadata,
+    // The people table only has name and notes, so contact details ride inside metadata (already
+    // jsonb) rather than needing a migration, and are lifted back out in normaliseStructuredRecord.
+    metadata: {
+      ...metadata,
+      phone: record.phone || "",
+      email: record.email || "",
+      birthday: record.birthday || "",
+    },
   };
 }
 
@@ -3004,9 +3017,10 @@ function renderPeople() {
       id: p.id,
       name: p.name,
       notes: p.notes || "",
+      contact: [p.phone, p.email, p.birthday].some(Boolean),
       real: true,
     })),
-    ...inferredOnly.map((n) => ({ id: null, name: n, notes: "", real: false })),
+    ...inferredOnly.map((n) => ({ id: null, name: n, notes: "", contact: false, real: false })),
   ];
 
   if (!rows.length) {
@@ -3020,7 +3034,7 @@ function renderPeople() {
       const count = state.items.filter((i) => sameName(i.person, p.name) && !isArchived(i)).length;
       return `<div class="task-row" onclick="openPersonModal(${p.id ? jsStr(p.id) : "null"}, ${jsStr(p.name)})">
       <div class="avatar" style="width:32px;height:32px;font-size:12px;">${p.name.charAt(0).toUpperCase()}</div>
-      <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count !== 1 ? "s" : ""}${p.notes ? " · has notes" : ""}</div></div>
+      <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count !== 1 ? "s" : ""}${p.notes ? " · has notes" : ""}${p.contact ? " · has contact details" : ""}</div></div>
     </div>`;
     })
     .join("");
@@ -3030,6 +3044,8 @@ function openPersonModal(id, name) {
   currentPersonName = name;
   const person = state.people.find((p) => sameName(p.name, name));
   document.getElementById("personModalName").textContent = name;
+  fillPersonProfile(person);
+  fillMergeTargets(name);
   document.getElementById("personNotes").value = person
     ? person.notes || ""
     : "";
@@ -3052,15 +3068,51 @@ function closePersonModal() {
   if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open"))
     lockPageScroll(false);
 }
+/* Contact details are extra fields on the person record. The people table has only name/notes, so
+   they travel inside its metadata column (already jsonb) — see buildStructuredRecordPayload. */
+function readPersonProfile() {
+  const read = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : "";
+  };
+  return { phone: read("personPhone"), email: read("personEmail"), birthday: read("personBirthday") };
+}
+
+function fillPersonProfile(person) {
+  ["phone", "email", "birthday"].forEach((field) => {
+    const el = document.getElementById(`person${field.charAt(0).toUpperCase()}${field.slice(1)}`);
+    if (el) el.value = person && person[field] ? person[field] : "";
+  });
+}
+
+/* A name is free text, so the list can hold two rows for one human. Offer every other person as a
+   merge target. Built with the DOM API so a name containing a quote cannot break the option. */
+function fillMergeTargets(name) {
+  const select = document.getElementById("personMergeTarget");
+  if (!select) return;
+  const option = (value, label) => {
+    const el = document.createElement("option");
+    el.value = value;
+    el.textContent = label;
+    return el;
+  };
+  const others = state.people.filter((p) => !sameName(p.name, name));
+  select.textContent = "";
+  if (others.length) others.forEach((p) => select.append(option(p.name, p.name)));
+  else select.append(option("", "No other people yet"));
+}
+
 async function savePersonNotes() {
   if (!currentPersonName) return;
   let person = state.people.find((p) => sameName(p.name, currentPersonName));
   const notes = document.getElementById("personNotes").value.trim();
+  const profile = readPersonProfile();
   if (!person) {
-    person = { id: cid(), name: currentPersonName, notes, created: Date.now() };
+    person = { id: cid(), name: currentPersonName, notes, created: Date.now(), ...profile };
     state.people.unshift(person);
   } else {
     person.notes = notes;
+    Object.assign(person, profile);
   }
   await dbSavePerson(person);
   closePersonModal();
@@ -3152,6 +3204,54 @@ async function deletePerson(name) {
   if (person) await dbDeletePerson(person.id);
   await persistRetagged(retagItems("person", name, ""));
   renderAll();
+}
+
+/* ---------- Merging duplicate people ----------
+   A person is identified by their name string, and names arrive from typing, from imports and from
+   item tags — so one human easily becomes two rows ("Ravi" and "Ravi Kumar"). Merging keeps the
+   person you pick, folds the other's notes and contact details into it, retags every item, and
+   deletes the duplicate record. That is why this lives beside rename and remove: all three exist
+   because the name is the identity. */
+async function mergePerson(sourceName, targetName) {
+  const from = String(sourceName == null ? "" : sourceName).trim();
+  const into = String(targetName == null ? "" : targetName).trim();
+  if (!from || !into) return;
+  if (sameName(from, into)) {
+    alert("Pick a different person to merge into.");
+    return;
+  }
+  const target = state.people.find((p) => sameName(p.name, into));
+  if (!target) {
+    alert(`"${into}" is not in your people list.`);
+    return;
+  }
+  const source = state.people.find((p) => sameName(p.name, from));
+  const linked = state.items.filter((i) => sameName(i.person, from) && !isArchived(i));
+  const many = linked.length !== 1;
+  if (
+    !confirm(
+      `Merge "${from}" into "${into}"? ${linked.length} linked item${many ? "s" : ""} will move onto "${into}", and the "${from}" record is deleted.`,
+    )
+  )
+    return;
+  closePersonModal();
+  // Notes are kept from both sides, de-duplicated so merging twice cannot duplicate the text.
+  const notes = [...new Set([target.notes, source?.notes].map((n) => (n || "").trim()).filter(Boolean))];
+  target.notes = notes.join("\n\n");
+  ["phone", "email", "birthday"].forEach((field) => {
+    if (!target[field] && source && source[field]) target[field] = source[field];
+  });
+  await dbSavePerson(target);
+  // An inferred-only source has no record of its own, so only its tags need moving.
+  if (source) await dbDeletePerson(source.id);
+  await persistRetagged(retagItems("person", from, into));
+  renderAll();
+}
+
+function startMergePerson() {
+  if (!currentPersonName) return;
+  const select = document.getElementById("personMergeTarget");
+  mergePerson(currentPersonName, select ? select.value : "");
 }
 
 /* ---------- Projects ---------- */

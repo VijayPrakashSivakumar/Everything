@@ -23,6 +23,14 @@ inbox, calendar, projects, goals, and AI-assisted search.
   `/api/ask` (any supported model provider) and falls back to keyword matching offline.
 - **Quick reschedule** — open any item and use *Reschedule* (Tomorrow 9 AM, +1 day,
   +1 week, clear) instead of editing the date by hand.
+- **Repair the name-based links** — items link to a person or project by *name*, so a typo used to
+  strand them with no way back. People and projects can be **renamed** (every linked item follows),
+  a person can be **removed** (their tag is cleared and the items are kept), and goals can be
+  renamed too. Every control built from stored text is escaped so an apostrophe in a name cannot
+  kill the button.
+- **Fuller people** — each person holds notes, phone, email and birthday, and two records for one
+  human (*Ravi* and *Ravi Kumar*) can be **merged**: every linked item moves onto the survivor,
+  notes from both sides are kept and the duplicate record is deleted.
 - **Task workflow** — tasks support Planned, Today, In progress, Waiting, Someday, and Completed states, with a Priority view, persisted checklist steps, quick conversion, duplication, rescheduling, priority-aware ordering, and reversible Archive/Restore.
 - **Reports** — 14-day chart of captures vs completions (completions are logged locally).
 - **Insights** — patterns noticed locally: open loops, most active project, most mentioned person,
@@ -295,6 +303,12 @@ Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, 
 described under *Cron cadence*, and only needs running if the project stays on Vercel Hobby.
 
 The client probes for `items.completed_at` and the Phase 3 smart-capture columns at sign-in, and only sends those fields when the columns exist, so the app remains usable on a database that has not yet run the latest migration.
+
+Person contact details (phone, email, birthday) need **no migration**. The people table stores only a
+name and notes, so `buildStructuredRecordPayload()` puts the details inside the `metadata` jsonb column
+the structured-record routes already accept, and `normaliseStructuredRecord()` lifts them back out on
+read. A field hung directly on the record would be dropped by the server on the way out and gone by the
+next load, with no error to show for it.
 
 The household API is used first during sign-in to find or create the current workspace.
 The browser still falls back to direct Supabase household access when the API is not

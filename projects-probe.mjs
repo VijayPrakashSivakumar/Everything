@@ -250,6 +250,84 @@ say('a quoted item id still produces a working memory row', await page.evaluate(
   try { new Function('openPanel', src); return 'parses'; } catch (e) { return `${e.constructor.name} for ${src}`; }
 }, memoryOnclick), 'parses');
 
+// ---------- 7. merging duplicate people, and contact details that survive a sync ----------
+// A person is identified by their name string, and names come from typing, imports and item tags, so
+// one human easily ends up as two rows. Merging is the repair; rename can only fix one of them.
+console.log('\nPEOPLE: MERGE AND CONTACT DETAILS');
+await page.evaluate(() => {
+  window.confirm = () => true;
+  window.alert = () => {};
+  state.people = [
+    { id: 'p1', name: 'Ravi', notes: 'Prefers mornings', phone: '+91 90000 00000', created: 2 },
+    { id: 'p2', name: 'Ravi Kumar', notes: 'Met at the climbing gym', email: 'ravi@work.example', created: 1 },
+  ];
+  state.items = [
+    { id: 'i1', kind: 'task', title: 'Call the plumber', person: 'Ravi', created: Date.now() },
+    { id: 'i2', kind: 'task', title: 'Book flights', person: 'Ravi Kumar', created: Date.now() },
+  ];
+  renderPeople();
+  window.openPersonModal('p1', 'Ravi');
+});
+say('the dialog shows the contact details already on the record',
+  await page.evaluate(() => document.getElementById('personPhone')?.value ?? null), '+91 90000 00000');
+// Offering someone as their own merge target would make the button do nothing useful.
+say('the merge list offers the other person and not themselves',
+  JSON.stringify(await page.evaluate(() =>
+    [...(document.getElementById('personMergeTarget')?.options ?? [])].map((o) => o.value))),
+  JSON.stringify(['Ravi Kumar']));
+say('the people list says who has contact details',
+  (await page.locator('#peopleList').innerText()).includes('has contact details'), true);
+
+// Saving must write the fields back onto the record rather than into the void.
+say('saving the dialog keeps the contact details',
+  JSON.stringify(await page.evaluate(() => {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    set('personEmail', 'ravi@personal.example');
+    set('personBirthday', '1994-04-02');
+    if (typeof window.savePersonNotes !== 'function') return 'savePersonNotes is not a function';
+    return window.savePersonNotes().then(() => {
+      const p = state.people.find((x) => x.name === 'Ravi');
+      return p ? [p.phone, p.email, p.birthday, p.notes] : 'no record';
+    });
+  })),
+  JSON.stringify(['+91 90000 00000', 'ravi@personal.example', '1994-04-02', 'Prefers mornings']));
+
+// What the server sees. The people table has no phone column, so the details ride in metadata.
+const personPayload = await page.evaluate(() =>
+  window.buildStructuredRecordPayload('person', state.people.find((p) => p.name === 'Ravi')));
+say('the sync payload carries the details in metadata',
+  JSON.stringify([personPayload.metadata.phone, personPayload.metadata.email, personPayload.metadata.birthday]),
+  JSON.stringify(['+91 90000 00000', 'ravi@personal.example', '1994-04-02']));
+// The row that comes back has them inside metadata, so they have to be lifted out again on read.
+say('a row read back from the server still has the phone number',
+  await page.evaluate((payload) => window.normaliseStructuredRecord('person',
+    { id: 'row-1', client_id: 'p1', name: 'Ravi', notes: '', metadata: payload }).phone, personPayload),
+  '+91 90000 00000');
+
+// The merge itself, driven through the real button.
+await page.evaluate(() => {
+  window.openPersonModal('p1', 'Ravi');
+  const sel = document.getElementById('personMergeTarget');
+  if (sel) sel.value = 'Ravi Kumar';
+  if (typeof window.startMergePerson !== 'function') return 'startMergePerson is not a function';
+  return window.startMergePerson();
+});
+say('the duplicate record is gone',
+  JSON.stringify(await page.evaluate(() => state.people.map((p) => p.name))),
+  JSON.stringify(['Ravi Kumar']));
+say('every item now names the survivor',
+  JSON.stringify(await page.evaluate(() => state.items.map((i) => i.person))),
+  JSON.stringify(['Ravi Kumar', 'Ravi Kumar']));
+// Read the survivor, not the first row, or this would pass merely because the duplicate still exists.
+say('the notes from both records are kept',
+  await page.evaluate(() => {
+    const survivor = state.people.find((p) => p.name === 'Ravi Kumar');
+    return survivor ? survivor.notes : 'no survivor';
+  }),
+  'Met at the climbing gym\n\nPrefers mornings');
+say('the list shows one person instead of two',
+  await page.locator('#peopleList .task-row').count(), 1);
+
 console.log(`\npage errors: ${errors.length}`);
 errors.forEach((e) => console.log(`  ! ${e.slice(0, 140)}`));
 await context.close();
