@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.8";
+const APP_BUILD = "2026-09-26.9";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -2404,12 +2404,17 @@ function renderToday() {
     .sort((a, b) => b.created - a.created)
     .slice(0, 4)
     .forEach((item) => {
-      const [bg, fg] = kindColor(item.kind);
+      // Every other normaliser defaults the kind (see itemToRow and the Supabase row builders), and
+      // a backup that predates it, or one edited by hand, can still arrive without one. kindColor and
+      // kindIcon already tolerate that; this line did not, so a single kindless item threw and left
+      // the Today view half-rendered.
+      const kind = item.kind || "text";
+      const [bg, fg] = kindColor(kind);
       const el = document.createElement("div");
       el.className = "recent-item";
       el.onclick = () => openPanel(item.id);
-      el.innerHTML = `<div class="recent-dot" style="background:${bg};color:${fg};">${kindIcon(item.kind)}</div>
-      <div><div class="recent-text">${escapeHtml(item.title)}</div><div class="recent-tag">${item.kind.charAt(0).toUpperCase() + item.kind.slice(1)}</div></div>
+      el.innerHTML = `<div class="recent-dot" style="background:${bg};color:${fg};">${kindIcon(kind)}</div>
+      <div><div class="recent-text">${escapeHtml(item.title)}</div><div class="recent-tag">${escapeHtml(kind.charAt(0).toUpperCase() + kind.slice(1))}</div></div>
       <div class="recent-time">${timeAgo(item.created)}</div>`;
       recent.appendChild(el);
     });
@@ -6223,6 +6228,9 @@ async function importData(input) {
 
   for (const item of incomingItems) {
     if (!item || !item.id) continue;
+    // Imported JSON is user-supplied, so give it the same defaulting the rest of the app does.
+    // Without this, one item with no kind left Today unable to render at all.
+    if (!item.kind) item.kind = "text";
     const existing = state.items.find((i) => i.id === item.id);
     if (existing) Object.assign(existing, item);
     else state.items.unshift(item);

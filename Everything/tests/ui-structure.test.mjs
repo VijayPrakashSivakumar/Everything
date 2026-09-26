@@ -586,6 +586,24 @@ check('cancelling the confirm keeps the person, the record and every tag', async
   assert.deepEqual(saved.items, []);
 });
 
+check('a captured item with no kind cannot break the Today view', () => {
+  // A backup edited by hand, or one predating the kind field, arrives without one. renderToday()
+  // interpolated item.kind.charAt() directly, so a single kindless item threw a TypeError and left
+  // the whole view half-rendered — while the two helpers on the line above already tolerated it.
+  const today = between('function renderToday', 'function renderInbox');
+  assert.doesNotMatch(today, /item\.kind\.charAt\(/,
+    'the kind must be defaulted before it is used, not dereferenced straight off the item');
+  assert.match(today, /const kind = item\.kind \|\| "text";/,
+    'the kind needs the same default the other normalisers use');
+  assert.match(today, /escapeHtml\(kind\.charAt\(0\)\.toUpperCase\(\)/,
+    'the kind is interpolated into innerHTML, so it must be escaped like any other text');
+
+  // And the import path must not create that situation in the first place.
+  const backup = between('for (const item of incomingItems)', 'for (const p of incomingProjects');
+  assert.match(backup, /if \(!item\.kind\) item\.kind = "text";/,
+    'imported JSON is user-supplied and must be defaulted like itemToRow does');
+});
+
 check('removing a person covers every storage backend and has a button', () => {
   const src = between('async function dbDeletePerson', 'async function dbDeleteGoal');
   assert.match(src, /state\.people = state\.people\.filter\(\(p\) => p\.id !== id\);/,

@@ -112,13 +112,23 @@ await page.evaluate(() => {
   state.projects = [{ id: 'j1', name: 'Hom', created: Date.now() }];
   state.people = [{ id: 'p1', name: 'ravi', notes: '', created: Date.now() }];
   state.items = [
-    { id: 'i1', title: 'Fix the roof', person: 'Ravi', project: 'Hom', created: Date.now() },
-    { id: 'i2', title: 'Call plumber', person: 'RAVI', project: 'hom', created: Date.now() },
-    { id: 'i3', title: 'Unrelated', person: 'Priya', project: 'Office', created: Date.now() },
+    { id: 'i1', kind: 'task', title: 'Fix the roof', person: 'Ravi', project: 'Hom', created: Date.now() },
+    { id: 'i2', kind: 'task', title: 'Call plumber', person: 'RAVI', project: 'hom', created: Date.now() },
+    { id: 'i3', kind: 'task', title: 'Unrelated', person: 'Priya', project: 'Office', created: Date.now() },
   ];
   renderProjects();
   renderPeople();
 });
+// A backup edited by hand can arrive with no kind at all. Today used to throw on that and stop
+// rendering, so the rest of the view came up empty.
+await page.evaluate(() => {
+  state.items.push({ id: 'i4', title: 'No kind at all', created: Date.now() });
+  renderToday();
+});
+say('Today survives an item with no kind', await page.locator('#recentList').count(), 1);
+say('the kindless item is still listed', await page.evaluate(() =>
+  document.getElementById('recentList').textContent.includes('No kind at all')), true);
+await page.evaluate(() => { state.items.pop(); renderToday(); });
 // A typo'd name used to strand its items with no way back. Renaming must carry them along.
 await page.evaluate(() => window.renameProject('j1', 'Home Renovation'));
 say('renaming a project retags its items',

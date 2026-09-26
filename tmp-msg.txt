@@ -1,31 +1,17 @@
-Let people and projects be renamed and removed
+Fix a crash on any item that has no kind
 
-Items link to a person or a project by name, not by id, so the name is the
-identity. That made two things impossible: a typo like "Hom" stranded every item
-tagged with it, and a person could never be deleted at all -- there was no
-dbDeletePerson and no button anywhere. Both are fixed here.
+Found by the browser probe while checking the new rename behaviour, not by the
+test suite. renderToday() interpolated item.kind.charAt() directly, so one item
+without a kind threw a TypeError and left the whole Today view half-rendered --
+while kindColor() and kindIcon() on the line above already tolerated a missing
+kind. The inconsistency is the tell: everything else in the app defaults it.
 
-- renameProject / renamePerson rewrite the name and carry every linked item with
-  it, so one correction repairs all the items instead of none. Matching goes
-  through sameName(), so "ravi", "  RAVI " and "Ravi" all follow. A case-only
-  rename is written through too, since the stored spelling is what shows up in
-  search and AI context.
-- deletePerson untags the linked items. This is the part that is easy to get
-  wrong: renderPeople() infers people from the items that name them, so leaving
-  the tag behind would re-create the person on the very next render and make
-  Remove look like it had done nothing. The items themselves are kept; the
-  confirm dialog says so and counts them.
-- dbDeletePerson mirrors dbDeleteProject across all three storage paths.
-- Blank names and names already taken are refused without touching anything, and
-  cancelling the confirm leaves the record and every tag alone.
-- Rename uses prompt() and Remove uses confirm(), matching how the app already
-  handles destructive actions, so there is no new dialog machinery to maintain.
+How an item loses its kind: importBackup() validated only item.id, and imported
+JSON is user-supplied. A backup edited by hand, or one predating the field, lands
+in the store with no kind and breaks the view the next time it renders. It is now
+defaulted on import, like itemToRow and the Supabase row builders already do, and
+the render no longer dereferences it directly. The kind is also escaped now,
+since it reaches innerHTML from that same untrusted import.
 
-Seven behavioural tests run the real functions against a stub world. The delete
-test uses the real dbDeletePerson rather than a stub -- a stub that only recorded
-the id would have passed while the record stayed put. Deleting the untag line
-makes that test fail, so it is not vacuous.
-
-audit.mjs now degrades gracefully when no session exists instead of exiting, and
-reports model-backed checks as SKIP rather than letting them pass vacuously.
-projects-probe.mjs covers rename and remove alongside the existing checks.
+Also renames the recent-item label to use the defaulted value so the displayed
+kind and the colour/icon can never disagree.
