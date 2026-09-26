@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.1";
+const APP_BUILD = "2026-09-26.2";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -5580,6 +5580,64 @@ function buildAskPrompt(q, items, today) {
    query the user has already moved on from. Each call takes a ticket and only the newest wins. */
 let askRequestSeq = 0;
 
+/* ---------- Cost control ----------
+
+   Every /api/ask call spends a completion against a free-tier quota. Groq's free
+   `openai/gpt-oss-120b` is capped at 8K input tokens/minute, which a full 12-item context can
+   consume in two or three calls, and the 550/650ms debounces mean a single typed question could
+   fire several. The result was constant 429s and a search that felt broken.
+
+   The ranked local search already answers most queries on its own — it scores title, whole phrase,
+   aliases, status and due date across every field. So the model is a bonus, not the engine. It is
+   now asked only when the query actually reads as a question, and never more often than the quota
+   can absorb. Everything else answers instantly, offline and free. */
+
+const MODEL_MIN_INTERVAL_MS = 6000;
+const ASK_MODEL_MIN_LENGTH = 14;
+let lastModelCallAt = 0;
+
+// Words that mark a real question, as opposed to a lookup. "gym" is a search; "what did I say
+// about the gym membership" is a question worth a model call.
+const QUESTION_WORDS =
+  /\b(what|whats|when|where|which|who|whom|whose|why|how|is|are|was|were|do|does|did|can|could|should|would|will|has|have|had|am|any|tell|remind|need|list|show|summar|explain|suggest|help)\b/i;
+
+// A question needs a real question word AND enough words to be one. A bare keyword is a lookup,
+// and those are better served by the instant ranked results than by a slow round trip.
+function shouldAskModel(q) {
+  const text = String(q || "").trim();
+  if (text.length < ASK_MODEL_MIN_LENGTH) return false;
+  if (!QUESTION_WORDS.test(text)) return false;
+  return text.split(/\s+/).length >= 3;
+}
+
+/* Builds the answer from local data alone, and returns null when the query is a real question the
+   ranking cannot settle on its own. A lookup gets a clean instant answer; a question is passed to
+   the model. This is what keeps a normal search session off the free-tier quota entirely. */
+function buildLocalAnswer(q) {
+  const matches = searchMatches(q);
+  if (!matches.length) return null;
+  // A question gets the model. Short of a question, the ranking is the answer.
+  if (shouldAskModel(q)) return null;
+
+  const top = matches.slice(0, 5);
+  const label = matches.length === 1 ? "1 match" : `${matches.length} matches`;
+  return `Found ${label} for “${q.trim()}”:\n${top
+    .map((m) => {
+      const bits = [m.title, m.sub].filter(Boolean).join(" — ");
+      return `• ${bits}`;
+    })
+    .join("\n")}`;
+}
+
+// Rate-limits the model path. Returns false when a call was made very recently, in which case the
+// caller keeps the local answer instead of queueing a call that would only be rate limited.
+function modelCallAllowed() {
+  const now = Date.now();
+  if (now - lastModelCallAt < MODEL_MIN_INTERVAL_MS) return false;
+  lastModelCallAt = now;
+  return true;
+}
+
 async function askAI(q, opts = {}) {
   const ticket = ++askRequestSeq;
   const extra = opts.extra || "";
@@ -5607,7 +5665,18 @@ async function askAI(q, opts = {}) {
 
   const contextItems = searchMatches(q);
   const contextPool = askContextPool(q);
-  // The model is given today's date so relative questions ("today", "this week", "overdue")
+
+  // A lookup is answered from local data alone: instant, private, and it costs no quota at all.
+  // `renderFallback` reuses this, so the local answer stays on screen if the model is skipped,
+  // slow, rate limited, or offline.
+  const localAnswer = buildLocalAnswer(q);
+  const wantsModel = localAnswer === null;
+
+  // The model is rate limited locally too. A second call within the window keeps the local answer
+  // rather than firing a request the free tier is likely to reject anyway.
+  const callModel = wantsModel && modelCallAllowed();
+
+  // The model given today's date so relative questions ("today", "this week", "overdue")
   // are answerable instead of guessed.
   const today = new Date().toLocaleDateString(undefined, {
     weekday: "long",
@@ -5641,21 +5710,34 @@ async function askAI(q, opts = {}) {
   }
 
   const renderFallback = (note) => {
-    const body = contextItems.length
-      ? `Based on what you've captured — ${escapeHtml(
-          contextItems
-            .slice(0, 3)
-            .map((m) => m.title)
-            .join("; "),
-        )}.`
-      : "No matching items in your captures.";
+    // `localAnswer` is reused rather than rebuilding a generic line, so an answer that was already
+    // computed locally is never thrown away when the model is skipped or fails.
+    const body =
+      localAnswer ||
+      (contextItems.length
+        ? `Based on what you've captured — ${escapeHtml(
+            contextItems
+              .slice(0, 3)
+              .map((m) => m.title)
+              .join("; "),
+          )}.`
+        : "No matching items in your captures.");
     const hint = note
       ? `<div class="ask-hint">${escapeHtml(note)}</div>`
       : "";
     // The dropdown already lists the matching items, so sources there would just repeat them.
     const sources = extra === "search-ask" ? "" : buildSourcesHtml();
-    show(`<div class="ask-answer">${body}${hint}${sources}</div>`);
+    show(`<div class="ask-answer">${escapeHtml(body).replace(/\n/g, "<br>")}${hint}${sources}</div>`);
   };
+
+  // Nothing to spend: a lookup, or a second question inside the rate-limit window. The local answer
+  // is the whole answer here, so no network call is made at all.
+  if (!callModel) {
+    renderFallback(
+      wantsModel ? "Showing your matching items — the AI answer is rate limited just now." : "",
+    );
+    return;
+  }
 
   if (sample) {
     try {

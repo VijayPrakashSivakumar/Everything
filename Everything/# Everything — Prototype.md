@@ -313,20 +313,28 @@ Vercel Hobby's 12-function limit).
 | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | `openrouter/free` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` |
 
-Groq and Gemini both have usable free tiers and need only their single key variable. Two
+Groq and Gemini both have usable free tiers and need only their single key variable. Three
 caveats worth knowing before choosing:
 
-- **Groq free plan** allows 30 requests/min and 8K input tokens/min, and it does *not*
-  include `llama-3.3-70b-versatile` (that is an Enterprise model) — hence the
-  `openai/gpt-oss-120b` default. Because of the token cap, Ask sends at most 30 items with
-  each field truncated to 120 characters.
-- **Gemini free plan** has a far larger token allowance, so it is the better default if you
-  expect to ask questions with a lot of history.
+- **Groq free plan** allows 30 requests/min, 8K input tokens/min and 1K requests/day, and it does
+  *not* include `llama-3.3-70b-versatile` (that is an Enterprise model) — hence the
+  `openai/gpt-oss-120b` default. The 8K token cap is the binding constraint, so the app sends at
+  most 10 context items and only calls the model for queries that read as questions.
+- **Gemini free tier** is limited on RPM, TPM and a daily (RPD) quota that resets at midnight
+  Pacific. An exhausted key returns `429`, which is a quota state rather than a misconfiguration,
+  and it recovers on its own.
+- **Neither provider is assumed healthy.** One that just failed is skipped for five minutes, and
+  `GET /api/health?probe=1` reports the intended provider next to the one that actually answered,
+  so a dead primary cannot hide behind a working fallback.
 
-**Gemini is the default primary**, because it is both the higher token allowance *and* the
-one less likely to be rate limited on a free key, and smart capture now spends the same
-model on extraction as well. Groq stays as the automatic fallback. To go back to Groq-first
-without a code change, set `AI_PROVIDER=groq` in Vercel.
+Gemini is listed first, because its token allowance is the larger of the two, and smart capture
+spends the same model on extraction as well. Groq is the automatic fallback; to make it primary
+instead, set `AI_PROVIDER=groq` in Vercel.
+
+**The model is a bonus, not the engine.** The ranked local search scores title, whole phrase,
+aliases, status and due date across every field, so a plain lookup ("gym") is answered instantly
+from local data with no network call and no quota spent. Only a query that reads as a question
+("when is the invoice due") spends a completion, and never more than once every six seconds.
 
 `OPENAI_BASE_URL` overrides the base URL for any provider, so any OpenAI-compatible host
 also works. `GET /api/health` reports `aiAvailable`, `aiProvider`, `aiModel`, `aiFallbacks`,

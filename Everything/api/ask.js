@@ -15,12 +15,18 @@ import { requireUser } from './lib/auth.js';
 //   ANTHROPIC_API_KEY  + ANTHROPIC_MODEL
 
 const PROVIDERS = {
-  // Gemini is listed first and is the default primary. Its free tier has a far larger token
-  // allowance than Groq's, which matters because Ask sends up to 30 items of context and this
-  // build also uses the model for smart-capture extraction. It is also far less likely to be
-  // rate limited on a free key, so the first attempt is the one most likely to succeed.
+  // Gemini is listed first and is the default primary: its free tier has a much larger token
+  // allowance than Groq's, which matters because a build like this also uses the model for
+  // smart-capture extraction.
+  //
+  // It is NOT assumed to be healthy. A free Gemini key returns 429 when its quota is exhausted, so
+  // the adapter remembers recent failures and skips the provider for a few minutes rather than
+  // paying the failed attempt on every request. /api/health?probe=1 reports the intended provider
+  // alongside the one that actually answered, so a silently-dead primary is visible rather than
+  // hidden behind a working fallback.
   gemini: { keyVar: 'GEMINI_API_KEY', modelVar: 'GEMINI_MODEL', defaultModel: 'gemini-flash-latest' },
-  // Groq remains the fallback, and is still used first when AI_PROVIDER=groq is set.
+  // Groq is the fallback. Its free `openai/gpt-oss-120b` allows only 8K input tokens/minute, so
+  // request volume and context size are bounded on the client and server rather than assumed.
   // NOTE: llama-3.3-70b-versatile is an Enterprise model on Groq, so the free default is a
   // GPT-OSS model, which is what the free plan actually serves.
   groq: { keyVar: 'GROQ_API_KEY', modelVar: 'GROQ_MODEL', defaultModel: 'openai/gpt-oss-120b' },
@@ -402,7 +408,13 @@ export async function probeProvider() {
 // Free tiers (Groq in particular) cap input tokens per minute, so the context is bounded
 // rather than sending every item. Newest items are the useful ones, and each line is
 // truncated so one very long title cannot consume the whole budget.
-const MAX_CONTEXT_ITEMS = 30;
+//
+// 30 was far more than any free tier can absorb: Groq's free `openai/gpt-oss-120b` allows only
+// 8K input tokens/minute, and a 30-item context is roughly 4-6K tokens on its own — two or three
+// searches a minute before the provider starts returning 429. The client already ranks and sends
+// only the best matches (ASK_CONTEXT_MATCHES = 12), so 10 here is a backstop for the in-artifact
+// path, not a downgrade: the first 10 ranked items are what actually answer the question.
+const MAX_CONTEXT_ITEMS = 10;
 const MAX_FIELD = 120;
 
 /* One context line per item. The client now sends a normalised payload (askContextPayload), so

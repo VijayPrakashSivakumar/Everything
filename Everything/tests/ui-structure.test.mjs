@@ -235,6 +235,21 @@ const between = (start, end) => {
   assert.ok(to > -1, `no ${JSON.stringify(end)} after ${start}`);
   return js.slice(from, to + end.length);
 };
+// Slices a run of code out of script.js, from `start` up to (but not including) the line that
+// begins with `end`. The end marker is anchored to the start of a line, so a marker like "}" cannot
+// latch onto the closing brace of an earlier function and silently truncate the slice — which is
+// what a plain substring search does, and it is how buildLocalAnswer went missing from the harness
+// while the tests still appeared to run.
+const betweenBlock = (start, end) => {
+  const from = js.indexOf(start);
+  assert.ok(from > -1, `${start} is missing from script.js`);
+  const rest = js.slice(from);
+  const pattern = new RegExp(`(?:\\r?\\n)[ \\t]*${end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+  const match = pattern.exec(rest);
+  assert.ok(match, `no line starting ${JSON.stringify(end)} after ${start}`);
+  // Cut immediately before the matched line, leaving the preceding block fully intact.
+  return rest.slice(0, match.index);
+};
 const searchSource = [
   between('const SEARCH_STOP_WORDS', ']);'),
   between('const SEARCH_ALIASES', '};'),
@@ -244,6 +259,15 @@ const searchSource = [
   between('function searchScore', '\n}'),
   between('function searchMatches', '\n}'),
   between('const ASK_CONTEXT_MATCHES', '\n}'),
+  // One slice covers the whole cost-control block: MODEL_MIN_INTERVAL_MS, lastModelCallAt,
+  // ASK_MODEL_MIN_LENGTH, QUESTION_WORDS, shouldAskModel, buildLocalAnswer and modelCallAllowed.
+  // Slicing them separately would re-declare QUESTION_WORDS and throw.
+  //
+  // The end anchor is the *next declaration after the whole block*. A plain "\n}\n" marker would
+  // latch onto shouldAskModel's closing brace and silently truncate the slice, so the later
+  // functions would never reach the harness. Anchoring on the next `async function` line is
+  // unambiguous, and that line is excluded from the slice so no dangling body is evaluated.
+  betweenBlock('const MODEL_MIN_INTERVAL_MS', 'async function askAI'),
 ].join('\n');
 const runSearch = (deps, expr) =>
   new Function(...searchDeps, `${searchSource}\nreturn ${expr};`)(...searchDeps.map((k) => deps[k]));
@@ -259,6 +283,66 @@ check('a natural question is not searched as one long phrase', () => {
   // No single title contains "what should I do today", so the old matcher returned nothing and
   // the AI was handed an arbitrary list of items instead.
   assert.ok(searchApi.searchMatches('what should I do today').length > 0, 'a plain question must still retrieve something');
+});
+
+/* ---------- Free-tier cost control ----------
+
+   Groq's free `openai/gpt-oss-120b` allows 8K input tokens/minute. A full context is several
+   thousand tokens, and the debounced handlers fire on every typing pause, so a normal search
+   session could exhaust the quota in a couple of questions. The ranked local search is now the
+   default answer and the model is only spent on something that genuinely reads as a question. */
+
+const costApi = runSearch(stubDeps, '({ shouldAskModel, buildLocalAnswer, modelCallAllowed })');
+
+check('a keyword lookup does not spend a model call', () => {
+  assert.equal(costApi.shouldAskModel('gym'), false, 'a bare keyword is a lookup, not a question');
+  assert.equal(costApi.shouldAskModel(''), false, 'an empty query must never call the model');
+  assert.equal(costApi.shouldAskModel('atlas'), false, 'a short word is a lookup');
+});
+
+check('a real question does reach the model', () => {
+  assert.equal(costApi.shouldAskModel('what did I say about the gym membership'), true,
+    'a genuine question must still be answered by the model');
+  assert.equal(costApi.shouldAskModel('when is the invoice due'), true, 'a due-date question qualifies');
+  assert.equal(costApi.shouldAskModel('how much did I spend on'), true, 'an open-ended question qualifies');
+});
+
+check('a lookup is answered locally without spending quota', () => {
+  const answer = costApi.buildLocalAnswer('gym');
+  assert.ok(answer, 'a lookup must still produce an answer');
+  assert.match(answer, /gym membership/i, 'the answer must name the matching item');
+  assert.doesNotMatch(answer, /rate limited/i, 'a normal lookup must not warn about limits');
+});
+
+check('a question is deliberately not answered locally, so the model can improve it', () => {
+  assert.equal(costApi.buildLocalAnswer('what did I say about the gym membership'), null,
+    'a real question must be passed to the model rather than short-changed');
+});
+
+check('repeated model calls are throttled so the quota cannot be drained by typing', () => {
+  assert.equal(costApi.modelCallAllowed(), true, 'the first call is always allowed');
+  assert.equal(costApi.modelCallAllowed(), false, 'an immediate second call must be throttled');
+  assert.equal(costApi.modelCallAllowed(), false, 'and a third must stay throttled');
+});
+
+check('a single model call is not sent more often than the free tier allows', () => {
+  assert.match(js, /const MODEL_MIN_INTERVAL_MS = 6000;/,
+    'the model must be rate limited locally, not only on the server');
+  assert.match(js, /const callModel = wantsModel && modelCallAllowed\(\);/,
+    'the throttled flag must actually gate the network call');
+  assert.match(js, /if \(!callModel\) \{[\s\S]*?return;/,
+    'a throttled or non-question query must return before any fetch is attempted');
+  // The local answer must be what the user keeps, not a generic line thrown together on failure.
+  assert.match(js, /const body =\s*\n?\s*localAnswer \|\|/,
+    'an already-computed local answer must be reused rather than discarded');
+});
+
+check('the server bounds the context to what a free tier can actually accept', () => {
+  const ask = fs.readFileSync(new URL('../api/ask.js', import.meta.url), 'utf8');
+  // 30 items is several thousand tokens, which is most of Groq's 8K tokens/minute on its own.
+  const maxItems = Number((ask.match(/const MAX_CONTEXT_ITEMS = (\d+);/) || [])[1]);
+  assert.ok(Number.isFinite(maxItems), 'MAX_CONTEXT_ITEMS must be a number');
+  assert.ok(maxItems <= 12, `context must fit a free-tier minute, found ${maxItems} items`);
 });
 
 check('matches are ranked, not in insertion order', () => {
