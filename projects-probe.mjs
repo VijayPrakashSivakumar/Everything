@@ -369,7 +369,9 @@ await page.evaluate(() => {
   document.getElementById('newGoalInput').value = 'Learn to sail';
   return window.addGoal();
 });
-say('a goal takes the target date from the card', await page.evaluate(() => state.goals[0].targetDate), due);
+// Read the goal by title: addGoal unshifts, so goals[0] is the *second* goal by now.
+say('a goal takes the target date from the card', await page.evaluate(() =>
+  (state.goals.find((g) => g.title === 'Ship the beta') || {}).targetDate), due);
 say('the date field is cleared, so the next goal does not inherit it',
   await page.evaluate(() => document.getElementById('newGoalDate').value), '');
 say('the goal says how long is left',
@@ -430,7 +432,8 @@ await page.evaluate((id) => window.setGoalDate(id, ''), betaId);
 say('a blank date clears it', await page.evaluate((id) =>
   state.goals.find((g) => g.id === id).targetDate, betaId), '');
 say('an unreadable date is explained rather than swallowed', (await page.evaluate(() => window.__alerts.length)) >= 2, true);
-await page.evaluate((id, target) => window.setGoalDate(id, target), betaId, due);
+// One argument only — page.evaluate takes a single value, so a pair travels as an array.
+await page.evaluate(([id, target]) => window.setGoalDate(id, target), [betaId, due]);
 say('setting a date puts it back on screen',
   (await page.locator('#goalsList').innerText()).includes('Due in 10 days'), true);
 
@@ -443,21 +446,24 @@ say('a goal read back from the server still has its target date', await page.eva
     { id: 'row-1', client_id: 'g1', title: 'Ship the beta properly', status: 'active', metadata: md }).targetDate,
   goalPayload.metadata), due);
 
-// The Date button builds a handler from stored text, which is where a quote would break it.
-await page.evaluate((id) => window.setGoalDate(id, '2026-12-31'), betaId);
+// The Date button builds a handler from stored text, which is where a quote would break it. It belongs
+// to whichever goal is rendered first, so that is the one to date — the handler must carry *its* id and
+// *its* date, not the goal the rest of this section happens to be following.
+const firstGoalId = await page.evaluate(() => state.goals[0].id);
+await page.evaluate((id) => window.setGoalDate(id, '2026-12-31'), firstGoalId);
 const dateOnclick = await page.locator('#goalsList .btn').filter({ hasText: 'Date' }).first().getAttribute('onclick');
 console.log(`  onclick="${dateOnclick}"`);
 say('a stored date still produces a handler the parser accepts', await page.evaluate((src) => {
   try { new Function(`return (${src});`); return 'parses'; } catch (e) { return `${e.constructor.name}: ${e.message}`; }
 }, dateOnclick), 'parses');
-say('the Date button hands the setter the id and the stored date', JSON.stringify(await page.evaluate(() => {
+say('the Date button hands the setter its own goal id and the stored date', JSON.stringify(await page.evaluate(() => {
   const orig = window.startSetGoalDate;
   window.__args = null;
   window.startSetGoalDate = (a, b) => { window.__args = [a, b]; };
   [...document.querySelectorAll('#goalsList .btn')].find((b) => b.textContent.trim() === 'Date').click();
   window.startSetGoalDate = orig;
   return window.__args;
-})), JSON.stringify([betaId, '2026-12-31']));
+})), JSON.stringify([firstGoalId, '2026-12-31']));
 
 console.log(`\npage errors: ${errors.length}`);
 errors.forEach((e) => console.log(`  ! ${e.slice(0, 140)}`));
