@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.5";
+const APP_BUILD = "2026-09-26.6";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -5639,13 +5639,13 @@ function shouldAskModel(q) {
   return text.split(/\s+/).length >= 3;
 }
 
-// Answers from local data alone, or null when the query is a real question for the model.
+// Answers from local data alone, or null when the model should be asked instead. A real question
+// always defers, even with no matches: the model can still say nothing relevant is captured. A
+// lookup is answered here, including "no matches" — calling a model about a typo wastes quota.
 function buildLocalAnswer(q) {
   const matches = searchMatches(q);
-  if (!matches.length) return null;
-  // A question gets the model. Short of a question, the ranking is the answer.
   if (shouldAskModel(q)) return null;
-
+  if (!matches.length) return "No matching items in your captures.";
   const top = matches.slice(0, 5);
   const label = matches.length === 1 ? "1 match" : `${matches.length} matches`;
   return `Found ${label} for “${q.trim()}”:\n${top

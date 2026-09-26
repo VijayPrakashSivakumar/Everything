@@ -377,6 +377,21 @@ check('person and project names match case-insensitively, not with ===', () => {
   }
 });
 
+check('a real question reaches the model even when nothing matches', () => {
+  // Regression: buildLocalAnswer() returned null when there were no matches, and askAI() read null
+  // as "this is a question, call the model". So on an account with no matches the logic inverted and
+  // a genuine question was answered locally instead — the cost fix disabled the model for exactly
+  // the case it existed for. The browser audit caught it.
+  const src = betweenBlock('function buildLocalAnswer', 'function modelCallAllowed');
+  // The question check must come first, or the two branches invert.
+  const qAt = src.indexOf('if (shouldAskModel(q))');
+  const nmAt = src.indexOf('if (!matches.length)');
+  assert.ok(qAt > -1, 'buildLocalAnswer must defer for a real question');
+  assert.ok(nmAt > qAt, 'the question check must precede the no-matches branch');
+  assert.match(src, /if \(!matches\.length\) return "No matching items in your captures\.";/,
+    'a lookup with no matches is answered locally rather than spending a model call');
+});
+
 check('every view is rendered when it is opened, not as a side effect of another', () => {
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const views = [...html.matchAll(/id="view-(\w+)"/g)].map((m) => m[1]);
