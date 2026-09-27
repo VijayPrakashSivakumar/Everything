@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.16";
+const APP_BUILD = "2026-09-27.1";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -6156,6 +6156,110 @@ function searchScore(item, terms, phrase) {
   return score;
 }
 
+/* ---------- Fuzzy fallback ----------
+   The exact matcher is substring-only, so "grocery" finds nothing against "Groceries run", and a
+   typo finds nothing at all. Consulted only when the exact pass came up empty, so results that
+   already work keep their exact order. */
+
+/* Below this length, words are too close together to match safely: "car" is one edit from
+   "cat", "bar" and "can", so fuzzy matching at that size is mostly noise. */
+const SEARCH_FUZZY_MIN_LENGTH = 4;
+const SEARCH_FUZZY_MAX_DISTANCE = 2;
+/* Stops a pathological query from scanning a huge archive on every keystroke. */
+const SEARCH_FUZZY_SCAN_LIMIT = 400;
+/* More than this many words is not a real search, it is a sentence, and fuzzy gets too vague. */
+const SEARCH_FUZZY_MAX_TERMS = 6;
+
+/* Folds the endings English actually adds, so "notes"/"note" are one word. Cautious by design: a
+   stem is only produced while it stays long enough to still mean something. */
+function searchNormaliseWord(word) {
+  const w = String(word || "");
+  if (w.length < 4) return w;
+  if (/ies$/.test(w)) return `${w.slice(0, -3)}y`;
+  if (/(ches|shes|sses|xes|zes)$/.test(w)) return w.slice(0, -2);
+  if (/[^s]s$/.test(w)) return w.slice(0, -1);
+  if (/ing$/.test(w) && w.length > 5) return w.slice(0, -3);
+  if (/ed$/.test(w) && w.length > 4) return w.slice(0, -2);
+  return w;
+}
+
+/* Edit distance, bounded. Returns max + 1 as soon as the words are further apart than max, so
+   the overwhelmingly common "not remotely similar" pair costs a couple of comparisons instead
+   of filling the whole row. */
+function searchEditDistance(a, b, max) {
+  if (a === b) return 0;
+  const lenA = a.length;
+  const lenB = b.length;
+  if (Math.abs(lenA - lenB) > max) return max + 1;
+  const row = new Array(lenB + 1);
+  let prev = new Array(lenB + 1);
+  let curr = row;
+  for (let j = 0; j <= lenB; j++) prev[j] = j;
+  for (let i = 1; i <= lenA; i++) {
+    curr[0] = i;
+    let best = i;
+    for (let j = 1; j <= lenB; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const value = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      curr[j] = value;
+      if (value < best) best = value;
+    }
+    if (best > max) return max + 1;
+    const swap = prev;
+    prev = curr;
+    curr = swap;
+  }
+  return prev[lenB];
+}
+
+/* The searchable words of one item, cached against its haystack. Re-splitting on every keystroke is
+   the expensive part, not the comparison. Bounded, and cleared wholesale. */
+const searchWordCache = new Map();
+const SEARCH_WORD_CACHE_LIMIT = 400;
+function searchWords(item) {
+  const haystack = searchHaystack(item);
+  if (!haystack) return [];
+  const cached = searchWordCache.get(haystack);
+  if (cached) return cached;
+  const words = haystack.split(/[^a-z0-9]+/).filter((word) => word.length >= 3);
+  if (searchWordCache.size >= SEARCH_WORD_CACHE_LIMIT) searchWordCache.clear();
+  searchWordCache.set(haystack, words);
+  return words;
+}
+
+/* One query term against one item's words. A stem match is a real difference in spelling form and
+   scores well above an edit-distance guess, which is the user being nearly right. */
+function searchTermScore(term, words) {
+  const needle = searchNormaliseWord(term);
+  let best = 0;
+  for (const word of words) {
+    if (word === term) return 4;
+    if (searchNormaliseWord(word) === needle) return 3;
+    if (needle.length < SEARCH_FUZZY_MIN_LENGTH) continue;
+    // A shorter word gets a tighter budget: at six letters an extra edit is usually still a
+    // real word, at four it usually is not.
+    const max = needle.length >= 6 ? SEARCH_FUZZY_MAX_DISTANCE : 1;
+    if (Math.abs(word.length - needle.length) > max) continue;
+    if (searchEditDistance(word, needle, max) <= max) best = Math.max(best, 1);
+  }
+  return best;
+}
+
+/* AND across terms, exactly as the exact matcher does, so adding a word still narrows the
+   results rather than widening them. */
+function searchFuzzyScore(item, terms) {
+  const words = searchWords(item);
+  if (!words.length) return 0;
+  let score = 0;
+  for (const term of terms) {
+    const termScore = searchTermScore(term, words);
+    if (!termScore) return 0;
+    score += termScore;
+  }
+  if (item?.dueDate || item?.due_date) score += 1;
+  return score;
+}
+
 /* The one search engine behind both the header dropdown and the Ask overlay. Returns the
    best-matching items, most relevant first, so the AI is given the items that actually answer
    the question instead of the first N in insertion order. */
@@ -6163,9 +6267,20 @@ function searchMatches(q) {
   const phrase = String(q || "").toLowerCase().trim();
   if (!phrase) return [];
   const terms = searchTerms(phrase);
-  return state.items
-    .filter((item) => !isArchived(item))
+  const live = state.items.filter((item) => !isArchived(item));
+
+  const exact = live
     .map((item) => ({ item, score: searchScore(item, terms, phrase) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || (b.item.created || 0) - (a.item.created || 0))
+    .map((entry) => entry.item);
+
+  if (exact.length) return exact;
+  if (terms.length > SEARCH_FUZZY_MAX_TERMS) return exact;
+
+  return live
+    .slice(0, SEARCH_FUZZY_SCAN_LIMIT)
+    .map((item) => ({ item, score: searchFuzzyScore(item, terms) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || (b.item.created || 0) - (a.item.created || 0))
     .map((entry) => entry.item);
@@ -6641,13 +6756,22 @@ function navPushLayer(name) {
   return navSafe(() => history.pushState(navEntry(name), ""), false);
 }
 
-/* Called when a layer closed itself (a button, Escape, save-and-close). Going "back" rather than
-   dropping the entry keeps the browser's position and ours in step, so the next back press lands
-   on the entry underneath instead of skipping it. */
+/* Called when a layer closed itself, and by the observer when a view change closed one for it.
+   Going "back" rather than dropping the entry keeps the browser's position and ours in step.
+
+   Only valid while the current entry really is the layer's own. A view change from inside a layer —
+   a sidebar nav tap — pushes a view entry above the layer's, so unwinding would walk onto the layer
+   marker instead, whose `ev` is the view the person came from; popstate would then treat that marker
+   as a destination and switch them straight back, which is what made the menu look dead. The
+   layer's entry is gone by then, so drop the bookkeeping and hold position. */
 function navPopLayer() {
-  if (!navState.layers.length) return;
+  const top = navState.layers[navState.layers.length - 1];
+  if (top === undefined) return;
   navState.layers.pop();
-  navSafe(() => history.back(), false);
+  const current = history.state;
+  if (current && current.everything && current.layer === top) {
+    navSafe(() => history.back(), false);
+  }
 }
 
 /* The innermost dismissible thing on screen, or null. Order is by stacking, not document order:

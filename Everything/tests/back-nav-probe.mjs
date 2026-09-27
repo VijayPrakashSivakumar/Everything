@@ -142,6 +142,60 @@ try {
     assert.equal(await layers(), '[]', 'Escape must unwind the entry, or back would be swallowed');
     assert.equal((await openBits()).modal, false, 'Escape must still close the sheet');
   });
+
+  /* The two cases below are the same gesture a thumb makes on a phone, and the combination the
+     checks above never made: a layer open at the same time as a view change. */
+  await check('tapping the menu navigates instead of snapping back', async () => {
+    await page.evaluate(() => switchView('today'));
+    await page.waitForTimeout(200);
+    // Open the menu the way the hamburger does, so it gets its own layer entry.
+    await page.evaluate(() => toggleSidebar());
+    await page.waitForTimeout(300);
+    assert.deepEqual(JSON.parse(await layers()), ['sidebar'], 'the open menu must hold an entry');
+
+    // Then tap a real nav item inside it. A push on top of the layer entry, plus the sidebar
+    // closing, is what used to leave popstate restoring the view recorded on the layer marker.
+    const tapped = await page.evaluate(() => {
+      const item = [...document.querySelectorAll('#navList .nav-item')]
+        .find((el) => el.textContent.includes('Tasks'));
+      if (!item) return false;
+      item.click();
+      return true;
+    });
+    assert.ok(tapped, 'the Tasks nav item must exist');
+    await page.waitForTimeout(500);
+    assert.equal(await view(), 'view-tasks', 'the tap must land on Tasks and stay there');
+    assert.equal((await openBits()).sidebar, false, 'and the menu must have closed');
+    assert.equal(await layers(), '[]', 'the layer entry must be consumed, not left behind');
+    // The view alone is not enough to catch this: walking back onto the layer marker still shows
+    // Tasks, it just leaves the browser parked on an entry that says otherwise. Check the entry.
+    assert.deepEqual(await page.evaluate(() => {
+      const s = history.state || {};
+      return { everything: s.everything, layer: s.layer ?? null, ev: s.ev ?? null, active: activeView };
+    }), { everything: 1, layer: null, ev: 'tasks', active: 'tasks' },
+    'the current history entry must be the view we are on, not the layer marker');
+  });
+
+  await check('back after a menu tap walks to the page underneath', async () => {
+    await swipeBack();
+    await page.waitForTimeout(400);
+    assert.equal(await view(), 'view-today', 'back must return to the Dashboard, not exit the app');
+  });
+
+  await check('a menu closed without navigating keeps the history clean', async () => {
+    await page.evaluate(() => toggleSidebar());
+    await page.waitForTimeout(250);
+    await page.evaluate(() => closeSidebar());
+    await page.waitForTimeout(400);
+    assert.equal(await layers(), '[]', 'closing the menu must unwind its entry');
+    assert.equal((await openBits()).sidebar, false);
+    // Nothing was navigated, so back still belongs to the pages rather than the menu.
+    await page.evaluate(() => switchView('projects', { history: 'push' }));
+    await page.waitForTimeout(250);
+    await swipeBack();
+    await page.waitForTimeout(350);
+    assert.equal(await view(), 'view-today', 'back must still walk pages after a menu close');
+  });
 } finally {
   await browser.close();
   server.kill();

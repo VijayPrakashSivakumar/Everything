@@ -236,7 +236,8 @@ check('both search entry points share one matcher', () => {
   assert.match(js, /function searchMatches\(q\)/, 'searchMatches helper missing');
   // Exactly one place may decide what matches. searchMatches and the two helpers it delegates
   // to are allowed; a second inline filter means the entry points could disagree.
-  for (const name of ['function searchMatches(q)', 'function searchScore(', 'function searchHaystack(']) {
+  for (const name of ['function searchMatches(q)', 'function searchScore(', 'function searchHaystack(',
+    'function searchFuzzyScore(', 'function searchNormaliseWord(', 'function searchEditDistance(']) {
     assert.equal((js.match(new RegExp(name.replace(/[()]/g, '\\$&'), 'g')) || []).length, 1,
       `${name} must be declared exactly once`);
   }
@@ -249,6 +250,26 @@ check('both search entry points share one matcher', () => {
   assert.doesNotMatch(others, /state\.items\s*\n?\s*\.filter\([\s\S]{0,200}?\.toLowerCase\(\)[\s\S]{0,120}?\.includes\(/,
     'duplicate inline matching logic still exists');
   assert.match(js, /const matches = searchMatches\(q\);/, 'runAsk must reuse searchMatches');
+});
+
+check('the fuzzy fallback can only add results, never replace good ones', () => {
+  // The whole safety argument for fuzzy search: it runs only after the exact pass found
+  // nothing. If this ever moves above the early return, a typo-tolerant match could start
+  // outranking the exact title a user can plainly see, and no test would notice.
+  const body = js.slice(js.indexOf('function searchMatches'), js.indexOf('function askContextPool'));
+  const exactReturn = body.indexOf('if (exact.length) return exact;');
+  const fuzzyCall = body.indexOf('searchFuzzyScore(');
+  assert.ok(exactReturn > -1, 'searchMatches must return the exact matches as-is');
+  assert.ok(fuzzyCall > -1, 'searchMatches must have a fuzzy fallback');
+  assert.ok(fuzzyCall > exactReturn,
+    'the fuzzy pass must come after the exact results are returned, never before');
+  // A sentence is not a search. Fuzzy is deliberately refused past this, where a typo match
+  // would be a coincidence rather than a correction.
+  assert.match(js, /const SEARCH_FUZZY_MAX_TERMS = 6;/, 'the fuzzy term cap is gone');
+  assert.match(body, /if \(terms\.length > SEARCH_FUZZY_MAX_TERMS\) return exact;/,
+    'searchMatches must refuse to go fuzzy on a long query');
+  // Short words are one edit from half the dictionary, so they must never be fuzzy matched.
+  assert.match(js, /const SEARCH_FUZZY_MIN_LENGTH = 4;/, 'the short-word guard is gone');
 });
 
 check('the AI answer cannot wipe the dropdown hit list', () => {
@@ -310,6 +331,10 @@ const searchSource = [
   between('function searchTerms', '\n}'),
   between('function searchHaystack', '\n}'),
   between('function searchScore', '\n}'),
+  // The whole fuzzy block in one slice, for the same reason as the cost-control block below:
+  // searchMatches reads SEARCH_FUZZY_MAX_TERMS and calls searchFuzzyScore, so pulling the pieces
+  // out separately strands the constants in a slice that never reaches the code using them.
+  betweenBlock('const SEARCH_FUZZY_MIN_LENGTH', '/* The one search engine behind'),
   between('function searchMatches', '\n}'),
   between('const ASK_CONTEXT_MATCHES', '\n}'),
   // One slice for the whole cost-control block; splitting it re-declares QUESTION_WORDS. Anchor on

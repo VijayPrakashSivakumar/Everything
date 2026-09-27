@@ -4,12 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node Everything/tests/ui-structure.test.mjs && node Everything/tests/ask-adapter.test.mjs && node Everything/tests/mobile-audit.mjs && node Everything/tests/plan-probe.mjs && node Everything/tests/plan-visual.mjs && node Everything/tests/autosave-probe.mjs && node Everything/tests/theme-probe.mjs && node Everything/tests/back-nav-probe.mjs",
+    "test": "node Everything/tests/ui-structure.test.mjs && node Everything/tests/ask-adapter.test.mjs && node Everything/tests/mobile-audit.mjs && node Everything/tests/plan-probe.mjs && node Everything/tests/plan-visual.mjs && node Everything/tests/autosave-probe.mjs && node Everything/tests/theme-probe.mjs && node Everything/tests/back-nav-probe.mjs && node Everything/tests/search-probe.mjs",
     "test:plan": "node Everything/tests/plan-probe.mjs",
     "test:visual": "node Everything/tests/plan-visual.mjs",
     "test:autosave": "node Everything/tests/autosave-probe.mjs",
     "test:theme": "node Everything/tests/theme-probe.mjs",
     "test:back": "node Everything/tests/back-nav-probe.mjs",
+    "test:search": "node Everything/tests/search-probe.mjs",
     "serve": "node serve.mjs",
     "audit": "node audit.mjs",
     "probe:projects": "node projects-probe.mjs"

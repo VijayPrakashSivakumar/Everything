@@ -425,6 +425,18 @@ always closes the top layer rather than walking out to the previous page. With n
 back is left to the browser, which backgrounds the app. A page cannot close its own tab, and
 holding a permanent guard would trap the user on the site, so that is deliberately not done.
 
+## Typo-tolerant search
+The exact matcher is substring-only, so a plural or a single typo found nothing. A fuzzy fallback now
+runs when — and only when — the exact pass returns nothing, so existing results keep their exact
+order and fuzzy can never reorder or drop a match. It matches per word: conservative English
+stemming first ("grocery" finds "Groceries"), then a bounded Levenshtein distance.
+
+It is deliberately narrow. Words under four characters are never fuzzy matched, because "car" is one
+edit from "cat", "bar" and "can". Distance is 1, rising to 2 only at six characters or more. A query
+over six words, or a scan past 400 items, is refused rather than guessed at, because on a phone this
+runs on every keystroke.
+
+
 ## Tests
 The suites run offline — no API key, no login, no network:
 
@@ -434,6 +446,9 @@ node Everything/tests/ui-structure.test.mjs  # search wiring, mobile layout, bac
 node Everything/tests/plan-probe.mjs         # capture fan-out, in a real browser
 node Everything/tests/plan-visual.mjs        # plan layout, escaping, phone fit, screenshots
 node Everything/tests/autosave-probe.mjs      # auto-create, the doubt path, undo
+node Everything/tests/theme-probe.mjs         # theme contrast, in a real browser
+node Everything/tests/back-nav-probe.mjs       # history stack, layers, the menu
+node Everything/tests/search-probe.mjs        # exact-first ranking, plurals, typos, speed
 ```
 
 `npm test` runs all of them, plus the mobile audit. The two plan checks need Playwright (already a
