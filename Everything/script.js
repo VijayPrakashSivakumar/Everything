@@ -7333,11 +7333,16 @@ function applyLaunchShortcut() {
    `data-scheme` is the resolved light/dark value, always written explicitly. Having it as an
    attribute is what lets a concept be scoped to one scheme with a plain selector, instead of
    needing the OS media query and an explicit choice to be reconciled by specificity. */
+/* The whole theme list. Adding a concept is one entry here plus one block of CSS: the swatch colours
+   live on the entry so they cannot drift away from the theme they describe. */
 const APP_THEMES = [
-  { id: "default", label: "Default", hint: "The original look" },
-  { id: "premium", label: "Premium", hint: "Polished and refined" },
-  { id: "focus", label: "Deep Work", hint: "Minimal and quiet" },
-  { id: "casual", label: "Casual", hint: "Light and relaxed" },
+  { id: "default", label: "Default", hint: "The original look", swatch: ["#f5f6fb", "#4361ee", "#10152b", "#ffffff"] },
+  { id: "premium", label: "Premium", hint: "Warm, refined, unhurried", swatch: ["#faf9f7", "#8a6d3b", "#1c1917", "#ffffff"] },
+  { id: "focus", label: "Deep Work", hint: "Flat, square, still", swatch: ["#fbfbfa", "#3f4a55", "#ffffff", "#e5e5e1"] },
+  { id: "casual", label: "Casual", hint: "Round, soft, relaxed", swatch: ["#fdf7f4", "#e2725b", "#2d2a3b", "#ffffff"] },
+  { id: "aurora", label: "Aurora", hint: "Gradient and glass", swatch: ["#f3f1fd", "#6d3bf5", "#2a1a5e", "#d8ccff"] },
+  { id: "editorial", label: "Editorial", hint: "Serif, paper, quiet", swatch: ["#f7f4ec", "#9a3f2d", "#f4efe4", "#fffdf8"] },
+  { id: "dense", label: "Dense", hint: "Monospace, compact, fast", swatch: ["#f2f4f7", "#0b6bcb", "#101720", "#dbe0e7"] },
 ];
 const THEME_STATE_KEY = "themeConcept";
 const themeSchemeMedia =
@@ -7388,15 +7393,10 @@ function initTheme() {
   applyThemeConcept(currentThemeConcept());
 }
 
-/* Swatches show the concept's own palette, so the choice is visible before it is applied. */
+/* Swatches show the concept's own palette, so the choice is visible before it is applied. The
+   colours come off the theme entry, which is why adding a concept cannot leave this behind. */
 function themeSwatch(theme) {
-  const palettes = {
-    default: ["#f5f6fb", "#4361ee", "#10152b", "#ffffff"],
-    premium: ["#faf9f7", "#8a6d3b", "#1c1917", "#ffffff"],
-    focus: ["#fbfbfa", "#3f4a55", "#ffffff", "#e5e5e1"],
-    casual: ["#fdf7f4", "#e2725b", "#2d2a3b", "#ffffff"],
-  };
-  const [bg, accent, sidebar, card] = palettes[theme.id] || palettes.default;
+  const [bg, accent, sidebar, card] = theme.swatch || ["#f5f6fb", "#4361ee", "#10152b", "#ffffff"];
   return `<span class="theme-swatch" aria-hidden="true" style="background:${bg}">
             <i style="background:${sidebar}"></i><i style="background:${accent}"></i><i style="background:${card}"></i>
           </span>`;

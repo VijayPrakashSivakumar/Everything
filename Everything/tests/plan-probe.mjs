@@ -3,13 +3,9 @@
 // Mocks /api/ask so the run needs no key and no network, then checks the sheet shows the plan
 // and that saving writes one item per row, with agenda lines folded into the meeting's steps.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { startTestServer, testUrl } from './test-server.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..');
 const PORT = 4399;
 
 const PLAN_REPLY = {
@@ -30,15 +26,7 @@ const OTHER_REPLY = {
   ],
 };
 
-const server = spawn('node', [path.resolve(root, '..', 'serve.mjs'), String(PORT)], { stdio: 'ignore' });
-// Poll the server rather than sleeping: a fixed delay is a race on a cold start.
-for (let i = 0; i < 40; i += 1) {
-  try {
-    const res = await fetch(`http://127.0.0.1:${PORT}/index.html`);
-    if (res.ok) break;
-  } catch { /* not up yet */ }
-  await new Promise((r) => setTimeout(r, 250));
-}
+const server = await startTestServer(PORT);
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
@@ -70,7 +58,7 @@ try {
   await page.route('**/api/ask', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ extraction: reply.items[0], items: reply.items, provider: 'probe', model: 'probe' }) }));
 
-  await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'commit' });
+  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
   await page.waitForFunction(() => typeof window.openCapture === 'function' && !!document.getElementById('quickRemember'));
   // No session here, so the sign-in screen covers the app. Capture logic is unaffected, so
   // lift it out of the way rather than standing up a real account for a fan-out check.

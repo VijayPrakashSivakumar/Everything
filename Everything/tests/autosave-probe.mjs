@@ -3,13 +3,9 @@
 //   node Everything/tests/autosave-probe.mjs
 // Mocks /api/ask per test, so it needs no key and no network.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { startTestServer, testUrl } from './test-server.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..');
 const PORT = 4403;
 
 const entry = (over = {}) => ({
@@ -26,11 +22,7 @@ const CLEAR = [
 // Doubtful: one entry is a question, so the app must ask instead of guessing.
 const DOUBTFUL = [entry({ kind: 'event', title: 'Meet John', ambiguous: 'Which day next week?' })];
 
-const server = spawn('node', [path.resolve(root, '..', 'serve.mjs'), String(PORT)], { stdio: 'ignore' });
-for (let i = 0; i < 40; i += 1) {
-  try { if ((await fetch(`http://127.0.0.1:${PORT}/index.html`)).ok) break; } catch { /* not up */ }
-  await new Promise((r) => setTimeout(r, 250));
-}
+const server = await startTestServer(PORT);
 
 const browser = await chromium.launch();
 const results = [];
@@ -79,7 +71,7 @@ const sheet = () => page.evaluate(() => ({
 }));
 
 try {
-  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'commit' });
+  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
   await page.waitForFunction(() => typeof window.openCapture === 'function' && !!document.getElementById('quickRemember'));
 
   // Checks 1-3 are one flow: an auto-create, then the bar, then undo. They share state on

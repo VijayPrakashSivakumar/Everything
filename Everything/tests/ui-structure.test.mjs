@@ -131,6 +131,34 @@ check('a pale theme cannot leave sidebar text unreadable', () => {
   assert.match(css, /\.capture-label \{[\s\S]{0,80}?color: var\(--sidebar-fg-strong\)/, 'the Capture label is hard-coded white');
   assert.match(css, /\.brand-name \{[\s\S]{0,200}?color: var\(--sidebar-fg-strong\)/, 'the brand name is hard-coded white');
   assert.match(css, /\.hero-card \{[\s\S]{0,80}?background: var\(--brand-gradient\)/, 'the hero card gradient is hard-coded');
+  // The nav was fixed first and the bottom of the sidebar was missed: the profile block and the
+  // capture button were still hard-coded white, which vanishes on a pale sidebar.
+  assert.match(css, /\.capture-btn \{[\s\S]{0,200}?color: var\(--sidebar-fg-strong\)/, 'the capture button is hard-coded white');
+  assert.match(css, /\.sidebar-profile \{[\s\S]{0,300}?color: var\(--sidebar-fg-strong\)/, 'the profile block is hard-coded white');
+  // Hairlines inside the sidebar were white-on-navy literals too, so they need tokens as well.
+  assert.match(css, /--sidebar-divider:/, 'no sidebar divider token');
+  assert.match(css, /--sidebar-rule:/, 'no sidebar rule token');
+  assert.match(css, /\.sidebar-profile \{[\s\S]{0,300}?solid var\(--sidebar-rule\)/, 'the profile rule ignores the token');
+  // A pale sidebar must darken its own hairlines rather than inherit the white ones that were
+  // written for a navy bar. "Pale" is derived from the palette instead of listed by name, so a
+  // concept added later cannot quietly reintroduce the bug; a deep sidebar (Premium, Casual,
+  // Aurora, Dense) still wants the white hairline and is deliberately left alone.
+  const luminance = (hex) => {
+    const [r, g, b] = hex.slice(1).match(/../g).map((h) => parseInt(h, 16) / 255);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  let pale = 0;
+  for (const [, name, body] of css.matchAll(/:root\[data-scheme="light"\]\[data-concept="([a-z]+)"\]\s*\{([\s\S]*?)\n\}/g)) {
+    const sidebar = (body.match(/--sidebar:\s*(#[0-9a-f]{6})/i) || [])[1];
+    if (!sidebar || luminance(sidebar) < 0.6) continue;   // not a pale bar: nothing to prove here
+    pale += 1;
+    for (const token of ['--sidebar-divider', '--sidebar-rule']) {
+      const found = body.match(new RegExp(`${token}:\\s*rgba\\((\\d+),\\s*(\\d+),\\s*(\\d+),`));
+      assert.ok(found, `light ${name} paints the sidebar ${sidebar} but inherits a white ${token}`);
+      assert.ok(found.slice(1).every((c) => Number(c) < 128), `light ${name} has a pale sidebar (${sidebar}) but keeps a light ${token}`);
+    }
+  }
+  assert.ok(pale >= 2, 'no pale-sidebar concept was found, so this check proved nothing');
   // No bare white may be left on a themed surface.
   const themed = css.slice(css.indexOf('.sidebar {'));
   assert.doesNotMatch(themed.slice(0, 20000), /\.nav-item\.active \{[\s\S]{0,80}?color: #fff/, 'active nav still literal white');

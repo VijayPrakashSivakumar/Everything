@@ -2,20 +2,12 @@
 // test it is to make one and watch what the screen does.
 //   node Everything/tests/back-nav-probe.mjs
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { startTestServer, testUrl } from './test-server.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..');
 const PORT = 4405;
 
-const server = spawn('node', [path.resolve(root, '..', 'serve.mjs'), String(PORT)], { stdio: 'ignore' });
-for (let i = 0; i < 40; i += 1) {
-  try { if ((await fetch(`http://127.0.0.1:${PORT}/index.html`)).ok) break; } catch { /* not up */ }
-  await new Promise((r) => setTimeout(r, 250));
-}
+const server = await startTestServer(PORT);
 
 const browser = await chromium.launch();
 const results = [];
@@ -40,7 +32,7 @@ const swipeBack = () => page.goBack();
 
 
 try {
-  await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'commit' });
+  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
   await page.waitForFunction(() => typeof window.initBackNavigation === 'function');
   await page.evaluate(() => {
     document.getElementById('authScreen').style.display = 'none';

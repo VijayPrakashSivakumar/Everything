@@ -5,8 +5,13 @@
 import http from 'http';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-const ROOT = path.resolve('Everything');
+// Resolve the folder to serve from this file's own location, not the current working directory:
+// every probe spawns this script from wherever it happens to run, and a CWD-relative ROOT made
+// them silently serve a folder that does not exist.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'Everything');
+const HOST = '127.0.0.1';
 const PORT = Number(process.argv[2] || 4321);
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -34,4 +39,13 @@ http
       res.writeHead(404, { 'Content-Type': 'text/plain' }).end('not found');
     }
   })
-  .listen(PORT, () => console.log(`serving ${ROOT} on http://localhost:${PORT}`));
+  // Bind loopback explicitly. Left implicit, Node binds the IPv6 wildcard, and a `localhost` that
+  // resolves to ::1 on some machines and 127.0.0.1 on others is what made the probes report a bare
+  // "cannot connect" against a server that was demonstrably up.
+  .listen(PORT, HOST, () => console.log(`serving ${ROOT} on http://${HOST}:${PORT}`))
+  .on('error', (err) => {
+    // A port already taken must be loud: a probe that quietly proceeds gets a connection error
+    // several steps away from the real cause.
+    console.error(`cannot serve on ${HOST}:${PORT} — ${err.code || err.message}`);
+    process.exit(1);
+  });

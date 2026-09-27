@@ -2,11 +2,11 @@
 // layout can be looked at rather than inferred. Also asserts the plan does not overflow the
 // sheet, which the mobile audit cannot do on its own (it only ever sees an empty sheet).
 //   node Everything/tests/plan-visual.mjs
-import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { startTestServer, testUrl } from './test-server.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -20,11 +20,7 @@ const PLAN = [
   { kind: 'waiting', title: 'Signed contract from the client', dueDate: '', person: 'Ravi', project: 'Atlas', priority: '', recurrence: 'none', confidence: 'medium', ambiguous: '' },
 ];
 
-const server = spawn('node', [path.resolve(root, '..', 'serve.mjs'), String(PORT)], { stdio: 'ignore' });
-for (let i = 0; i < 40; i += 1) {
-  try { if ((await fetch(`http://127.0.0.1:${PORT}/index.html`)).ok) break; } catch { /* not up */ }
-  await new Promise((r) => setTimeout(r, 250));
-}
+const server = await startTestServer(PORT);
 mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch();
@@ -42,7 +38,7 @@ const shoot = async (name, viewport) => {
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ extraction: PLAN[0], items: PLAN, provider: 'visual', model: 'visual' }),
   }));
-  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'commit' });
+  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
   await page.waitForFunction(() => typeof window.openCapture === 'function' && !!document.getElementById('quickRemember'));
   await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
   await page.evaluate(() => openCapture());
