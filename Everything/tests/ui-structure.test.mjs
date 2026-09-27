@@ -346,6 +346,243 @@ const runSearch = (deps, expr) =>
 const searchApi = runSearch(stubDeps, '({ searchMatches, askContextPool })');
 const titles = (items) => items.map((i) => i.title);
 
+/* ---------- Local model (Ollama) ----------
+   The local provider is the only one that can reach the user's machine, so it gets a harness of
+   its own: the search slice already covers most of the code, but these checks need a stubbed
+   localStorage and fetch, plus a slice for the extraction block that lives with the capture code. */
+const localDeps = [...searchDeps, 'buildAskPrompt', 'localStorage', 'fetch'];
+const localSource = [
+  betweenBlock('const LOCAL_EXTRACTION_KINDS', '/* Asks the configured model for a structured read'),
+  betweenBlock('const MODEL_MIN_INTERVAL_MS', 'async function askAI'),
+].join('\n');
+const runLocal = (deps, expr) =>
+  new Function(...localDeps, `${localSource}\nreturn ${expr};`)(...localDeps.map((k) => deps[k]));
+
+/* A fetch stub that records what it was asked for and replays queued replies. `seed` pre-saves the
+   stored config, which the probe needs: with no model chosen it short-circuits without any fetch,
+   so a fixture that forgets it would look like an unreachable server. Pass null to test the
+   unconfigured state. */
+const makeLocal = (replies, seed = { model: 'llama3.2:3b' }) => {
+  const calls = [];
+  const store = new Map();
+  if (seed) store.set('everything_local_model', JSON.stringify(seed));
+  let reply = replies.shift();
+  return {
+    calls,
+    store,
+    deps: {
+      ...stubDeps,
+      buildAskPrompt: (q) => `PROMPT:${q}`,
+      localStorage: {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+      },
+      fetch: async (url, init) => {
+        calls.push({ url, init });
+        const next = reply || { status: 500 };
+        reply = replies.shift();
+        if (next.throw) throw new Error('network down');
+        return { ok: next.status >= 200 && next.status < 300, status: next.status, json: async () => next.body };
+      },
+      AbortController,
+    },
+  };
+};
+const TAGS_OK = { status: 200, body: { models: [{ name: 'llama3.2:3b' }, { model: 'qwen3:8b' }] } };
+const CHAT_OK = { status: 200, body: { message: { content: '  the answer  ' } } };
+
+check('the local model is on by default and needs no key', () => {
+  const { deps } = makeLocal([], null);
+  const cfg = runLocal(deps, '({ localModelConfig })').localModelConfig();
+  assert.equal(cfg.enabled, true, 'a fresh install should try the free path first');
+  assert.equal(cfg.baseUrl, 'http://localhost:11434', 'wrong default address for Ollama');
+  assert.equal(cfg.model, '', 'no model is installed yet');
+});
+
+check('with no model chosen the local path is skipped without a request', async () => {
+  const { deps, calls } = makeLocal([TAGS_OK], null);
+  const status = await runLocal(deps, '({ localModelStatus })').localModelStatus();
+  assert.equal(status.reachable, false);
+  assert.match(status.reason, /model/i, `expected a "choose a model" message: ${status.reason}`);
+  assert.equal(calls.length, 0, 'nothing to ask for, so nothing should be sent');
+});
+
+check('the local model setting round-trips, and a bad value does not break it', () => {
+  const { deps, store } = makeLocal([], null);
+  const api = runLocal(deps, '({ saveLocalModelConfig, localModelConfig })');
+  api.saveLocalModelConfig({ model: 'llama3.2:3b', baseUrl: 'http://127.0.0.1:11434/' });
+  const cfg = api.localModelConfig();
+  assert.equal(cfg.model, 'llama3.2:3b');
+  assert.equal(cfg.baseUrl, 'http://127.0.0.1:11434', 'a trailing slash would build a double-slash URL');
+  // Private mode and a corrupted entry must both degrade to the defaults, not throw on every ask.
+  store.set('everything_local_model', '{not json');
+  assert.deepEqual(api.localModelConfig(), {
+    enabled: true,
+    baseUrl: 'http://localhost:11434',
+    model: '',
+  });
+});
+
+check('an unreachable Ollama is reported, not thrown', async () => {
+  const { deps } = makeLocal([{ throw: true }]);
+  const status = await runLocal(deps, '({ localModelStatus })').localModelStatus();
+  assert.equal(status.reachable, false);
+  assert.match(status.reason, /Ollama/, `the message must say what to do: ${status.reason}`);
+});
+
+check('installed models are listed for the picker', async () => {
+  const { deps, calls } = makeLocal([TAGS_OK]);
+  const status = await runLocal(deps, '({ localModelStatus })').localModelStatus();
+  assert.equal(status.reachable, true);
+  assert.deepEqual(status.models, ['llama3.2:3b', 'qwen3:8b'], 'both name: and model: must be read');
+  assert.match(calls[0].url, /\/api\/tags$/, `wrong probe URL: ${calls[0].url}`);
+});
+
+check('the probe happens once per session, so a missing Ollama is not paid for on every question', async () => {
+  const { deps, calls } = makeLocal([TAGS_OK]);
+  const api = runLocal(deps, '({ localModelStatus })');
+  await api.localModelStatus();
+  await api.localModelStatus();
+  await api.localModelStatus();
+  assert.equal(calls.length, 1, `probed ${calls.length} times`);
+});
+
+check('a local answer asks for one non-streamed reply', async () => {
+  const { deps, calls } = makeLocal([TAGS_OK, CHAT_OK]);
+  const text = await runLocal(deps, '({ localModelComplete })').localModelComplete([
+    { role: 'user', content: 'hi' },
+  ]);
+  assert.equal(text, 'the answer', 'the reply must be trimmed');
+  const body = JSON.parse(calls[1].init.body);
+  assert.equal(body.stream, false, 'streaming would arrive as many JSON lines, not one answer');
+  assert.equal(body.model, 'llama3.2:3b');
+  assert.match(calls[1].url, /\/api\/chat$/);
+});
+
+check('the json flag is only sent when the caller needs JSON', async () => {
+  const { deps, calls } = makeLocal([TAGS_OK, CHAT_OK, CHAT_OK]);
+  const api = runLocal(deps, '({ localModelComplete })');
+  await api.localModelComplete([{ role: 'user', content: 'hi' }]);
+  assert.equal(JSON.parse(calls[1].init.body).format, undefined, 'a prose answer must not be constrained');
+  await api.localModelComplete([{ role: 'user', content: 'hi' }], { json: true });
+  assert.equal(JSON.parse(calls[2].init.body).format, 'json', 'smart capture needs constrained decoding');
+});
+
+check('a failed local call is not retried for the rest of the session', async () => {
+  const { deps, calls } = makeLocal([TAGS_OK, { status: 500 }]);
+  const api = runLocal(deps, '({ localModelComplete })');
+  assert.equal(await api.localModelComplete([{ role: 'user', content: 'hi' }]), null);
+  assert.equal(await api.localModelComplete([{ role: 'user', content: 'hi' }]), null);
+  assert.equal(calls.length, 2, 'a model that just failed must not be asked again this session');
+});
+
+check('an empty local reply is a miss, so the cloud path still runs', async () => {
+  const { deps } = makeLocal([TAGS_OK, { status: 200, body: { message: { content: '   ' } } }]);
+  const text = await runLocal(deps, '({ localModelComplete })').localModelComplete([
+    { role: 'user', content: 'hi' },
+  ]);
+  assert.equal(text, null);
+});
+
+check('a local capture read drops anything the capture form cannot represent', async () => {
+  const reply = {
+    status: 200,
+    body: {
+      message: {
+        content: JSON.stringify({
+          items: [
+            { kind: 'task', title: 'Send the invoice', person: 'Ravi', priority: 'high', recurrence: 'none', confidence: 'high' },
+            // A hallucinated kind, recurrence and priority must not reach the form as-is. The row
+            // is kept with those fields blanked, exactly as the server does, because an item with
+            // no kind is a state the app already handles.
+            { kind: 'spaceship', title: 'Invented', recurrence: 'fortnightly', priority: 'urgent' },
+            { kind: 'task', title: '   ' },
+          ],
+        }),
+      },
+    },
+  };
+  const { deps } = makeLocal([TAGS_OK, reply]);
+  const out = await runLocal(deps, '({ requestLocalExtraction })').requestLocalExtraction(
+    'Send the invoice to Ravi',
+    'Monday',
+  );
+  assert.equal(out.items.length, 2, `the untitled row must go, the rest must stay: ${JSON.stringify(out.items)}`);
+  assert.equal(out.title, 'Send the invoice', 'the first item is returned flat too');
+  assert.equal(out.kind, 'task');
+  assert.equal(out.priority, 'high');
+  const invented = out.items[1];
+  assert.equal(invented.kind, '', 'an unknown kind is blanked, not passed through');
+  assert.equal(invented.priority, '', 'an unknown priority is blanked');
+  assert.equal(invented.recurrence, 'none', 'an unknown recurrence falls back to none');
+  assert.equal(invented.confidence, 'medium', 'an absent confidence matches the server default');
+});
+
+check('the local cleaner matches the server cleaner field for field', () => {
+  // The server and the browser each normalise a model reply, and a capture must read the same
+  // whichever one ran. These are the field defaults and length caps that were quietly different.
+  const ask = fs.readFileSync(path.join(root, 'api', 'ask.js'), 'utf8');
+  const clean = ask.slice(ask.indexOf('function cleanExtraction'), ask.indexOf('export function buildExtractionPrompt'));
+  const local = js.slice(js.indexOf('function cleanLocalExtractionItem'), js.indexOf('async function requestLocalExtraction'));
+  for (const [label, re] of [
+    ['dueDate cap', /dueDate: str\(raw\.dueDate\)\.slice\(0, 40\)/],
+    ['person cap', /person: str\(raw\.person\)\.slice\(0, 80\)/],
+    ['project cap', /project: str\(raw\.project\)\.slice\(0, 80\)/],
+    ['confidence default', /confidence: oneOf\(raw\.confidence, \["high", "medium", "low"\], "medium"\)/],
+    ['recurrence default', /recurrence: oneOf\(raw\.recurrence, LOCAL_EXTRACTION_RECURRENCE, "none"\)/],
+  ]) {
+    assert.match(local, re, `the local cleaner lost the ${label}`);
+  }
+  assert.match(clean, /confidence: oneOf\(parsed\.confidence, EXTRACTION_CONFIDENCE, 'medium'\)/,
+    'the server confidence default changed, so the local copy must be re-checked');
+  assert.match(clean, /person: str\(parsed\.person\)\.slice\(0, 80\)/,
+    'the server person cap changed, so the local copy must be re-checked');
+});
+
+check('a local capture read of nonsense is a miss rather than a crash', async () => {
+  const { deps } = makeLocal([TAGS_OK, { status: 200, body: { message: { content: 'sorry, I cannot' } } }]);
+  const out = await runLocal(deps, '({ requestLocalExtraction })').requestLocalExtraction('whatever', 'Monday');
+  assert.equal(out, null);
+});
+
+check('the local and cloud capture vocabularies cannot drift apart', () => {
+  // The local prompt is its own shorter text, so this list is the only thing tying it to the
+  // server's buildExtractionPrompt. If either side gains a kind and not the other, the form
+  // would silently reject a value the model is now allowed to produce.
+  const ask = fs.readFileSync(path.join(root, 'api', 'ask.js'), 'utf8');
+  const prompt = ask.slice(ask.indexOf('export function buildExtractionPrompt'));
+  for (const kind of ['task', 'event', 'memory', 'waiting', 'openloop', 'agenda']) {
+    assert.match(prompt, new RegExp(`\\b${kind}\\b`), `the server prompt lost the kind "${kind}"`);
+    assert.match(js, new RegExp(`"${kind}"`), `the local vocabulary lost the kind "${kind}"`);
+  }
+  assert.match(prompt, /high\|medium\|low/, 'the server prompt priority list changed');
+  assert.match(prompt, /none\|daily\|weekly\|monthly/, 'the server prompt recurrence list changed');
+});
+
+check('the local model is tried before the cloud, and skips the cloud rate limit', () => {
+  const body = js.slice(js.indexOf('async function askAI'));
+  const localCall = body.indexOf('askAIlocal(');
+  const cloudCall = body.indexOf('apiFetch("/api/ask"');
+  assert.ok(localCall > -1, 'askAI never tries the local model');
+  assert.ok(cloudCall > -1, 'the cloud fallback is gone');
+  assert.ok(localCall < cloudCall, 'the free model must be tried first');
+  // MODEL_MIN_INTERVAL_MS protects a free cloud tier's quota, which does not apply to a local
+  // model. Gating it would discard a free answer for no reason.
+  assert.ok(localCall < body.indexOf('if (!callModel)'),
+    'the local call must happen before the rate-limit gate');
+});
+
+check('the local model is a browser-side call, never a server-side provider', () => {
+  // This is the whole reason the feature is client-side. A Vercel function cannot reach the
+  // user's localhost, so an "ollama" entry in the server chain would look right and never work.
+  const ask = fs.readFileSync(path.join(root, 'api', 'ask.js'), 'utf8');
+  const chain = ask.slice(ask.indexOf('const PROVIDERS'), ask.indexOf('const PROVIDER_NAMES'));
+  assert.doesNotMatch(chain, /ollama/i, 'Ollama cannot be reached from the serverless provider chain');
+  assert.match(js, /LOCAL_MODEL_URL = "http:\/\/localhost:11434"/, 'the local base URL is missing');
+  assert.match(html, /id="localModelSelect"/, 'the settings card needs a model picker');
+  assert.match(html, /onclick="showSettingsTab\('ai'\)"/, 'the AI settings tab is missing');
+});
+
 check('a partial word still finds the item', () => {
   // "gym" must match "Renew gym membership" — the old matcher needed the whole query verbatim.
   assert.deepEqual(titles(searchApi.searchMatches('gym')), ['Renew gym membership']);

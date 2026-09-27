@@ -425,6 +425,44 @@ always closes the top layer rather than walking out to the previous page. With n
 back is left to the browser, which backgrounds the app. A page cannot close its own tab, and
 holding a permanent guard would trap the user on the site, so that is deliberately not done.
 
+
+## Local model (Ollama) — free and private
+Settings → AI turns on a model running on your own computer. It answers Ask questions and reads
+captured sentences, and the cloud provider is only used if the local one is off or unreachable.
+
+It is a **browser-side** call, deliberately. `/api/ask` runs on Vercel and cannot reach
+`localhost:11434`, so an `ollama` entry in that provider chain would look correct and never answer.
+The browser talking to Ollama directly is also why nothing you type leaves the machine.
+
+Because a local model costs nothing, it is tried *before* the cloud and is **not** subject to the
+6-second `MODEL_MIN_INTERVAL_MS` throttle — that throttle exists to protect a free cloud tier's
+quota, which does not apply here. Reachability is probed once per session, so a machine with no
+Ollama does not pay a failed request on every question.
+
+### Setting it up
+
+```bash
+# 1. install Ollama, then pull a model
+ollama pull llama3.2
+
+# 2. allow this site's origin (required — the browser blocks it otherwise)
+#    Windows: set OLLAMA_ORIGINS as a user environment variable, then restart Ollama
+#    macOS:   launchctl setenv OLLAMA_ORIGINS "http://localhost:8000"
+setx OLLAMA_ORIGINS "https://your-app.vercel.app,http://localhost:8000"
+```
+
+Then Settings → AI → pick the model.
+
+### Limits worth knowing
+- **Same machine only.** A phone opening the app reaches its own `localhost`, not your PC. A LAN
+  address would work with `OLLAMA_HOST=0.0.0.0`, but an HTTPS page is not allowed to call a plain
+  HTTP address that is not `localhost`.
+- **Chrome, Edge and Firefox** allow `http://localhost` from an HTTPS page, because `localhost`
+  counts as a secure origin. **Safari is stricter** and may block it.
+- Smart capture sends `format: "json"`, so a small model returns parseable JSON. The reply is
+  normalised in the browser exactly as the server normalises it, so a capture reads the same
+  whichever model answered.
+
 ## Typo-tolerant search
 The exact matcher is substring-only, so a plural or a single typo found nothing. A fuzzy fallback now
 runs when — and only when — the exact pass returns nothing, so existing results keep their exact
@@ -592,12 +630,12 @@ can see which one actually answered.
 > Fallback only covers *provider* failures. If you exceed a token limit on every configured
 > provider, Ask falls back to local keyword results.
 
-## Note on multi-user / private items / AI search
-The live multi-user sync, private-per-person data, and AI-powered search
-features rely on capabilities only available when this app runs inside a
-published Claude artifact (claude.ai). Opened as a plain static site, the
-app still works, but falls back to local-only storage in that one browser,
-and AI search falls back to simple keyword matching.
+## Note on multi-user sync
+The app runs as a static site with Supabase for accounts and shared data, Vercel serverless
+functions for the API routes, and any of several model providers for AI. Opened as a plain
+`file://` page it still works, but falls back to local-only storage in that one browser, and AI
+falls back to keyword matching. A local Ollama model removes the AI dependency entirely — see
+*Local model (Ollama)*.
 
 ## Pushing to GitHub
 

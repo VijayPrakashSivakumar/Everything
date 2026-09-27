@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-27.1" />
+    <meta name="everything-build" content="2026-09-27.2" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <script>
@@ -859,6 +859,17 @@
                   type="button"
                   class="tab-vert"
                   role="tab"
+                  data-tab="ai"
+                  aria-selected="false"
+                  onclick="showSettingsTab('ai')"
+                >
+                  <i data-lucide="bot" aria-hidden="true"></i>
+                  <span>AI</span>
+                </button>
+                <button
+                  type="button"
+                  class="tab-vert"
+                  role="tab"
                   data-tab="household"
                   aria-selected="false"
                   onclick="showSettingsTab('household')"
@@ -1112,6 +1123,65 @@
                     <div class="shortcut-row">
                       <span>Close dialog</span><span class="kbd">Esc</span>
                     </div>
+                  </div>
+                </div>
+
+                <div class="settings-panel" id="settingsTab-ai" style="display: none">
+                  <div class="card">
+                    <div class="card-head">
+                      <h3>Local model (Ollama)</h3>
+                      <button
+                        class="btn"
+                        id="localModelRecheckBtn"
+                        onclick="renderLocalModelSettings(true)"
+                      >
+                        <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                        <span>Re-check</span>
+                      </button>
+                    </div>
+                    <p class="field-hint" style="margin-top: 0">
+                      Answers questions and reads captured sentences using a model running on this
+                      computer. Nothing is sent anywhere, and it costs nothing. When it is off or
+                      unreachable, the app falls back to the cloud provider.
+                    </p>
+
+                    <label class="switch-row" style="display: flex; gap: 10px; align-items: center; margin: 12px 0">
+                      <input type="checkbox" id="localModelEnabled" onchange="toggleLocalModel(this.checked)" />
+                      <span>Use the local model</span>
+                    </label>
+
+                    <div>
+                      <label style="font-size: 12.5px; color: var(--muted)">Ollama address</label>
+                      <div style="display: flex; gap: 8px; margin-top: 4px">
+                        <input
+                          class="capture-input"
+                          id="localModelUrl"
+                          placeholder="http://localhost:11434"
+                          onchange="saveLocalModelUrl(this.value)"
+                        />
+                      </div>
+                      <p class="field-hint" style="margin-top: 6px">
+                        Must be reachable from this browser. If the page is served over HTTPS,
+                        only <code>localhost</code> is allowed as a secure origin.
+                      </p>
+                    </div>
+
+                    <div style="margin-top: 14px">
+                      <label style="font-size: 12.5px; color: var(--muted)">Model</label>
+                      <select
+                        class="capture-input"
+                        id="localModelSelect"
+                        style="margin-top: 4px"
+                        onchange="saveLocalModelName(this.value)"
+                      >
+                        <option value="">Choose a model</option>
+                      </select>
+                      <p class="field-hint" style="margin-top: 6px">
+                        Install one with <code>ollama pull llama3.2</code>.
+                      </p>
+                    </div>
+
+                    <div id="localModelStatus" style="margin-top: 14px"></div>
                   </div>
                 </div>
 

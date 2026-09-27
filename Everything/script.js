@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-27.1";
+const APP_BUILD = "2026-09-27.2";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -1300,7 +1300,60 @@ function showSettingsTab(tab) {
     t.setAttribute("aria-selected", String(active));
   });
   panel.scrollIntoView({ block: "nearest" });
+  if (tab === "ai") renderLocalModelSettings();
   refreshIcons();
+}
+
+/* The local model card. Reached only from the AI tab, so the probe cost is paid on demand rather
+   than on every load. */
+async function renderLocalModelSettings(force = false) {
+  const cfg = localModelConfig();
+  const enabled = document.getElementById("localModelEnabled");
+  const url = document.getElementById("localModelUrl");
+  const select = document.getElementById("localModelSelect");
+  const status = document.getElementById("localModelStatus");
+  if (!enabled || !url || !select || !status) return;
+  if (document.activeElement !== url) url.value = cfg.baseUrl;
+  enabled.checked = cfg.enabled;
+
+  status.innerHTML = `<div class="field-row" style="padding:4px 0"><span class="field-label">Status</span><span style="font-size:13px">Checking…</span></div>`;
+
+  const result = await localModelStatus(force);
+  if (document.activeElement !== url) url.value = localModelConfig().baseUrl;
+
+  // Keep the chosen model selected even when it is not in the list, so a model that was renamed
+  // or removed does not silently look like a working selection.
+  const names = result.models.includes(cfg.model) ? result.models : [cfg.model, ...result.models].filter(Boolean);
+  select.innerHTML = names.length
+    ? names
+        .map(
+          (name) =>
+            `<option value="${escapeHtml(name)}"${name === cfg.model ? " selected" : ""}>${escapeHtml(name)}</option>`,
+        )
+        .join("")
+    : '<option value="">Choose a model</option>';
+
+  const value = result.reachable
+    ? cfg.model
+      ? `${cfg.model} — answering on this device`
+      : "Choose a model to start answering"
+    : result.reason;
+  status.innerHTML = `<div class="field-row" style="padding:4px 0;align-items:flex-start"><span class="field-label">Status</span><span style="font-size:13px;text-align:right">${escapeHtml(value)}</span></div>`;
+}
+
+function toggleLocalModel(on) {
+  saveLocalModelConfig({ enabled: on });
+  renderLocalModelSettings(true);
+}
+
+function saveLocalModelUrl(value) {
+  saveLocalModelConfig({ baseUrl: value });
+  renderLocalModelSettings(true);
+}
+
+function saveLocalModelName(value) {
+  saveLocalModelConfig({ model: value });
+  renderLocalModelSettings(true);
 }
 
 /* Arrow keys move between tabs, as expected for a tab list. */
@@ -5676,11 +5729,85 @@ function captureNeedsModelHelp(text, local) {
   return splitCaptureClauses(text).length > 1;
 }
 
+/* ---------- Local extraction (smart capture) ----------
+   The server owns the cloud prompt. The local model gets its own, shorter one: a small model on a
+   laptop follows a direct instruction better than a long rule list, and `format: "json"` in
+   localModelComplete does the schema work. The vocabulary below must stay identical to the
+   server's buildExtractionPrompt, which ui-structure pins by comparing the two lists. */
+const LOCAL_EXTRACTION_KINDS = ["task", "event", "memory", "waiting", "openloop", "agenda"];
+const LOCAL_EXTRACTION_PRIORITIES = ["high", "medium", "low"];
+const LOCAL_EXTRACTION_RECURRENCE = ["none", "daily", "weekly", "monthly"];
+
+function buildLocalExtractionPrompt(text, today) {
+  return `Today is ${today}. Turn this sentence into JSON for a personal productivity app.
+
+Return ONLY this shape:
+{"items":[{"kind":"${LOCAL_EXTRACTION_KINDS.join("|")}","title":"short imperative title","dueDate":"ISO 8601 or empty string","person":"name or empty string","project":"name or empty string","priority":"${LOCAL_EXTRACTION_PRIORITIES.join("|")} or empty string","recurrence":"${LOCAL_EXTRACTION_RECURRENCE.join("|")}","confidence":"high|medium|low","ambiguous":"one short question or empty string"}]}
+
+Rules: one sentence can carry several things, so return one entry per distinct thing rather than merging them. Never invent a date; if the wording is vague, leave dueDate empty. "waiting for X" is waiting. An undecided question is openloop. A fact about a person is memory.
+
+Sentence: ${text}`;
+}
+
+/* The reply is written straight into the capture form, so anything the form cannot represent has to
+   be dropped rather than passed through. Mirrors the server's cleanExtraction field for field, so a
+   capture reads the same whichever model answered. */
+function cleanLocalExtractionItem(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const oneOf = (value, allowed, fallback) => {
+    const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return allowed.includes(v) ? v : fallback;
+  };
+  const str = (value) => (typeof value === "string" ? value.trim() : "");
+  const title = str(raw.title).slice(0, 200);
+  // A row with no title is not a thing the person can act on, and the plan path drops these too.
+  if (!title) return null;
+  return {
+    kind: oneOf(raw.kind, LOCAL_EXTRACTION_KINDS, ""),
+    title,
+    dueDate: str(raw.dueDate).slice(0, 40),
+    person: str(raw.person).slice(0, 80),
+    project: str(raw.project).slice(0, 80),
+    priority: oneOf(raw.priority, LOCAL_EXTRACTION_PRIORITIES, ""),
+    recurrence: oneOf(raw.recurrence, LOCAL_EXTRACTION_RECURRENCE, "none"),
+    confidence: oneOf(raw.confidence, ["high", "medium", "low"], "medium"),
+    ambiguous: str(raw.ambiguous).slice(0, 200),
+  };
+}
+
+async function requestLocalExtraction(text, today) {
+  const reply = await localModelComplete(
+    [{ role: "user", content: buildLocalExtractionPrompt(text, today) }],
+    { json: true },
+  );
+  if (!reply) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(reply);
+  } catch {
+    return null;
+  }
+  const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.items) ? parsed.items : [];
+  const items = list.map(cleanLocalExtractionItem).filter(Boolean).slice(0, 8);
+  if (!items.length) return null;
+  // Same shape the server returns, so mergeExtractions does not need to know which path ran.
+  return { ...items[0], items };
+}
+
 /* Asks the configured model for a structured read of the sentence. Returns null on any failure
    or when no provider is configured — the local result is already applied, so a failure here
    costs the refinement and nothing else. */
 async function requestModelExtraction(text) {
   if (isFileProtocol()) return null;
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  // Local first: it is free, and on a phone-sized budget a quota is worth spending last.
+  const local = await requestLocalExtraction(String(text).slice(0, 2000), today);
+  if (local) return local;
   try {
     const res = await apiFetch("/api/ask", {
       method: "POST",
@@ -5688,12 +5815,7 @@ async function requestModelExtraction(text) {
       body: JSON.stringify({
         action: "extract",
         text: String(text).slice(0, 2000),
-        today: new Date().toLocaleDateString(undefined, {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        }),
+        today,
       }),
     });
     if (!res.ok) return null;
@@ -6528,6 +6650,124 @@ function modelCallAllowed() {
   return true;
 }
 
+/* ---------- Local model (Ollama) ----------
+   A free model on this machine. It cannot live in /api/ask: that runs on Vercel and cannot reach
+   localhost, so the browser talks to Ollama directly. Prompts and answers never leave the device.
+
+   Reachability is probed once and remembered for the session. Without that, a machine with no
+   Ollama would pay a doomed request on every question. */
+const LOCAL_MODEL_KEY = "everything_local_model";
+const LOCAL_MODEL_URL = "http://localhost:11434";
+const LOCAL_MODEL_CONTEXT = 8192;
+/* Generous, because a model on CPU is slow. Only reached when Ollama is already up: a refused
+   connection fails immediately rather than sitting out the clock. */
+const LOCAL_MODEL_TIMEOUT_MS = 45000;
+
+let localModelSession = null;
+
+function localModelConfig() {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(LOCAL_MODEL_KEY) || "{}") || {};
+  } catch {
+    saved = {};
+  }
+  return {
+    enabled: saved.enabled !== false,
+    baseUrl: String(saved.baseUrl || LOCAL_MODEL_URL).replace(/\/+$/, ""),
+    model: String(saved.model || ""),
+  };
+}
+
+function saveLocalModelConfig(patch) {
+  const next = { ...localModelConfig(), ...patch };
+  try {
+    localStorage.setItem(LOCAL_MODEL_KEY, JSON.stringify(next));
+  } catch {
+    /* private mode: the setting just does not persist */
+  }
+  localModelSession = null; // the new settings need a fresh probe
+  return next;
+}
+
+/* `reason` is written for the Settings card, so a failure says what to do about it. */
+async function localModelStatus(force = false) {
+  if (localModelSession && !force) return localModelSession;
+  const cfg = localModelConfig();
+  if (!cfg.enabled) {
+    return (localModelSession = { reachable: false, models: [], reason: "Turned off" });
+  }
+  if (!cfg.model) {
+    return (localModelSession = { reachable: false, models: [], reason: "Choose a model" });
+  }
+  try {
+    const res = await fetch(`${cfg.baseUrl}/api/tags`, { cache: "no-store" });
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    const models = Array.isArray(data?.models)
+      ? data.models.map((m) => m.name || m.model).filter(Boolean)
+      : [];
+    localModelSession = {
+      reachable: true,
+      models,
+      reason: models.length ? "" : "Reachable, but no models are installed",
+    };
+  } catch {
+    localModelSession = {
+      reachable: false,
+      models: [],
+      reason: "Not reachable — start Ollama, and allow this site in OLLAMA_ORIGINS",
+    };
+  }
+  return localModelSession;
+}
+
+/* Returns the model's text, or null on any failure so the caller falls through to the cloud. */
+async function localModelComplete(messages, { json = false } = {}) {
+  const status = await localModelStatus();
+  if (!status.reachable) return null;
+  const { baseUrl, model } = localModelConfig();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOCAL_MODEL_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages,
+        // Ollama streams by default, which would arrive as many JSON lines rather than one answer.
+        stream: false,
+        // Constrained decoding, so a small model returns parseable JSON for smart capture.
+        ...(json ? { format: "json" } : {}),
+        options: { num_ctx: LOCAL_MODEL_CONTEXT },
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    const text = typeof data?.message?.content === "string" ? data.message.content.trim() : "";
+    return text || null;
+  } catch {
+    // Stop for the session: a model that just failed or timed out would cost the same again.
+    localModelSession = { reachable: false, models: [], reason: "The local model did not answer" };
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const LOCAL_MODEL_SYSTEM =
+  "You answer questions about the user's own captured items. Be concise (2-4 sentences), " +
+  "specific, and reference items by name. If the context has nothing relevant, say so briefly.";
+
+async function askAIlocal(q, contextPool, today) {
+  return localModelComplete([
+    { role: "system", content: LOCAL_MODEL_SYSTEM },
+    { role: "user", content: buildAskPrompt(q, contextPool, today) },
+  ]);
+}
+
 async function askAI(q, opts = {}) {
   const ticket = ++askRequestSeq;
   const extra = opts.extra || "";
@@ -6609,6 +6849,18 @@ async function askAI(q, opts = {}) {
     const sources = extra === "search-ask" ? "" : buildSourcesHtml();
     show(`<div class="ask-answer">${escapeHtml(body).replace(/\n/g, "<br>")}${hint}${sources}</div>`);
   };
+
+  /* The local model is free and private, so it is tried before the cloud and is not subject to
+     MODEL_MIN_INTERVAL_MS. That throttle exists to protect a free cloud tier's quota, which does
+     not apply here, so gating it would throw away a free answer for no reason. */
+  if (wantsModel) {
+    const localAnswerText = await askAIlocal(q, contextPool, today);
+    if (isSuperseded()) return;
+    if (localAnswerText) {
+      show(`<div class="ask-answer">${escapeHtml(localAnswerText)}${buildSourcesHtml()}</div>`);
+      return;
+    }
+  }
 
   // A lookup, or a second question inside the rate-limit window. No network call at all.
   if (!callModel) {
