@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-26.15";
+const APP_BUILD = "2026-09-26.16";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -1359,6 +1359,7 @@ async function loadProfile() {
     document.documentElement.getAttribute("data-theme") === "dark"
       ? "dark"
       : "light";
+  renderThemePicker();
   // The session already has the email, so skip the /auth/v1/user round trip.
   const email = currentUserEmail || "";
   if (email) {
@@ -1481,6 +1482,8 @@ async function uploadAvatar() {
 function setThemeFromSelect() {
   const val = document.getElementById("themeSelect").value;
   document.documentElement.setAttribute("data-theme", val);
+  // The concept carries its own dark palette, so a scheme change has to reach it.
+  syncThemeScheme();
   state.theme = val;
   save();
 }
@@ -1922,6 +1925,10 @@ async function initMultiUser() {
     privateItems = [];
     if (state.theme)
       document.documentElement.setAttribute("data-theme", state.theme);
+    // The concept rides in state so it syncs with the account, and in its own key so the head
+    // script can apply it before first paint.
+    if (state[THEME_STATE_KEY]) document.documentElement.setAttribute("data-concept", state[THEME_STATE_KEY]);
+    syncThemeScheme();
     renderAll();
     return;
   }
@@ -2219,7 +2226,7 @@ function renderNav() {
     if (item.id === "tasks")
       badge = state.items.filter((i) => i.kind === "task" && !i.done && !isArchived(i)).length;
     el.innerHTML = `<div class="left"><span class="nav-icon"><i data-lucide="${item.icon}"></i></span><span class="nav-label">${item.label}</span></div>${badge ? `<span class="nav-badge">${badge}</span>` : ""}`;
-    el.onclick = () => switchView(item.id);
+    el.onclick = () => switchView(item.id, { history: "push" });
     nav.appendChild(el);
   });
   refreshIcons();
@@ -2227,7 +2234,16 @@ function renderNav() {
 
 let activeView = "today";
 
-function switchView(id) {
+/* ---------- Nav & routing ----------
+   `history` controls the browser-history entry: "push" for a move the person made from the
+   navigation, "replace" for every other caller (boot, login, a jump from a panel). Defaulting to
+   "replace" is what keeps the history from filling up with entries nobody can go back through,
+   while still letting the nav and the back gesture agree about where you are. */
+function switchView(id, options = {}) {
+  const mode = options.history === "push" ? "push" : "replace";
+  if (!document.getElementById("view-" + id)) return;
+  const changed = activeView !== id;
+  if (changed && mode === "push") navPushView(id);
   activeView = id;
   document
     .querySelectorAll(".view")
@@ -2245,6 +2261,10 @@ function switchView(id) {
   if (id === "people") renderPeople();
   if (id === "insights") renderInsights();
   if (id === "settings") renderSettings();
+
+  // Keep the current entry truthful even when no new one was added, so a back press arriving
+  // from outside (a restored tab, a hardware back) still knows which view to show.
+  if (changed && mode === "replace") navReplaceView(id);
 
   const content = document.querySelector(".content");
   if (content) content.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -6572,51 +6592,104 @@ function isTypingTarget(el) {
 
 /* Modals and the Ask overlay block the single-letter shortcuts; the item slide-over
    does not — a quick capture from there just closes it first. */
-/* ---------- Mobile back gesture ----------
-   Android's back swipe arrives as a popstate. This app never navigates, so an unguarded back
-   walks the browser out to whatever was open before it.
+/* ---------- History-aware back navigation ----------
 
-   A history entry is pushed only while a dismissible layer is open, and popped as soon as that
-   layer closes. Back therefore always closes the top layer (sheet, panel, menu, search) and,
-   once nothing is open, the browser is back at its real entry and exits the app normally.
+   The problem: this app never changed the URL, so the browser's back gesture had nothing to
+   return to. Swiping back from Tasks left the app, and from inside a sheet it left the app too.
 
-   A web page cannot close its own tab, so "back closes the app" is the browser's own behaviour
-   at the root of history. Holding a permanent guard instead would trap the user on the site
-   with no way out, which is worse than the problem. */
-let backLayerDepth = 0;
+   The model is a real history stack, which is the approach a router would use:
 
-function pushBackLayer() {
-  if (backLayerDepth > 0) return;
+     entry  { everything: 1, ev: "today" }              the view
+     entry  { everything: 1, ev: "tasks", layer: "nav" } a layer opened on top of it
+
+   Every layer gets its own entry, so nested layers unwind one at a time, and every view the
+   person navigates to gets one, so back walks the views in reverse. A back press is delivered as
+   popstate, and the handler reconciles the screen to whatever entry the browser landed on.
+
+   A web page cannot close its own tab, so once the stack is empty the browser is at its real
+   entry and back does what the platform does — background the app. Holding a permanent guard
+   instead would trap people on the site with no way out, which is worse than the problem. */
+const navState = { layers: [], reconciling: false };
+
+/* The view recorded is the one the entry represents, passed explicitly. Reading `activeView`
+   here would store the view being *left*, so back would always land one step too far. */
+function navEntry(layer, view) {
+  return { everything: 1, ev: view || activeView, layer: layer || null };
+}
+
+function navSafe(fn, fallback) {
   try {
-    history.pushState({ everythingLayer: true }, "");
-    backLayerDepth = 1;
+    fn();
+    return true;
   } catch (e) {
-    /* No history available (private mode, sandboxed frame) — back keeps its default behaviour. */
+    // No history available (private mode, sandboxed frame). The layer still opens and closes;
+    // only the back gesture is unavailable, which is the platform's own behaviour.
+    return fallback;
   }
 }
 
-/* Consumes the guard entry without closing a layer, e.g. when a layer closed itself by button. */
-function popBackLayer() {
-  if (backLayerDepth === 0) return;
-  backLayerDepth = 0;
-  try {
-    history.back();
-  } catch (e) {
-    /* Ignore: the entry simply stays and the next back closes a layer. */
-  }
+function navPushView(id) {
+  return navSafe(() => history.pushState(navEntry(null, id), ""), false);
+}
+
+function navReplaceView(id) {
+  return navSafe(() => history.replaceState(navEntry(null, id), ""), false);
+}
+
+function navPushLayer(name) {
+  navState.layers.push(name);
+  return navSafe(() => history.pushState(navEntry(name), ""), false);
+}
+
+/* Called when a layer closed itself (a button, Escape, save-and-close). Going "back" rather than
+   dropping the entry keeps the browser's position and ours in step, so the next back press lands
+   on the entry underneath instead of skipping it. */
+function navPopLayer() {
+  if (!navState.layers.length) return;
+  navState.layers.pop();
+  navSafe(() => history.back(), false);
+}
+
+/* The innermost dismissible thing on screen, or null. Order is by stacking, not document order:
+   a sheet opened from a panel is above the panel, and a menu is below both. */
+function topmostOpenLayer() {
+  const open = (id, cls) => {
+    const el = document.getElementById(id);
+    return el && (cls ? el.classList.contains(cls) : !el.hidden);
+  };
+  if (document.querySelector(".modal-overlay.open")) return "modal";
+  if (open("askOverlay", "open")) return "ask";
+  if (open("panel", "open")) return "panel";
+  if (open("sidebar", "open")) return "sidebar";
+  if (open("searchDropdown", null)) return "search";
+  return null;
 }
 
 function initBackNavigation() {
-  const LAYER_SELECTOR =
-    ".modal-overlay.open, .ask-overlay.open, #panel.open, #sidebar.open, #searchDropdown:not([hidden])";
-  const anyLayerOpen = () => !!document.querySelector(LAYER_SELECTOR);
+  // The entry this app opened on, so the first back press is not mistaken for leaving.
+  navReplaceView(activeView);
 
-  // Keep the guard in step with what is actually on screen: push when a layer appears, pop it
-  // when the last one closes. Doing this by observation means every existing open/close path
-  // (buttons, Escape, save-and-close, the item slide-over) is covered without touching them.
+  /* Drive the stack from what is actually on screen rather than from each open/close call site.
+     That way every existing path — buttons, Escape, save-and-close, the slide-over, the menus —
+     is covered without touching any of them, and a layer opened from inside another layer
+     correctly pushes a second entry instead of reusing the first. */
   const observer = new MutationObserver(() => {
-    if (anyLayerOpen()) pushBackLayer();
-    else popBackLayer();
+    if (navState.reconciling) return;
+    const open = topmostOpenLayer();
+    const stack = navState.layers;
+    if (open) {
+      const at = stack.indexOf(open);
+      // Not tracked yet: a new layer, so it needs its own entry.
+      if (at === -1) {
+        navPushLayer(open);
+        return;
+      }
+      // Tracked but not on top: layers beneath it closed in one go (Escape, a save that closed
+      // a sheet and its parent). Unwind to match rather than pushing a duplicate.
+      while (stack.length > at + 1) navPopLayer();
+    } else {
+      while (stack.length) navPopLayer();
+    }
   });
   observer.observe(document.body, {
     attributes: true,
@@ -6625,12 +6698,21 @@ function initBackNavigation() {
     attributeFilter: ["class", "hidden"],
   });
 
-  window.addEventListener("popstate", () => {
-    // The browser consumed the guard entry; it must not be re-pushed for this same press.
-    backLayerDepth = 0;
-    // Close the top layer. If nothing was open, the app is already at its real history entry,
-    // so the browser handles the rest (backgrounding the app rather than showing another site).
-    closeTopmostOverlay();
+  window.addEventListener("popstate", (event) => {
+    // The browser already consumed whatever entry it was on. Whatever is still open is
+    // therefore one level too deep, and closing it is the whole job of this press.
+    navState.reconciling = true;
+    try {
+      const state = event.state && event.state.everything ? event.state : null;
+      if (navState.layers.length) {
+        navState.layers.pop();
+        closeTopmostOverlay();
+      }
+      // Then put the view back. Done without pushing, because the browser owns the position now.
+      if (state && state.ev && state.ev !== activeView) switchView(state.ev, { history: "none" });
+    } finally {
+      navState.reconciling = false;
+    }
   });
 
   // Tapping outside the search field dismisses its dropdown.
@@ -6866,7 +6948,99 @@ function applyLaunchShortcut() {
   if (params.get("capture") === "1") openCapture();
 }
 
-/* ---------- Theme ---------- */
+/* ---------- Theme ----------
+
+   Two independent axes. `data-theme` keeps its original light/dark meaning and every rule that
+   reads it is unchanged; the visual concept lives on `data-concept` and only overrides design
+   tokens. `default` has no CSS at all, so nothing looks different until a concept is chosen.
+
+   `data-scheme` is the resolved light/dark value, always written explicitly. Having it as an
+   attribute is what lets a concept be scoped to one scheme with a plain selector, instead of
+   needing the OS media query and an explicit choice to be reconciled by specificity. */
+const APP_THEMES = [
+  { id: "default", label: "Default", hint: "The original look" },
+  { id: "premium", label: "Premium", hint: "Polished and refined" },
+  { id: "focus", label: "Deep Work", hint: "Minimal and quiet" },
+  { id: "casual", label: "Casual", hint: "Light and relaxed" },
+];
+const THEME_STATE_KEY = "themeConcept";
+const themeSchemeMedia =
+  typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function isKnownTheme(id) {
+  return APP_THEMES.some((theme) => theme.id === id);
+}
+
+function currentThemeConcept() {
+  const id = document.documentElement.getAttribute("data-concept");
+  return isKnownTheme(id) ? id : "default";
+}
+
+/* Mirrors data-scheme onto the resolved scheme, so a concept can pick its own palette for light
+   and dark without caring whether dark came from the OS or from an explicit choice. */
+function syncThemeScheme() {
+  const stored = document.documentElement.getAttribute("data-theme");
+  const scheme = stored === "dark" || stored === "light" ? stored : themeSchemeMedia && themeSchemeMedia.matches ? "dark" : "light";
+  if (document.documentElement.getAttribute("data-scheme") !== scheme)
+    document.documentElement.setAttribute("data-scheme", scheme);
+}
+
+function applyThemeConcept(id) {
+  const concept = isKnownTheme(id) ? id : "default";
+  document.documentElement.setAttribute("data-concept", concept);
+  syncThemeScheme();
+  renderThemePicker();
+}
+
+function setThemeConcept(id) {
+  if (!isKnownTheme(id)) return;
+  applyThemeConcept(id);
+  if (state) {
+    state[THEME_STATE_KEY] = id;
+    save();
+  }
+  try {
+    localStorage.setItem("everything_theme_concept", id);
+  } catch (e) {
+    /* Private mode: the choice still applies for this session. */
+  }
+}
+
+function initTheme() {
+  if (themeSchemeMedia && typeof themeSchemeMedia.addEventListener === "function")
+    themeSchemeMedia.addEventListener("change", syncThemeScheme);
+  applyThemeConcept(currentThemeConcept());
+}
+
+/* Swatches show the concept's own palette, so the choice is visible before it is applied. */
+function themeSwatch(theme) {
+  const palettes = {
+    default: ["#f5f6fb", "#4361ee", "#10152b", "#ffffff"],
+    premium: ["#faf9f7", "#8a6d3b", "#1c1917", "#ffffff"],
+    focus: ["#fbfbfa", "#3f4a55", "#ffffff", "#e5e5e1"],
+    casual: ["#fdf7f4", "#e2725b", "#2d2a3b", "#ffffff"],
+  };
+  const [bg, accent, sidebar, card] = palettes[theme.id] || palettes.default;
+  return `<span class="theme-swatch" aria-hidden="true" style="background:${bg}">
+            <i style="background:${sidebar}"></i><i style="background:${accent}"></i><i style="background:${card}"></i>
+          </span>`;
+}
+
+function renderThemePicker() {
+  const host = document.getElementById("themeConceptPicker");
+  if (!host) return;
+  const current = currentThemeConcept();
+  host.innerHTML = APP_THEMES.map(
+    (theme) => `<button type="button" class="theme-option${theme.id === current ? " active" : ""}"
+        data-concept="${escapeHtml(theme.id)}" onclick="setThemeConcept(${jsStr(theme.id)})"
+        aria-pressed="${theme.id === current}">
+        ${themeSwatch(theme)}
+        <span class="theme-option-label">${escapeHtml(theme.label)}</span>
+        <span class="theme-option-hint">${escapeHtml(theme.hint)}</span>
+      </button>`,
+  ).join("");
+}
+
 function toggleTheme() {
   const root = document.documentElement;
   const cur = root.getAttribute("data-theme") === "dark" ? "dark" : "light";
@@ -6874,6 +7048,10 @@ function toggleTheme() {
   root.setAttribute("data-theme", next);
   state.theme = next;
   save();
+  // The concept has its own dark palette, so it has to be told the scheme moved.
+  syncThemeScheme();
+  const sel = document.getElementById("themeSelect");
+  if (sel) sel.value = next;
 }
 
 /* ---------- Utility ---------- */
@@ -7659,6 +7837,7 @@ restoreNudge();
 restoreDashboardLayout();
 enableDashboardDragging();
 initShortcuts();
+initTheme();
 initBackNavigation();
 applyLaunchShortcut();
 if ("serviceWorker" in navigator) {

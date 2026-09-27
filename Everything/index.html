@@ -20,9 +20,25 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-26.15" />
+    <meta name="everything-build" content="2026-09-26.16" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <script>
+      /* Applied before first paint. Without this the page would paint in the default theme and
+         then snap to the chosen one a frame later, which is very visible on a slow phone.
+         Kept tiny and dependency-free on purpose: it runs before style.css is even parsed. */
+      (function () {
+        try {
+          var root = document.documentElement;
+          var stored = localStorage.getItem("everything_theme_concept");
+          if (stored) root.setAttribute("data-concept", stored);
+          var scheme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          root.setAttribute("data-scheme", scheme);
+        } catch (e) {
+          /* Private mode or an old browser: the app still picks these up on load. */
+        }
+      })();
+    </script>
     <meta
       name="apple-mobile-web-app-status-bar-style"
       content="black-translucent"
@@ -1020,24 +1036,28 @@
                 >
                   <div class="card">
                     <div class="card-head">
-                      <h3>Preferences</h3>
+                      <h3>Appearance</h3>
                     </div>
+                    <p class="theme-picker-hint">
+                      A look for the whole app. Colours, corners and shadows all come from one set
+                      of shared tokens, so a theme never needs its own copy of a component.
+                    </p>
+                    <div class="theme-picker" id="themeConceptPicker"></div>
                     <div class="field-row">
-                      <span class="field-label">Theme</span>
+                      <span class="field-label">Light or dark</span>
                       <select
                         id="themeSelect"
                         onchange="setThemeFromSelect()"
-                        style="
-                          padding: 7px 10px;
-                          border-radius: 8px;
-                          border: 1px solid var(--border);
-                          background: var(--bg);
-                          color: var(--text);
-                        "
+                        class="theme-scheme-select"
                       >
                         <option value="light">Light</option>
                         <option value="dark">Dark</option>
                       </select>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <div class="card-head">
+                      <h3>Preferences</h3>
                     </div>
                     <div class="field-row">
                       <span class="field-label">Date Format</span>

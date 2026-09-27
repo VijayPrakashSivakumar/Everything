@@ -48,6 +48,72 @@ inbox, calendar, projects, goals, and AI-assisted search.
   `Esc` close the top-most dialog.
 - **Installable PWA** — offline shell via `sw.js`, plus web-push reminders.
 - **Reminders that arrive offline** — see *Reminder delivery* below.
+- **Back navigation** — swipe-back walks the pages and unwinds nested layers; see
+  *Mobile back navigation*.
+- **Themes** — four looks over one set of design tokens; see *Themes*.
+
+## Mobile back navigation
+
+Swipe-back (Android's gesture, and the browser back button on a phone) used to **leave the app**,
+because the app never changed the URL, so there was nothing to go back to.
+
+It is now a real history stack, the way a router works:
+
+```
+entry  { everything: 1, ev: "today" }                 the view
+entry  { everything: 1, ev: "tasks", layer: "modal" } a sheet opened on top
+```
+
+- **Views are in the history.** A tap in the navigation pushes an entry, so back walks the pages
+  in reverse: Dashboard → Tasks → Projects → back → Tasks.
+- **Every layer gets its own entry**, so nested layers unwind one at a time rather than all at
+  once. Sheets, the Ask overlay, the item slide-over, the menu and the search dropdown are covered.
+- **A layer closed by its own button** (or Escape, or save-and-close) unwinds its entry too, so
+  the next back is a real page move instead of a swallowed no-op.
+- **At the end of the stack, back does what the platform does.** A web page cannot close its own
+  tab; holding a permanent guard would trap people on the site with no way out.
+
+`switchView(id, { history })` takes `"push"` (navigation), `"replace"` (boot, login, a jump from
+a panel) or `"none"` (back already owns the position). The default is `"replace"`, so no existing
+caller can flood the stack.
+
+Two things that are easy to get wrong, and were caught by the browser probe:
+
+- The pushed entry must record the view being **entered**. Reading the current one stores the
+  view being left, and back then always lands one step too far.
+- The layer list moved from a CSS selector to `topmostOpenLayer()`, because a selector cannot
+  express stacking order. Observation drives the stack, so every existing open/close path is
+  covered without touching any of them.
+
+Desktop is unaffected: history just works, and nothing about the layout changes.
+
+## Themes
+
+`data-theme` keeps its original **light/dark** meaning and every rule that reads it is unchanged.
+The visual concept is a second, independent attribute: `data-concept`.
+
+| Concept | Feel |
+| --- | --- |
+| **Default** | the original app, untouched — it has no CSS at all |
+| **Premium** | warm neutrals, bronze accent, softer corners, lifted shadow |
+| **Deep Work** | near-monochrome, flat, square, high contrast |
+| **Casual** | warm and round, terracotta and teal |
+
+`data-scheme` is the resolved light/dark value, always written explicitly. Having it as an
+attribute is what lets a concept choose its own palette for each scheme with a plain selector,
+instead of fighting the OS media query with specificity.
+
+Colours, corners and shadows are all design tokens, so **a new theme is one block of CSS plus one
+line in `APP_THEMES`** — no component is duplicated or restyled. Adding a fifth theme is a
+five-minute change.
+
+The concept is applied by a small inline script in `<head>`, before first paint, so the app does
+not flash the default and snap a frame later.
+
+**One thing worth knowing:** the sidebar and brand colours were hard-coded light-on-navy. Deep
+Work's pale sidebar made them invisible — white text on white, with the whole navigation lost.
+They are tokens now, and `theme-probe.mjs` measures the real computed contrast of the nav in every
+concept and both schemes, so that cannot come back.
 
 ## Reminder delivery
 A reminder reaches the user in every state, and never twice:

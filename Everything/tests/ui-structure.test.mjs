@@ -78,24 +78,77 @@ check('the Capture sheet is narrower and height-capped on phones', () => {
   assert.doesNotMatch(css, /max-width:\s*560px/, 'the old 560px sheet width is still present');
 });
 
-check('the back gesture is guarded and layered', () => {
+check('back navigation is a real history stack, not a single guard', () => {
   assert.match(js, /function initBackNavigation\(\)/, 'initBackNavigation missing');
-  assert.match(js, /history\.pushState\(\{\s*everythingLayer/, 'no history guard is pushed');
   assert.match(js, /window\.addEventListener\("popstate"/, 'no popstate handler');
   assert.match(js, /closeTopmostOverlay\(\)/, 'back must close the top layer first');
   assert.match(js, /initBackNavigation\(\);/, 'back navigation is never initialised');
-  // The guard must track what is on screen, not be seeded once and left to rot.
-  assert.match(js, /MutationObserver/, 'the guard must follow layer open/close');
-  assert.doesNotMatch(js, /closeTopmostOverlay\.peekOpen/, 'stale peekOpen reference');
+  // A single guard cannot express "sheet, then panel, then the view underneath", so the stack has
+  // to be a real list of layers.
+  assert.match(js, /const navState = \{ layers: \[\]/, 'there is no layer stack');
+  assert.match(js, /function navPushLayer\(name\)/, 'layers must each get their own entry');
+  assert.match(js, /function topmostOpenLayer\(\)/, 'the innermost layer must be identifiable');
+  assert.doesNotMatch(js, /backLayerDepth/, 'the old single-depth guard is still there');
+  assert.doesNotMatch(js, /everythingLayer/, 'the old guard marker is still there');
+});
+
+check('the view itself is in the history, so back walks the pages', () => {
+  // The whole point: this app never changed the URL, so a back press from Tasks used to leave
+  // the app. A view move from the navigation has to add an entry.
+  assert.match(js, /function navPushView\(id\)/, 'view navigation never pushes a history entry');
+  assert.match(js, /switchView\(item\.id, \{ history: "push" \}\)/, 'the nav must push history');
+  assert.match(js, /function switchView\(id, options = \{\}\)/, 'switchView must accept a history mode');
+  // Boot, login and panel jumps replace instead of pushing, or the stack fills with entries
+  // nobody can go back through.
+  assert.match(js, /navReplaceView\(id\)/, 'a non-navigating switch must replace, not push');
+  assert.match(js, /switchView\(state\.ev, \{ history: "none" \}\)/, 'popstate must not push again');
+  assert.doesNotMatch(js, /function switchView\(id\) \{/, 'switchView must not ignore a history mode');
+});
+
+check('theme concepts are token driven and default is untouched', () => {
+  // Two axes on purpose: data-theme keeps its original light/dark meaning.
+  assert.match(html, /setAttribute\("data-concept", stored\)/, 'the concept is never applied before paint');
+  assert.match(css, /:root\[data-scheme="light"\]\[data-concept="premium"\]/, 'premium has no light palette');
+  assert.match(css, /:root\[data-scheme="dark"\]\[data-concept="premium"\]/, 'premium has no dark palette');
+  assert.match(css, /\[data-concept="focus"\]/, 'the Deep Work concept is missing');
+  assert.match(css, /\[data-concept="casual"\]/, 'the Casual concept is missing');
+  // `default` must add no CSS, so the app looks exactly as it did.
+  assert.doesNotMatch(css, /\[data-concept="default"\]/, 'default must not override anything');
+  // Shape tokens, so a theme changes feel and not only colour.
+  assert.match(css, /--radius-card:/, 'no corner token');
+  assert.match(css, /\.card \{[\s\S]{0,160}?border-radius: var\(--radius-card\)/, 'cards ignore the corner token');
+  // Applied before first paint, or the app flashes the default and snaps.
+  assert.match(html, /everything_theme_concept/, 'nothing applies the concept before paint');
+  assert.match(js, /function setThemeConcept\(id\)/, 'no way to choose a concept');
+  assert.match(js, /function syncThemeScheme\(\)/, 'the resolved scheme is never written');
+});
+
+check('a pale theme cannot leave sidebar text unreadable', () => {
+  // Deep Work has a white sidebar, so the light-on-navy literals it inherited had to become
+  // tokens. Without these the whole navigation was invisible.
+  assert.match(css, /\.nav-item \{[\s\S]{0,400}?color: var\(--nav-fg\)/, 'nav text ignores the token');
+  assert.match(css, /\.nav-item\.active \{[\s\S]{0,120}?color: var\(--sidebar-fg-strong\)/, 'active nav is hard-coded white');
+  assert.match(css, /\.capture-label \{[\s\S]{0,80}?color: var\(--sidebar-fg-strong\)/, 'the Capture label is hard-coded white');
+  assert.match(css, /\.brand-name \{[\s\S]{0,200}?color: var\(--sidebar-fg-strong\)/, 'the brand name is hard-coded white');
+  assert.match(css, /\.hero-card \{[\s\S]{0,80}?background: var\(--brand-gradient\)/, 'the hero card gradient is hard-coded');
+  // No bare white may be left on a themed surface.
+  const themed = css.slice(css.indexOf('.sidebar {'));
+  assert.doesNotMatch(themed.slice(0, 20000), /\.nav-item\.active \{[\s\S]{0,80}?color: #fff/, 'active nav still literal white');
 });
 
 check('the back guard covers every dismissible layer', () => {
-  const init = js.slice(js.indexOf('function initBackNavigation'));
-  const selector = init.match(/const LAYER_SELECTOR\s*=\s*"([^"]+)"/);
-  assert.ok(selector, 'LAYER_SELECTOR missing');
-  for (const layer of ['.modal-overlay.open', '.ask-overlay.open', '#panel.open', '#sidebar.open', '#searchDropdown']) {
-    assert.ok(selector[1].includes(layer), `${layer} is not guarded by back`);
+  // The layer list moved out of a CSS selector into topmostOpenLayer(), because a selector cannot
+  // express stacking order. The requirement is unchanged: every dismissible layer must be known.
+  const fn = js.slice(js.indexOf('function topmostOpenLayer'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  for (const layer of ['modal-overlay.open', 'askOverlay', 'panel', 'sidebar', 'searchDropdown']) {
+    assert.ok(body.includes(layer), `${layer} is not guarded by back`);
   }
+  // Order matters: the sheet is above the Ask overlay, which is above the slide-over.
+  const order = ['modal-overlay.open', 'askOverlay', 'panel', 'sidebar', 'searchDropdown'].map((l) =>
+    body.indexOf(l),
+  );
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), 'layers must be tested innermost first');
 });
 
 check('the back guard closes the search dropdown before anything else', () => {
