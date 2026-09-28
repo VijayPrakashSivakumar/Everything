@@ -1610,6 +1610,22 @@ let state = null;
 let currentItemId = null;
 let captureType = "text";
 
+/* How the capture arrived, as opposed to what it turned out to be.
+
+   These used to be one variable, which is why a voice note could never become a task. `captureType`
+   was holding "voice" — the channel — so the smart-capture rules all had to skip every media
+   capture, and an auto-create could never fire for one. A recorded "call Ravi tomorrow" stayed a
+   voice note forever.
+
+   The two are now separate: the channel decides how the media is handled, and the kind decides what
+   the item *is*. Recording a voice note and then having it understood as a task is exactly the case
+   this split exists for. */
+let captureChannel = "text";
+/* Channels that carry real language, so their content can be read the same way a typed sentence is:
+   a transcript, or text recognised out of a picture. A file has no text at all, and a link's "text"
+   is a URL, so asking a model to interpret either would be guessing — those two are left alone. */
+const CAPTURE_CHANNELS_WITH_TEXT = new Set(["voice", "image"]);
+
 function isArchived(item) {
   return Boolean(item?.archivedAt || item?.archived_at);
 }
@@ -4878,9 +4894,10 @@ function cancelAutoSave() {
 
 function scheduleAutoSave(items, text) {
   cancelAutoSave();
-  // The guard is on the *channel*, not the kind: reading the sentence moves captureType to
-  // event/task/…, so testing for "text" here would block every real auto-create.
-  if (["voice", "image", "file", "link"].includes(captureType)) return;
+  // A file and a link are not re-read (there is nothing in them to read), so they are not decided
+  // for either. Voice and image are: their transcript and their recognised text are understood the
+  // same way a typed sentence is, and a clear one should save itself exactly as a typed one does.
+  if (captureChannel === "file" || captureChannel === "link") return;
   if (!captureSmartEnabled) return;
   if (!capturePlanIsClear(items)) return;
   captureAutoSaveTimer = setTimeout(() => {
@@ -4901,6 +4918,9 @@ function pickScope(scope) {
 }
 function openCapture() {
   captureType = "text";
+  // The channel resets with it, or the next capture opens with the last one's voice recorder, image
+  // panel or link field still on screen.
+  captureChannel = "text";
   if (document.getElementById("sidebar").classList.contains("open"))
     toggleSidebar();
   captureAutoDetected = false;
@@ -4984,24 +5004,35 @@ function populateProjectSelect() {
       .join("");
 }
 function pickType(id, manual) {
+  const isChannel = ["voice", "image", "file", "link"].includes(id);
+  // Picking a media chip changes the channel: how the capture is handled, and which panel is shown.
+  // Picking a kind only changes what the item is — the channel, and any recording or picture already
+  // attached to it, is left exactly as it was.
+  if (isChannel) captureChannel = id;
   captureType = id;
-  if (manual) captureAutoDetected = true;
+  // Only a *kind* is a decision the reader must not undo. Choosing the Voice chip says how the
+  // capture arrived, not what it is — marking it as a choice is why a dictated "call Ravi tomorrow"
+  // stayed a voice note: the reader was told the kind was already settled, and stayed quiet.
+  if (manual && !isChannel) captureAutoDetected = true;
   document
     .querySelectorAll(".type-chip")
     .forEach((el) => el.classList.toggle("active", el.dataset.type === id));
 
+  // The channel's own panel follows the *channel*, never the kind. A voice note that has been read
+  // as a task keeps its recorder on screen, because the audio is still attached and still savable.
+  const channel = captureChannel;
   document.getElementById("voiceCaptureUI").style.display =
-    id === "voice" ? "flex" : "none";
+    channel === "voice" ? "flex" : "none";
   document.getElementById("imageCaptureUI").style.display =
-    id === "image" ? "block" : "none";
+    channel === "image" ? "block" : "none";
   document.getElementById("fileCaptureUI").style.display =
-    id === "file" ? "block" : "none";
+    channel === "file" ? "block" : "none";
   document.getElementById("linkCaptureUI").style.display =
-    id === "link" ? "block" : "none";
+    channel === "link" ? "block" : "none";
   document.getElementById("captureText").style.display = "block";
-  if (id === "voice") {
+  if (channel === "voice") {
     document.getElementById("captureText").placeholder = "Type or dictate a note…";
-  } else if (id === "link") {
+  } else if (channel === "link") {
     document.getElementById("captureText").placeholder = "Optional note about this link…";
   } else {
     document.getElementById("captureText").placeholder = "What's on your mind?";
@@ -5028,7 +5059,7 @@ function detectType(text) {
 let extractDebounce = null;
 
 function captureInputValue() {
-  if (captureType === "link") return document.getElementById("linkUrlInput").value.trim();
+  if (captureChannel === "link") return document.getElementById("linkUrlInput").value.trim();
   return document.getElementById("captureText").value.trim();
 }
 
@@ -5179,7 +5210,9 @@ function onCaptureInput() {
     return;
   }
 
-  if (!captureAutoDetected && captureType !== "voice" && captureType !== "image" && captureType !== "file" && captureType !== "link") {
+  // A dictated note and a picture of text are read just like a typed sentence. A file has nothing
+  // to read and a link's "text" is a URL, so neither is guessed at.
+  if (!captureAutoDetected && !["file", "link"].includes(captureChannel)) {
     const guessed = detectType(text);
     if (guessed !== captureType) pickType(guessed, false);
   }
@@ -5373,7 +5406,9 @@ function applyExtraction(data, text) {
   if (
     data.kind &&
     !captureAutoDetected &&
-    !["voice", "image", "file", "link"].includes(captureType) &&
+    // The model's reading applies to a dictated note and a picture of text too — that is the whole
+    // point. Only a file and a link are left as they are.
+    !["file", "link"].includes(captureChannel) &&
     data.kind !== captureType
   ) {
     captureSuggestionFields.kind = { appliedKind: data.kind, previous: previousKind };
@@ -5531,8 +5566,9 @@ function answerCaptureQuestion(value) {
 
   if (question.id === "commitment") {
     if (value === "task") {
-      // Never override a type the person chose themselves.
-      if (!captureAutoDetected && !["voice", "image", "file", "link"].includes(captureType)) {
+      // Never override a type the person chose themselves. A dictated "I'll send the proposal" is
+      // a commitment, and being asked to confirm it is the whole point of the question.
+      if (!captureAutoDetected && !["file", "link"].includes(captureChannel)) {
         captureSuggestionFields.kind = { appliedKind: "task", previous: captureType };
         pickType("task", false);
       }
@@ -5879,17 +5915,21 @@ async function saveCapture(forceSave = false, options = {}) {
   // A manual Save supersedes any pending "Done.", so it can never fire a moment later.
   cancelAutoSave();
   const kind = captureType;
-  const isMediaType = ["voice", "image", "file"].includes(kind);
-  const isLink = kind === "link";
+  // Media handling follows the *channel*. A dictated "call Ravi tomorrow" that has been read as a
+  // task is still a voice note, and must still upload its audio and keep its transcript; deciding
+  // that from `kind` is what used to force the smart-capture rules to skip every media capture.
+  const channel = captureChannel;
+  const isMediaType = ["voice", "image", "file"].includes(channel);
+  const isLink = channel === "link";
   const text = isLink
     ? document.getElementById("linkUrlInput").value.trim()
     : document.getElementById("captureText").value.trim();
 
-  if (kind === "voice" && !pendingBlob && !text) {
+  if (channel === "voice" && !pendingBlob && !text) {
     setVoiceDictationStatus("Record audio or dictate a note before saving.");
     return false;
   }
-  if (["image", "file"].includes(kind) && !pendingBlob) {
+  if (["image", "file"].includes(channel) && !pendingBlob) {
     setVoiceDictationStatus("Choose a file before saving.");
     return false;
   }
@@ -5909,9 +5949,9 @@ async function saveCapture(forceSave = false, options = {}) {
 
   const realKind = kind === "text" ? "memory" : kind;
   const candidateTitle = isMediaType
-    ? kind === "voice"
+    ? channel === "voice"
       ? text || "Voice note"
-      : kind === "image"
+      : channel === "image"
         ? text || pendingBlob?.name || "Image"
         : pendingBlob?.name || "File"
     : isLink
@@ -5950,11 +5990,11 @@ async function saveCapture(forceSave = false, options = {}) {
       (kind === "task" ? "medium" : "");
     const person = document.getElementById("capturePerson").value.trim();
     const captionText = document.getElementById("captureText").value.trim();
-    const sourceType = isLink ? "link" : isMediaType ? kind : "manual";
+    const sourceType = isLink ? "link" : isMediaType ? channel : "manual";
     const sub = isMediaType
-      ? kind === "voice"
+      ? channel === "voice"
         ? captionText ? "Voice note" : "Voice"
-        : kind === "image"
+        : channel === "image"
           ? captionText ? "Image" : ""
           : "File"
       : isLink
@@ -5972,12 +6012,12 @@ async function saveCapture(forceSave = false, options = {}) {
       ...(captureExtraction || {}),
       smartEnabled: captureSmartEnabled,
       source: captureExtraction?.source || "manual",
-      transcript: kind === "voice" && captureVoiceFinal ? captureVoiceFinal : undefined,
+      transcript: channel === "voice" && captureVoiceFinal ? captureVoiceFinal : undefined,
       // Which language was actually dictated, so a transcript can be read back correctly later.
-      language: kind === "voice" && captureVoiceLanguage ? captureVoiceLanguage : undefined,
+      language: channel === "voice" && captureVoiceLanguage ? captureVoiceLanguage : undefined,
       // Text read out of a picture, kept so the original recognition is auditable.
-      ocrText: kind === "image" && imageOcrText ? imageOcrText : undefined,
-      ocrLanguage: kind === "image" && imageOcrText ? captureOcrLang : undefined,
+      ocrText: channel === "image" && imageOcrText ? imageOcrText : undefined,
+      ocrLanguage: channel === "image" && imageOcrText ? captureOcrLang : undefined,
       mediaName: pendingBlob?.name || undefined,
     };
     Object.keys(captureMetadata).forEach((key) => captureMetadata[key] === undefined && delete captureMetadata[key]);

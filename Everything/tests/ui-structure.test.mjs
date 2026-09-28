@@ -1694,8 +1694,9 @@ check('dictation language is chosen, not inherited from the browser', () => {
   // Rendering the picker on open is what makes it usable.
   assert.match(js, /function renderVoiceLanguages\(\)/, 'renderVoiceLanguages is missing');
   assert.match(js, /renderVoiceLanguages\(\);/, 'the language picker is never rendered');
-  // The language is stored with the capture so a transcript can be read back later.
-  assert.match(js, /language: kind === "voice" && captureVoiceLanguage/, 'the dictated language is not saved');
+  // The language is stored with the capture so a transcript can be read back later. It is keyed on
+  // the channel, not the kind: a dictated note read as a task is still a voice note underneath.
+  assert.match(js, /language: channel === "voice" && captureVoiceLanguage/, 'the dictated language is not saved');
 });
 
 /* Everything in the stylesheet that is NOT inside an @media block.
@@ -1752,7 +1753,7 @@ check('image text reading is local, opt-in and cannot break capture', () => {
   assert.match(js, /catch \(error\)[\s\S]{0,400}?You can still type the note yourself\./, 'a failed read must still leave capture usable');
   // The recognised text must re-enter the existing smart-capture pipeline, not a new path.
   assert.match(js, /onCaptureInput\(\);[\s\S]{0,80}\} catch \(error\)/, 'OCR text must go through onCaptureInput');
-  assert.match(js, /ocrText: kind === "image"/, 'the recognised text must be saved with the capture');
+  assert.match(js, /ocrText: channel === "image"/, 'the recognised text must be saved with the capture');
 });
 
 check('the OCR language picker is styled and reset with the capture sheet', () => {
@@ -1823,9 +1824,21 @@ check('a clear sentence creates itself, and a doubtful one asks instead', () => 
   // Any doubt at all blocks it, which is what makes the "Done." path safe to take silently.
   assert.match(js, /!entry\.ambiguous\)/, 'an ambiguous entry must block the auto-create');
   assert.match(js, /if \(ai\?\.items\?\.length\) scheduleAutoSave\(ai\.items, text\)/, 'the model reply must reach the auto-create');
-  // The guard is the channel, not the detected kind: reading a sentence moves captureType off
-  // "text" to event/task, so a "text" test would block every real auto-create.
-  assert.match(js, /\["voice", "image", "file", "link"\]\.includes\(captureType\)/, 'media and link captures must never auto-save');
+  // A file and a link must never auto-save: there is nothing in either to read, so the app has no
+  // basis for deciding, and a link's own field is the URL rather than a sentence.
+  assert.match(js, /if \(captureChannel === "file" \|\| captureChannel === "link"\) return;/,
+    'file and link captures must never auto-save');
+  // Voice and image are deliberately NOT excluded any more. A dictated "call Ravi tomorrow" carries
+  // a real sentence, so it is read and — when it reads cleanly — creates itself exactly as a typed
+  // one does. voice-understanding-probe.mjs proves that end to end in a browser; these lines record
+  // that the old blanket ban on media captures is gone, and that only the two unreadable channels
+  // are still held back.
+  assert.doesNotMatch(js, /\["voice", "image", "file", "link"\]\.includes\(captureType\)/,
+    'media captures are blanket-skipped again, so dictation is only stored and never acted on');
+  // The reader runs for everything except a file and a link — this is the positive form of the rule
+  // above, so deleting the guard cannot pass by accident.
+  assert.match(js, /!captureAutoDetected && !\["file", "link"\]\.includes\(captureChannel\)/,
+    'a dictated or photographed sentence must still be read, not skipped');
   assert.match(js, /if \(!captureSmartEnabled\) return;/, 'opting out of reading must opt out of auto-create');
   assert.match(js, /const AUTO_SAVE_SETTLE_MS = \d+/, 'there must be a settle delay before deciding');
 });

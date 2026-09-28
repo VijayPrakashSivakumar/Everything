@@ -732,6 +732,54 @@ with their controls at all — clicking a label did not focus the field, and a s
 name for it. Eighteen labels are now associated, which is an accessibility fix independent of the
 tooltips.
 
+## Voice and images are read, not just stored
+
+Dictation used to **record and stop**. The transcript was written into the box, the local rules and
+the model read the text, and then the whole result was thrown away — the capture stayed kind
+`voice` forever. A dictated *"call Ravi tomorrow"* became a voice note, never a task, never on a
+schedule, never anything the rest of the app could act on. A picture of a bill was the same.
+
+**The cause was one variable doing two jobs.** `captureType` held both *how the capture arrived*
+(voice / image / file / link) and *what it turned out to be* (task / event / …). Because the kind was
+occupied by the channel, every rule in the smart-capture path had to skip media captures entirely —
+in four separate places — and an auto-create could never fire for one. The guards were not
+accidents; they were the only way to keep the audio from being dropped when the kind was read as a
+task.
+
+They are now two variables:
+
+| | decides | changed by |
+| --- | --- | --- |
+| `captureChannel` | how the capture is handled: upload the audio, keep the transcript, show the recorder | only the person, by picking a media chip |
+| `captureType` | what the item **is** | the person, **or** the reader |
+
+So a dictated *"call Ravi tomorrow"* is a voice capture that **is** a task: the audio still uploads,
+the transcript is still kept, the recorder stays on screen, and the item lands in Tasks. The same
+holds for text read out of a picture.
+
+**A file and a link are deliberately left alone.** There is nothing inside a file to read, and a
+link's "text" is a URL — asking a model to interpret either would be guessing. They keep their own
+kind.
+
+### The detail that was still wrong after the first fix
+
+Picking the **Voice** chip used to set `captureAutoDetected`, the flag meaning *"the person has
+already chosen the kind, do not read it again."* But choosing Voice says how the capture arrived,
+not what it is. The reader was being told the kind was settled, and duly did nothing. Only a
+**kind** marks a settled decision now — a manual choice is still never overridden, and
+`voice-understanding-probe.mjs` checks exactly that.
+
+`voice-understanding-probe.mjs` drives the real functions in a real browser, with a real transcript
+and no model and no network, because the local rules are what decide a plain sentence. It asserts
+the person and the date are picked out, that no dictation ever survives as kind `voice`, that the
+recorder stays visible, that file and link are untouched, that the channel resets between
+captures, and that a manual choice is never overridden.
+
+**One thing it does not promise:** the local rules only call something an *event* when it carries
+both a time **and** an event word (`meeting`, `sync`, `demo`, …). *"design review tomorrow at 3pm"*
+has the time but not the word, so offline it stays a note until the model reads it. That limit
+predates this work and is unchanged.
+
 ## Note on multi-user sync
 The app runs as a static site with Supabase for accounts and shared data, Vercel serverless
 functions for the API routes, and any of several model providers for AI. Opened as a plain

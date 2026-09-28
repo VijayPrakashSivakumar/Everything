@@ -36,6 +36,9 @@ const SUITES = [
   // The inline-help notes are the one feature whose whole job is to be seen. A probe that only
   // checked the CSS existed would pass while nothing was ever visible to anyone.
   { name: 'help', file: 'help-probe.mjs', timeoutMs: 120000 },
+  // Dictation and pictures used to be stored and never understood: the channel and the kind were
+  // one variable, so every smart-capture rule had to skip them.
+  { name: 'voice', file: 'voice-understanding-probe.mjs', timeoutMs: 120000 },
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },
