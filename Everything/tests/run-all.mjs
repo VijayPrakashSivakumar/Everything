@@ -54,6 +54,10 @@ const SUITES = [
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },
+  // Signing out cleared the Supabase session but left the local state, which one key shared by
+  // every account on the device. The next person to sign in inherited it — and the merge pushed
+  // it into their account.
+  { name: 'signout', file: 'signout-probe.mjs', timeoutMs: 120000 },
 ];
 
 const args = process.argv.slice(2);

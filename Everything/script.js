@@ -769,6 +769,18 @@ function showForgotPassword() {
   document.getElementById("authFormNormal").style.display = "none";
   document.getElementById("authFormForgot").style.display = "block";
 }
+
+/* The "how to get in" panel. Collapsed by default so the sign-in form stays short on a phone —
+   it is the first thing a returning user needs and the last thing a brand-new one is looking for. */
+function switchAuthHelp(force) {
+  const panel = document.getElementById("authHelp");
+  const toggle = document.getElementById("authHelpToggle");
+  if (!panel || !toggle) return;
+  const open = force === undefined ? panel.hidden : force;
+  panel.hidden = !open;
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.textContent = open ? "Hide this" : "New here? How to get in";
+}
 function showNormalAuth() {
   document.getElementById("authFormForgot").style.display = "none";
   document.getElementById("authFormNormal").style.display = "block";
@@ -820,10 +832,20 @@ async function authSignOut() {
     const { error } = await sb.auth.signOut();
     if (error) throw error;
     await sb.removeAllChannels();
+    /* Stop the retry timer before the queue is dropped. Left running it would wake up after
+       sign-out, find the key gone, and re-create an empty queue under the next account. */
+    if (structuredSyncTimer) {
+      clearTimeout(structuredSyncTimer);
+      structuredSyncTimer = null;
+    }
     const passwordInput = document.getElementById("authPassword");
     const newPasswordInput = document.getElementById("newPassword");
     if (passwordInput) passwordInput.value = "";
     if (newPasswordInput) newPasswordInput.value = "";
+    /* Deliberately after the sign-out succeeded. A failed sign-out must not destroy the data of
+       someone who is still, as far as the server is concerned, signed in — that would lock them
+       out of work that only ever existed on this device. */
+    clearAccountState();
   } catch (err) {
     const message = err?.message || "Could not sign out. Please try again.";
     if (logoutMessage) {
@@ -839,22 +861,21 @@ async function confirmLogoutPage() {
   const logoutButton = document.querySelector(
     '#view-logout button[onclick="confirmLogoutPage()"]',
   );
+  // The label is held rather than retyped, so renaming the button in index.html cannot leave a
+  // "Log Out" reappearing here the first time a sign-out fails.
+  const originalLabel = logoutButton ? logoutButton.innerHTML : null;
   if (logoutButton) {
     logoutButton.disabled = true;
-    logoutButton.textContent = "Signing out...";
+    logoutButton.textContent = "Signing out…";
   }
   try {
     const signedOut = await authSignOut();
     if (signedOut) return;
   } finally {
-    if (logoutButton) {
+    if (logoutButton && originalLabel !== null) {
       logoutButton.disabled = false;
-      logoutButton.innerHTML = `
-        <svg class="logout-button-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <path d="M8 3H4v14h4" />
-          <path d="M11 6l4 4-4 4M6 10h9" />
-        </svg>
-        Log Out`;
+      logoutButton.innerHTML = originalLabel;
+      refreshIcons();
     }
   }
 }
@@ -1276,8 +1297,18 @@ async function loadStructuredCollection(kind, responseKey) {
 }
 
 async function startSupabaseSync(userId) {
-  await ensureHousehold(userId);
+  /* sbUser has to be set before anything reads or writes state, because the local storage key is
+     derived from it. It used to be set two lines below the column probes, which meant the merge
+     and any save during startup wrote to whichever account was loaded last. */
   sbUser = userId;
+  /* Load this account's own local state before merging with the server. Without this the merge
+     would run against the previous account's in-memory state and treat their records as
+     local-only edits belonging to whoever just signed in. */
+  state = readState();
+  if (!state.projects) state.projects = [];
+  if (!state.goals) state.goals = [];
+  if (!state.people) state.people = [];
+  await ensureHousehold(userId);
   hasCompletedAt = await detectCompletedAtColumn();
   hasReminderColumns = await detectReminderColumns();
   hasChecklistColumn = await detectChecklistColumn();
@@ -1660,11 +1691,12 @@ document.addEventListener("click", (e) => {
     menu.style.display = "none";
   }
 });
+/* Both of these used to sign out directly — one behind a browser confirm() dialog, the other with
+   no warning at all. Now they go to the same page that explains what happens, so there is one
+   sign-out and it says the same thing wherever it was started from. */
 function confirmSignOut() {
-  if (confirm("Sign out of Everything?")) {
-    authSignOut();
-  }
   document.getElementById("avatarMenu").style.display = "none";
+  switchView("logout");
 }
 
 let syncedUserId = null;
@@ -2408,12 +2440,9 @@ async function initMultiUser() {
   }
 
   if (!db) {
-    try {
-      const raw = localStorage.getItem("everything_state_v1");
-      state = raw ? JSON.parse(raw) : seedData();
-    } catch (e) {
-      state = seedData();
-    }
+    // Per-account, not one shared key: readState() resolves the key from sbUser, which is set by
+    // the time this runs on the signed-in path. See clearAccountState() for why it has to be.
+    state = readState();
     if (!state.projects) state.projects = [];
     if (!state.goals) state.goals = [];
     if (!state.people) state.people = [];
@@ -2687,9 +2716,59 @@ async function dbSavePerson(p) {
   }
 }
 
+/* Per-account local state.
+
+   This was the fixed-string key "everything_state_v1", which every account on the device shared.
+   Signing out cleared the Supabase session but left that key exactly as it was, so the next person
+   to sign in on a shared phone or tablet inherited the previous person's captures, goals, people
+   and projects — and the merge would then push them into the new account. Keying by user id is
+   what separates the accounts; wiping the slot on sign-out is what keeps the previous person's
+   data off a shared device entirely.
+
+   Both halves are needed. The per-user key alone would still leave the old data sitting in
+   localStorage for anyone who later opens devtools on the family tablet. */
+const STATE_KEY_PREFIX = "everything_state_v1:";
+const ANONYMOUS_STATE_KEY = "everything_state_v1";
+
+function stateStorageKey() {
+  return sbUser ? `${STATE_KEY_PREFIX}${sbUser}` : ANONYMOUS_STATE_KEY;
+}
+
+function readState() {
+  try {
+    const raw = localStorage.getItem(stateStorageKey());
+    return raw ? JSON.parse(raw) : seedData();
+  } catch (e) {
+    return seedData();
+  }
+}
+
+/* Everything the previous account left behind, in one place. Called on sign-out only, and only
+   after the sign-out itself has succeeded. */
+function clearAccountState() {
+  if (sbUser) {
+    try {
+      localStorage.removeItem(`${STRUCTURED_SYNC_QUEUE_PREFIX}${sbUser}`);
+    } catch (err) {
+      console.warn("Sign-out could not clear the sync queue:", err.message || err);
+    }
+  }
+  try {
+    localStorage.removeItem(stateStorageKey());
+  } catch (err) {
+    console.warn("Sign-out could not clear local data:", err.message || err);
+  }
+  // The in-memory copy matters as much as the stored one: it is what the next account would be
+  // shown before any load completes, and what the load path would merge from.
+  state = seedData();
+  sharedItems = state.items;
+  privateItems = [];
+  doneLog = {};
+}
+
 function save() {
   try {
-    localStorage.setItem("everything_state_v1", JSON.stringify(state));
+    localStorage.setItem(stateStorageKey(), JSON.stringify(state));
   } catch (e) {
     console.error("save failed", e);
   }

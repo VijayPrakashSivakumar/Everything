@@ -147,6 +147,77 @@
           >
             Create account
           </button>
+
+          <!--
+            How to get in, on the screen where people actually need it. The sign-up flow has a
+            confirm-your-email step that is easy to miss and then looks like a broken app: you fill
+            the form, nothing appears to happen, and the only clue is a small line of text. That,
+            and "what do I do if I already have an account", is what this answers.
+          -->
+          <p style="text-align: center; margin: 16px 0 0">
+            <span
+              id="authHelpToggle"
+              onclick="switchAuthHelp()"
+              role="button"
+              tabindex="0"
+              aria-expanded="false"
+              aria-controls="authHelp"
+              onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); switchAuthHelp(); }"
+              style="font-size: 12.5px; color: var(--accent); cursor: pointer"
+              >New here? How to get in</span
+            >
+          </p>
+          <div
+            id="authHelp"
+            hidden
+            style="
+              margin-top: 12px;
+              padding: 14px;
+              border: 1px solid var(--border);
+              border-radius: 10px;
+              background: var(--bg);
+              font-size: 12.5px;
+              color: var(--muted);
+              line-height: 1.6;
+            "
+          >
+            <p style="margin: 0 0 10px; color: var(--text); font-weight: 600">
+              Getting started
+            </p>
+
+            <p style="margin: 0 0 6px; color: var(--text); font-weight: 600">
+              1. Create an account
+            </p>
+            <p style="margin: 0 0 12px">
+              Enter an email and a password, then press
+              <b>Create account</b>. We email you a confirmation link — open it, then come back
+              and sign in. Until you confirm, the account does not exist yet, so signing in
+              first will fail. Check your spam folder if the mail does not arrive in a minute.
+            </p>
+
+            <p style="margin: 0 0 6px; color: var(--text); font-weight: 600">
+              2. Sign in
+            </p>
+            <p style="margin: 0 0 12px">
+              Use the same email and password. Tick <b>Remember my email</b> and the app will
+              fill it in next time. Anyone in your household can add a task to your shared
+              lists once they have joined with your invite code (Settings &rarr; Household).
+            </p>
+
+            <p style="margin: 0 0 6px; color: var(--text); font-weight: 600">
+              3. Forgot password
+            </p>
+            <p style="margin: 0 0 12px">
+              Press <b>Forgot password?</b>, enter your email, and we send a reset link. Open it
+              and choose a new one. The reset link works only once.
+            </p>
+
+            <p style="margin: 0">
+              <b>No signal?</b> Everything keeps working offline and syncs when you are back
+              online. Signing out clears this device's copy, so anything that never synced would
+              be lost — wait for a connection first.
+            </p>
+          </div>
         </div>
 
         <!-- Forgot password: request reset email -->
@@ -1388,11 +1459,21 @@
                     </div>
                     <div class="field-row">
                       <span class="field-label">Sign out</span
-                      ><button class="btn" onclick="authSignOut()">
+                      ><button class="btn" onclick="switchView('logout')">
                         <i data-lucide="log-out" aria-hidden="true"></i>
                         <span>Sign out</span>
                       </button>
                     </div>
+                    <p
+                      style="
+                        font-size: 12.5px;
+                        color: var(--muted);
+                        margin: 8px 0 0;
+                      "
+                    >
+                      Signing out clears this device's copy, so the next person to sign in here
+                      does not see your data. Everything stays safe in your account.
+                    </p>
                   </div>
                   <div class="card">
                     <div class="card-head">
@@ -1535,9 +1616,25 @@
                   <path d="M71 66l3-5 3 5-3 5z" fill="#91a8f5" />
                 </svg>
               </div>
-              <h1 class="page-title" style="margin-bottom: 8px">Log Out</h1>
+              <h1 class="page-title" style="margin-bottom: 8px">Sign out</h1>
               <p class="page-sub">
-                Are you sure you want to log out from Everything?
+                Sign out of Everything on this device?
+              </p>
+              <!--
+                Said plainly, because it is the part people are surprised by. The data is still on
+                the server and comes back when they sign in again — but this device's copy is
+                cleared, so on a shared tablet the next person does not inherit their captures,
+                goals and contacts.
+              -->
+              <p
+                style="
+                  font-size: 13px;
+                  color: var(--muted);
+                  margin: 0 0 12px;
+                "
+              >
+                Your tasks, projects, goals and people stay safe in your account and come back
+                when you sign in again on this or any other device.
               </p>
               <p
                 style="
@@ -1546,8 +1643,9 @@
                   margin: 0 0 24px;
                 "
               >
-                You'll need to sign in again to access your account, tasks, and
-                data.
+                <b style="color: var(--text)">On this device</b>, everything is cleared, so the
+                next person to sign in here does not see your data. Anything that has not synced
+                yet would be lost — wait for a connection first.
               </p>
               <button
                 class="btn danger"
@@ -1568,7 +1666,7 @@
                   <path d="M8 3H4v14h4" />
                   <path d="M11 6l4 4-4 4M6 10h9" />
                 </svg>
-                Log Out
+                Sign out
               </button>
               <p
                 id="logoutMessage"

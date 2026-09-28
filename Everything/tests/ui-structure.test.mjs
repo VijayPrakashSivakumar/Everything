@@ -456,6 +456,80 @@ check('a record read from the server is never marked dirty', () => {
   assert.match(body, /updatedAt: row\.updated_at/, 'the server timestamp must be read, not invented');
 });
 
+check('local state is per-account, and signing out clears it', () => {
+  /* everything_state_v1 was one key shared by every account on the device. Signing out cleared
+     the Supabase session but not that key, so the next person to sign in on a family tablet
+     merged the previous person's captures, goals and people into their own account — and the
+     merge then pushed them there. */
+  assert.doesNotMatch(js, /localStorage\.setItem\("everything_state_v1"/,
+    'state is still written to a fixed key shared by every account on this device');
+  assert.doesNotMatch(js, /localStorage\.getItem\("everything_state_v1"\)/,
+    'state is still read from a fixed key shared by every account on this device');
+  assert.match(js, /function stateStorageKey\(\)/, 'the storage key must be derived from the signed-in user');
+
+  const signOut = between('async function authSignOut', 'async function confirmLogoutPage');
+  assert.match(signOut, /clearAccountState\(\)/, 'signing out must clear the previous account data');
+  // Ordering is the whole point: clear only once the sign-out actually succeeded.
+  assert.ok(signOut.indexOf('clearAccountState()') > signOut.indexOf('sb.removeAllChannels()'),
+    'state must be cleared after the channels are removed, not before the sign-out is known to have worked');
+  assert.ok(signOut.indexOf('clearAccountState()') > signOut.indexOf('if (error) throw error'),
+    'a failed sign-out must not destroy data the person is still signed in to');
+  // A live retry timer would rebuild the queue key the line above just deleted.
+  assert.match(signOut, /clearTimeout\(structuredSyncTimer\)/,
+    'the sync retry timer must be stopped on sign-out or it re-creates the deleted queue');
+
+  const clear = between('function clearAccountState', 'function save()');
+  assert.match(clear, /state = seedData\(\)/, 'the in-memory copy must be reset, not just the stored one');
+  assert.match(clear, /localStorage\.removeItem\(stateStorageKey\(\)\)/, 'the stored copy must be removed');
+});
+
+check('every sign-out entry point goes through the one sign-out page', () => {
+  /* Three different sign-outs existed: the nav page, a browser confirm() dialog, and a settings
+     button that signed out with no warning at all. */
+  assert.doesNotMatch(html, /onclick="authSignOut\(\)"/,
+    'something can still sign out with no warning and no explanation');
+  const confirm = stripComments(between('function confirmSignOut', 'let syncedUserId'));
+  assert.doesNotMatch(confirm, /confirm\(/,
+    'the avatar menu still uses a browser confirm() dialog rather than the sign-out page');
+  assert.match(confirm, /switchView\("logout"\)/, 'the avatar menu must route to the sign-out page');
+  // The failure path used to hard-code the button label, silently undoing any rename in the HTML.
+  // Stripped first: the comment explaining that fix quotes the old label, and would match itself.
+  const page = stripComments(between('async function confirmLogoutPage', 'let sbUser'));
+  assert.doesNotMatch(page, /Log Out/,
+    'confirmLogoutPage retypes the button label, so renaming it in the HTML is undone on failure');
+  assert.match(page, /originalLabel/, 'the original button label must be captured and restored');
+});
+
+check('the sign-in page explains how to get in', () => {
+  /* Sign-up has a confirm-your-email step. Miss it and the app looks broken: the form does
+     nothing and the only clue is one line of small text. */
+  assert.match(html, /id="authHelpToggle"/, 'the sign-in screen has no help toggle');
+  assert.match(html, /aria-controls="authHelp"/, 'the toggle must say what it controls');
+  assert.match(html, /aria-expanded="false"/, 'the toggle must report its state to a screen reader');
+  assert.match(html, /id="authHelp"\s+hidden/, 'the help must start closed so the form stays short on a phone');
+  assert.match(js, /function switchAuthHelp\(/, 'the help toggle is not wired up');
+  // It has to actually answer the question, not just exist.
+  const panel = betweenHtml('id="authHelp"', '</div>');
+  assert.match(panel, /Create an account/i, 'the help never says how to create an account');
+  assert.match(panel, /confirm/i, 'the help never mentions the email confirmation step, which is the step people miss');
+  assert.match(panel, /sign in/i, 'the help never says how to sign in');
+  assert.match(panel, /Forgot password/i, 'the help never mentions the reset path');
+});
+
+check('the sign-out page says what signing out actually does', () => {
+  /* "You will need to sign in again" is true and useless. The part people are surprised by is
+     that this device's copy is cleared. */
+  /* The marker is the comment after the whole view: the first `</div>` inside it closes the
+     illustration, which would slice the button and the explanation away. */
+  const view = betweenHtml('id="view-logout"', '<!-- Task detail slide-over -->');
+  assert.match(view, /cleared/i, 'the sign-out page never says the device copy is cleared');
+  assert.match(view, /stay safe|comes back|stays safe/i,
+    'the sign-out page never says the account keeps the data, so it reads as a destructive warning');
+  assert.match(view, /not synced|has not synced/i, 'the sign-out page never mentions unsynced work');
+  assert.match(view, /Cancel|go back|Stay/i, 'the sign-out page must offer a way back');
+  assert.doesNotMatch(view, /Log Out/, 'the button still says "Log Out" while the page says "Sign out"');
+});
+
 check('both search entry points share one matcher', () => {
   assert.match(js, /function searchMatches\(q\)/, 'searchMatches helper missing');
   // Exactly one place may decide what matches. searchMatches and the two helpers it delegates
@@ -581,6 +655,29 @@ const betweenBlock = (start, end) => {
   const match = pattern.exec(rest);
   assert.ok(match, `no line starting ${JSON.stringify(end)} after ${start}`);
   // Cut immediately before the matched line, leaving the preceding block fully intact.
+  return rest.slice(0, match.index);
+};
+
+/* The same two slice helpers for index.html.
+
+   between() and betweenBlock() read `js`, and were written that way when every check under test
+   lived in the script. Markups now have to be checked too, and passing an HTML id to between()
+   fails with "missing from script.js" — which reads as a missing feature rather than a wrong
+   argument, and cost a debugging round. These take the source explicitly. */
+const betweenHtml = (start, end) => {
+  const from = html.indexOf(start);
+  assert.ok(from > -1, `${start} is missing from index.html`);
+  const to = html.indexOf(end, from);
+  assert.ok(to > -1, `no ${JSON.stringify(end)} after ${start} in index.html`);
+  return html.slice(from, to + end.length);
+};
+const betweenBlockHtml = (start, end) => {
+  const from = html.indexOf(start);
+  assert.ok(from > -1, `${start} is missing from index.html`);
+  const rest = html.slice(from);
+  const pattern = new RegExp(`(?:\\r?\\n)[ \\t]*${end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+  const match = pattern.exec(rest);
+  assert.ok(match, `no line starting ${JSON.stringify(end)} after ${start} in index.html`);
   return rest.slice(0, match.index);
 };
 const searchSource = [

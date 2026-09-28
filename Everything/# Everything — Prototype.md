@@ -623,6 +623,45 @@ it is a defensible trade, but it is not the same guarantee as items, and it shou
 as though it were. Nothing is lost either way: the losing version is kept and shown regardless of
 which clock decided the order.
 
+## Signing out was leaking the previous account's data
+
+Asked to improve the sign-out module, because it looked basic. It was worse than basic.
+
+`everything_state_v1` was **one localStorage key shared by every account on the device.** Signing
+out cleared the Supabase session and emptied the password field, and left that key exactly as it
+was. The next person to sign in on a shared phone therefore inherited the previous person's
+captures, goals, people and projects — and because the merge treats unknown local records as
+local-only edits, it then **pushed them into their own account**.
+
+So the merge work made this worse, not better. Before, the wholesale replace discarded them; now
+they were being carefully preserved and uploaded to the wrong person. Two fixes that each looked
+correct in isolation, compounding into a privacy bug.
+
+The fix is two halves, and both are needed:
+
+- **State is keyed per account** (`everything_state_v1:<user id>`), so accounts cannot see each
+  other even transiently.
+- **Signing out clears the slot** anyway, because the per-user key alone still leaves the previous
+  person's data in localStorage for anyone who opens devtools on the family tablet.
+
+Clearing is deliberately **after** `signOut()` resolves rather than before. A failed sign-out must
+not destroy the data of someone the server still considers signed in — that would lock them out of
+work that only ever existed on that device. There is a test for exactly that.
+
+Also fixed while in there:
+
+- `sbUser` was assigned *after* the column probes in `startSupabaseSync`, but the storage key is
+  derived from it, so the merge and any save during startup could write to the wrong account.
+- The retry timer was left running after sign-out and would re-create the queue key that had just
+  been deleted.
+- **Three different sign-outs existed**: the nav page, a raw browser `confirm()` dialog, and a
+  Settings button that signed out with no warning at all. All three now go to one page.
+- `confirmLogoutPage` retyped the button's HTML on failure, so renaming it in `index.html` was
+  silently undone. It now captures and restores the label.
+
+The sign-in page gained a "New here? How to get in" panel, because the sign-up flow has a
+confirm-your-email step that people miss and then conclude the app is broken.
+
 ## Typo-tolerant search
 The exact matcher is substring-only, so a plural or a single typo found nothing. A fuzzy fallback now
 runs when — and only when — the exact pass returns nothing, so existing results keep their exact
