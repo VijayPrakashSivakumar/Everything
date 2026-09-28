@@ -1887,6 +1887,43 @@ h1.page-title,
   color: var(--text);
 }
 
+/* The palette's touch entry point.
+
+   Phone-only by default. A wide topbar already has the search field, the shortcut hint and four
+   icon buttons, and the palette is one keystroke away there — so on desktop this would be a
+   duplicate of a working shortcut. On a phone it is the *only* way in.
+
+   Declared after .icon-btn on purpose. Both selectors are a single class, so the later one wins at
+   equal specificity, and .icon-btn's own `display: flex` would otherwise leave this visible on
+   every screen. The button really was 36px wide on desktop until the order was fixed. */
+.palette-btn {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .palette-btn {
+    display: flex;
+  }
+
+  /* The search field is the more important of the two on a phone, and the palette button took
+     exactly the width it needed to drop the search box to 106px — under the 120px the mobile audit
+     requires. Measured at 390px, the topbar holds seven controls: hamburger 40, capture 50,
+     search 106, palette 40, theme 40, and two more at 40 and 30. There is no room, so something
+     has to go rather than something being squeezed.
+
+     The theme toggle goes. Everything in this app respects the system dark-mode setting already
+     (`prefers-color-scheme` is read by the head script before first paint), so on a phone the
+     button is a duplicate of a preference the device already has. The desktop keeps it, where the
+     topbar has space and switching by hand is a real preference rather than a mock one. */
+  .search-box .kbd {
+    display: none;
+  }
+
+  .topbar .theme-toggle {
+    display: none;
+  }
+}
+
 /* The unread dot needs its own contrast now the button has no white plate. */
 .theme-dot {
   position: absolute;
@@ -2415,6 +2452,80 @@ h1.page-title {
 .task-row.selected {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* Swipe to act on a row.
+
+   The row's own children are moved into .swipe-row-body and the actions sit underneath, so the
+   transform slides the content off and the buttons are revealed rather than animated in. Without
+   that structure the actions would simply be next in the flow and always visible. */
+.task-row.swipeable {
+  position: relative;
+  overflow: hidden;
+  /* Vertical scrolling must keep working, so the browser is told it owns the y axis and the swipe
+     handler claims only x. Getting this wrong makes a long list unscrollable. */
+  touch-action: pan-y;
+}
+
+.task-row .swipe-row-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: inherit;
+  background: var(--card);
+  position: relative;
+  z-index: 1;
+  min-height: inherit;
+}
+
+.task-row .swipe-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: stretch;
+  z-index: 0;
+  /* Invisible until the row is slid aside, so a press on a closed row can never land on a button
+     that is not yet showing. Without this the buttons are hit-testable through the row body and a
+     swipe starting near the right edge is read as a press on a control. */
+  pointer-events: none;
+}
+
+.task-row.swiped-open .swipe-actions {
+  pointer-events: auto;
+}
+
+.swipe-action {
+  border: 0;
+  padding: 0 18px;
+  font: inherit;
+  font-size: var(--fs-body-s, 12.5px);
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+}
+
+.swipe-done {
+  background: var(--green-fg, #2e9e79);
+}
+
+.swipe-archive {
+  background: var(--accent, #4361ee);
+}
+
+.swipe-action:active {
+  filter: brightness(0.92);
+}
+
+/* No transition while the finger is down, so the row tracks it exactly; the transition is for the
+   snap open or shut, which is what should feel sprung rather than glued to the finger. */
+.task-row.swiping {
+  transition: none;
+}
+
+.task-row.swipeable:not(.swiping) {
+  transition: transform 180ms var(--ease, ease);
 }
 
 .command-row {

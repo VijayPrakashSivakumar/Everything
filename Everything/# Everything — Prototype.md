@@ -689,6 +689,65 @@ order that synced would fight every other device's sort on every load. It is als
 "All" and "Today"; on Overdue or Completed the list is already ordered by a rule, and a manual
 order outranking "3 days late" would make the tab lie about what it is showing.
 
+### The palette was unreachable on a phone
+
+`Ctrl+Shift+K` was the **only** way to open the palette. On a phone there is no keyboard shortcut
+and no button, so the feature did not exist on the device it was built for — and fourteen desktop
+checks passed the whole time. A phone-only topbar button fixes it; it is hidden on desktop, where
+the shortcut and the header search already cover it.
+
+Its CSS is declared *after* `.icon-btn` deliberately. Both are a single class, so the later rule
+wins at equal specificity, and `.icon-btn`'s own `display: flex` left the button 36px wide on
+every screen until the order was fixed.
+
+Adding it also made the topbar overflow: seven controls at 390px, and the search box squeezed to
+106px against a 120px floor. The **theme toggle** is what went — the app already follows the
+system dark-mode setting, so on a phone the button duplicates a preference the device has. The
+desktop keeps it, where switching by hand is a real preference rather than a mock one.
+
+### Bulk actions reached the Tasks list and not the Inbox
+
+The Inbox holds every capture, is the list people revisit most, and outgrows the Tasks list
+quickest. It had nothing.
+
+The selection is scoped to one list, because both draw the same rows: a selection made in Tasks
+must not survive into the Inbox, where "complete 3 selected" would silently reach records the
+person never looked at, from a bar they never opened.
+
+### Undo, not a dialog
+
+Bulk archive is reversible, so it gets an undo bar. Bulk delete keeps its `confirm()` **and** gains
+an undo: the dialog catches the accidental tap, the undo catches the person who agreed with the
+dialog and changed their mind thirty seconds later. It shares the capture flow's existing bar
+rather than adding a second near-identical one, which is how one of them ends up with a shorter
+timeout and no way to tell which is showing.
+
+A restored item comes back at the end of the list and not as a completed shell. It does **not**
+resurrect a recurring occurrence: the series key is a generated id, so silently recreating a
+scheduled future task would be a surprise rather than an undo.
+
+### Swipe, and the three bugs it took to make it work
+
+A horizontal drag slides a row aside to reveal Done and Archive. The Inbox swipes; the Tasks list
+reorders; **no row does both**, because those are two competing horizontal gestures and the person
+would get whichever the browser recognised first.
+
+Three real bugs, each found by instrumenting a live drag rather than by reasoning about it:
+
+1. **The gesture binder lived inside `enableListReordering`, which the Inbox never calls.** Rows
+   were marked swipeable, had actions attached, and no way to trigger any of it.
+2. **The revealed action buttons sat over the row's own box**, so a press near the right edge
+   landed on an invisible button, the "pressed a control" guard fired, and the swipe never started.
+   Fixed with `pointer-events: none` until the row is open.
+3. **`setPointerCapture` retargeted the click onto the row**, so a revealed action's own handler
+   never ran — the buttons rendered and did nothing. A press that lands on a *revealed* action now
+   skips the gesture entirely.
+
+Plus the one that would have made the whole gesture pointless: **a swipe ends with a click**, and
+that click fell through to `openPanel()`, so swiping a row opened the very item being swiped. The
+suppression is per-row and read once — a module-level flag on a timer swallowed the *next* real
+tap, including a deliberate press on a revealed button.
+
 ## Signing out was leaking the previous account's data
 
 Asked to improve the sign-out module, because it looked basic. It was worse than basic.

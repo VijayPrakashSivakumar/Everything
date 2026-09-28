@@ -3226,6 +3226,106 @@ function taskStatusBadge(item) {
 const TASK_ORDER_KEY = "everything_task_order_v1";
 let bulkSelection = new Set();
 let selectMode = false;
+/* Which list the selection belongs to. The bar and the actions are shared, but a selection made in
+   Tasks has to be cleared when the Inbox is opened — otherwise "complete 3 selected" would
+   silently reach across into rows the person never looked at, from a bar they did not open. */
+let bulkScope = "tasks";
+
+function bulkListConfig() {
+  return bulkScope === "inbox"
+    ? { listId: "inboxList", toggleId: "inboxBulkToggle", reRender: () => renderInbox(activeInboxFilter) }
+    : { listId: "tasksList", toggleId: "bulkToggle", reRender: () => renderTasks(activeTaskFilter) };
+}
+
+/* The bar and its toggle exist in two views, so they are both updated from here rather than
+   whichever view happened to be rendered. Duplicating the markup per view is how the two drift. */
+/* One template for the bulk bar, used by both views.
+
+   Written once because a second copy of this markup is a second thing to remember to update, and
+   the failure is quiet: the Inbox ends up with no Delete button and nobody notices until someone
+   needs it. The labels and the id are the only differences between the two bars. */
+function bulkBarMarkup({ barId, countId }) {
+  return `<div
+      id="${barId}"
+      class="bulk-bar"
+      hidden
+      style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;margin-bottom:12px;border:1px solid var(--border);border-radius:10px;background:var(--card);position:sticky;top:0;z-index:5"
+    >
+      <span id="${countId}" style="font-size:13px;font-weight:600;color:var(--text)">0 selected</span>
+      <button class="btn" data-bulk-needs-selection onclick="bulkComplete()">
+        <i data-lucide="check" aria-hidden="true"></i><span>Complete</span>
+      </button>
+      <button class="btn" data-bulk-needs-selection onclick="bulkArchive()">
+        <i data-lucide="archive" aria-hidden="true"></i><span>Archive</span>
+      </button>
+      <button class="btn danger" data-bulk-needs-selection onclick="bulkDelete()">
+        <i data-lucide="trash-2" aria-hidden="true"></i><span>Delete</span>
+      </button>
+      <button class="btn" onclick="selectAllVisible()">
+        <i data-lucide="list-checks" aria-hidden="true"></i><span>Select all</span>
+      </button>
+      <button class="btn" onclick="toggleSelectMode(false)">
+        <i data-lucide="x" aria-hidden="true"></i><span>Done</span>
+      </button>
+    </div>`;
+}
+
+/* The scope is a fixed literal from this module, never anything a person typed, so it is passed as
+   a data attribute and read by one delegated handler rather than interpolated into a quoted
+   inline handler. The repo's rule is that no `${...}` lands inside quotes in an on* attribute —
+   an apostrophe in the value would be a SyntaxError and the control would silently do nothing. A
+   scope would never contain one, but the rule is there to stop the next value from being
+   free text, and this way the next value cannot break it either. */
+function bulkToggleMarkup(toggleId, scope) {
+  if (scope !== "inbox" && scope !== "tasks") return "";
+  return `<button class="btn" id="${toggleId}" data-bulk-scope="${scope}" style="margin-top:12px">
+      <i data-lucide="list-checks" aria-hidden="true"></i><span>Select multiple</span>
+    </button>`;
+}
+
+/* Mounts the Inbox's bar and toggle. Idempotent, because it runs on every render and re-writing
+   innerHTML would throw away the bar's open state and its button states on each pass. */
+function mountInboxBulkBar() {
+  const barMount = document.getElementById("inboxBulkMount");
+  if (barMount && !document.getElementById("inboxBulkBar")) {
+    barMount.innerHTML = bulkBarMarkup({ barId: "inboxBulkBar", countId: "inboxBulkCount" });
+  }
+  const toggleMount = document.getElementById("inboxBulkToggleMount");
+  if (toggleMount && !document.getElementById("inboxBulkToggle")) {
+    toggleMount.innerHTML = bulkToggleMarkup("inboxBulkToggle", "inbox");
+    refreshIcons();
+  }
+}
+
+/* Entering select mode from a view's own toggle has to say which list it is for, or the Inbox
+   would act on a selection the person made in Tasks. */
+/* One delegated listener for both toggles, so neither is written as an inline handler and the
+   scope never has to be interpolated into a quoted attribute. */
+function initBulkToggles() {
+  document.addEventListener("click", (event) => {
+    const toggle = event.target.closest?.("[data-bulk-scope]");
+    if (!toggle) return;
+    enterBulkScope(toggle.dataset.bulkScope);
+  });
+}
+
+function enterBulkScope(scope) {
+  if (bulkScope !== scope) {
+    bulkSelection = new Set();
+    selectMode = false;
+  }
+  bulkScope = scope;
+  toggleSelectMode(true);
+}
+
+function bulkBarElements() {
+  return {
+    bar: document.getElementById("bulkBar"),
+    toggle: document.getElementById("bulkToggle"),
+    inboxBar: document.getElementById("inboxBulkBar"),
+    inboxToggle: document.getElementById("inboxBulkToggle"),
+  };
+}
 
 /* Reorder is only offered on "All" and "Today". On Overdue or Completed the list is already
    ordered by a rule, and a manual order that silently outranks "3 days late" would make the tab
@@ -3255,36 +3355,53 @@ function isSelected(id) {
 function toggleSelectMode(force) {
   selectMode = force === undefined ? !selectMode : Boolean(force);
   if (!selectMode) bulkSelection = new Set();
-  renderTasks(activeTaskFilter);
+  bulkListConfig().reRender();
 }
 
 function toggleSelected(id) {
   if (!selectMode) return;
   if (bulkSelection.has(id)) bulkSelection.delete(id);
   else bulkSelection.add(id);
-  renderTasks(activeTaskFilter);
+  bulkListConfig().reRender();
 }
 
 function selectAllVisible() {
-  const ids = [...document.querySelectorAll("#tasksList .task-row")]
+  const { listId } = bulkListConfig();
+  const ids = [...document.querySelectorAll(`#${listId} .task-row`)]
     .map((row) => row.dataset.reorderId)
     .filter(Boolean);
   if (!ids.length) return;
   const everySelected = ids.every((id) => bulkSelection.has(id));
   ids.forEach((id) => (everySelected ? bulkSelection.delete(id) : bulkSelection.add(id)));
-  renderTasks(activeTaskFilter);
+  bulkListConfig().reRender();
+}
+
+/* Re-renders whichever list the selection belongs to. Every bulk action ends here rather than
+   calling renderTasks() directly, so completing an Inbox selection cannot refresh Tasks and leave
+   the Inbox showing rows that are already done. */
+function renderBulkView() {
+  bulkListConfig().reRender();
 }
 
 function renderBulkBar() {
-  const bar = document.getElementById("bulkBar");
-  if (!bar) return;
+  const { bar, inboxBar, toggle, inboxToggle } = bulkBarElements();
+  const target = bulkScope === "inbox" ? inboxBar : bar;
+  if (!target) return;
   const count = bulkSelection.size;
-  bar.hidden = !selectMode;
-  if (!selectMode) return;
-  const label = document.getElementById("bulkCount");
+  target.hidden = !selectMode;
+  if (!selectMode) {
+    // The other view's bar must go too, or a stale bar sits on a page whose rows it cannot select.
+    const other = bulkScope === "inbox" ? bar : inboxBar;
+    if (other) other.hidden = true;
+    return;
+  }
+  const label = document.getElementById(bulkScope === "inbox" ? "inboxBulkCount" : "bulkCount");
   if (label) label.textContent = count === 1 ? "1 selected" : `${count} selected`;
-  document.querySelectorAll("#bulkBar [data-bulk-needs-selection]")
+  target.querySelectorAll("[data-bulk-needs-selection]")
     .forEach((btn) => (btn.disabled = count === 0));
+  // The toggle has to follow the bar, or the way out of select mode disappears with it.
+  if (toggle) toggle.hidden = selectMode;
+  if (inboxToggle) inboxToggle.hidden = selectMode;
 }
 
 /* One place decides what a bulk action means, so Complete and Archive cannot disagree about
@@ -3304,35 +3421,88 @@ async function bulkComplete() {
   }
   bulkSelection = new Set();
   renderAll();
-  renderTasks(activeTaskFilter);
+  renderBulkView();
 }
 
 async function bulkArchive() {
   const items = bulkSelectedItems();
   if (!items.length) return;
+  const archived = [];
   for (const item of items) {
     if (isArchived(item)) continue;
     item.archivedAt = Date.now();
     cancelReminderFor(item.id);
     await dbSaveItem(item);
+    archived.push({ ...item });
   }
   bulkSelection = new Set();
   renderAll();
-  renderTasks("archived");
+  // Undo rather than a confirm(): archiving is reversible in a way that deleting is not, and the
+  // capture flow already established that a tap beats a dialog.
+  if (archived.length) showUndoAction(`Archived ${archived.length} item${archived.length === 1 ? "" : "s"}`, () => unarchiveItems(archived));
+  renderBulkView();
 }
 
-/* Delete is the one action here that cannot be undone, so it asks first and says how many. */
+async function unarchiveItems(items) {
+  for (const saved of items) {
+    const item = state.items.find((i) => i.id === saved.id);
+    if (!item) continue;
+    item.archivedAt = 0;
+    await dbSaveItem(item);
+  }
+  renderAll();
+  renderBulkView();
+}
+
+/* Delete asks first, then offers undo as well. The confirm covers the accidental bulk tap, which
+   is the case that actually loses work; the undo covers the case where the person saw the dialog,
+   agreed with it, and changed their mind thirty seconds later — which a dialog cannot help with. */
 async function bulkDelete() {
   const items = bulkSelectedItems();
   if (!items.length) return;
   if (!confirm(`Delete ${items.length} item${items.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+  const removed = items.map((item) => ({ ...item }));
   for (const item of items) {
     state.items = state.items.filter((i) => i.id !== item.id);
     await dbDeleteItem(item.id, item);
   }
   bulkSelection = new Set();
   renderAll();
-  renderTasks(activeTaskFilter);
+  showUndoAction(`Deleted ${removed.length} item${removed.length === 1 ? "" : "s"}`, () => restoreItems(removed));
+  renderBulkView();
+}
+
+/* Restoring puts the items back at the end rather than their original position, and does not
+   resurrect a recurring occurrence. Both are honest: the series key is a generated id, so
+   silently recreating a scheduled future task would be a surprise, not an undo. */
+async function restoreItems(items) {
+  for (const saved of items) {
+    if (state.items.some((i) => i.id === saved.id)) continue;
+    const restored = { ...saved, archivedAt: 0, done: false, completedAt: "" };
+    state.items.unshift(restored);
+    await dbSaveItem(restored);
+  }
+  renderAll();
+  renderBulkView();
+}
+
+/* A generic undo bar, sharing the capture flow's element, styling and 8-second life. The
+   alternative was a second near-identical bar, and two undo bars would drift — which is how one
+   of them ends up with a shorter timeout and no way to tell which is showing. */
+function showUndoAction(message, onUndo) {
+  const bar = document.getElementById("captureUndo");
+  if (!bar) return;
+  pendingUndoAction = onUndo;
+  clearTimeout(captureUndoTimer);
+  bar.innerHTML = `${icon("check")} <span>${escapeHtml(message)}</span> <button type="button" class="capture-undo-btn">Undo</button>`;
+  bar.querySelector(".capture-undo-btn").onclick = () => {
+    const action = pendingUndoAction;
+    dismissCaptureUndo();
+    if (action) action();
+  };
+  bar.hidden = false;
+  refreshIcons();
+  captureUndoTimer = setTimeout(dismissCaptureUndo, 8000);
 }
 
 function bulkSelectedItems() {
@@ -3353,6 +3523,19 @@ function taskRow(item, options = {}) {
   row.tabIndex = 0;
   row.onclick = (e) => {
     if (e.target.closest(".checkbox, button")) return;
+    // A swipe ends with a click. Without this the row opened the very item being swiped, which
+    // defeats the gesture completely. Scoped to this row and read once, so a deliberate press on a
+    // revealed action button is never swallowed.
+    if (row.swallowNextClick) {
+      row.swallowNextClick = false;
+      return;
+    }
+    // A row left slid open by a swipe swallows the first tap meant for something else, so a tap
+    // anywhere closes it instead of opening the item behind it.
+    if (row.classList.contains("swiped-open")) {
+      closeOpenSwipe();
+      return;
+    }
     // In select mode a tap anywhere on the row toggles it. Making people aim at a small circle
     // for a fifty-item selection is how bulk features get abandoned.
     if (selectMode) {
@@ -3434,6 +3617,13 @@ function taskRow(item, options = {}) {
       ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1)
       : item.status || item.kind;
     row.appendChild(badge);
+  }
+  /* Swipe is opt-in per list, and never on a list that is also reorderable. Reordering and swiping
+     on one row would be two competing horizontal gestures, and the person would get whichever one
+     the browser happened to recognise first. */
+  if (options.swipeable) {
+    row.classList.add("swipeable");
+    attachSwipeActions(row, item);
   }
   return row;
 }
@@ -3552,8 +3742,17 @@ async function toggleDone(id) {
   if (currentItemId === id && document.getElementById("panel")?.classList.contains("open")) openPanel(id);
 }
 
+let activeInboxFilter = "all";
+
 function renderInbox(filter) {
-  filter = filter || "all";
+  filter = filter || activeInboxFilter || "all";
+  activeInboxFilter = filter;
+  // A selection made in the Tasks list must not follow the person into the Inbox, where the rows
+  // look the same and a bulk action would hit records they never saw.
+  if (bulkScope !== "inbox" && (selectMode || bulkSelection.size)) {
+    bulkSelection = new Set();
+    selectMode = false;
+  }
   const tabs = [
     ["all", "All"],
     ["text", "Text"],
@@ -3600,9 +3799,19 @@ function renderInbox(filter) {
     list.innerHTML = query
       ? '<p class="empty">Nothing matches that filter.</p>'
       : '<p class="empty">Nothing here yet.</p>';
+    mountInboxBulkBar();
+    renderBulkBar();
     return;
   }
-  items.forEach((item) => list.appendChild(taskRow(item)));
+  mountInboxBulkBar();
+  // The Inbox is swipeable and the Tasks list is reorderable — never both on the same row. The
+  // split is by list, not by device, so the two never compete even on a desktop with a mouse.
+  items.forEach((item) => list.appendChild(taskRow(item, { swipeable: true })));
+  // The Inbox swipes and never reorders, so it binds the swipe gesture directly rather than
+  // calling enableListReordering — which it does not want, and which is what left swipeable rows
+  // with no handler at all when the gesture binder lived inside it.
+  bindRowGestures(list, ".task-row.swipeable", null);
+  renderBulkBar();
 }
 
 let activeTaskFilter = "all";
@@ -6406,6 +6615,10 @@ function capturePlanRowHtml(entry, index) {
    undoable as the one action the person took, not three. */
 let captureUndoTimer = null;
 let captureUndoItems = [];
+/* The generic undo bar's action, held alongside the capture flow's own state. Both write to the
+   same bar, so the pending action has to be cleared on dismiss — otherwise a later dismiss would
+   fire an undo belonging to an action that already finished. */
+let pendingUndoAction = null;
 
 function showCaptureUndo(items) {
   const bar = document.getElementById("captureUndo");
@@ -6425,6 +6638,7 @@ function dismissCaptureUndo() {
   clearTimeout(captureUndoTimer);
   captureUndoTimer = null;
   captureUndoItems = [];
+  pendingUndoAction = null;
   const bar = document.getElementById("captureUndo");
   if (bar) {
     bar.hidden = true;
@@ -7332,6 +7546,42 @@ function commandRecordRows(query) {
   return out;
 }
 
+/* Binds the row gestures. Called by every list that renders rows, whichever gestures it wants,
+   because the Inbox swipes and the Tasks list reorders and neither should depend on the other's
+   list setup. Gesture binding used to live inside enableListReordering, which meant the Inbox —
+   which never calls it — had swipeable rows and no way to swipe them. */
+function bindRowGestures(list, itemSelector, startTracking) {
+  [...list.querySelectorAll(itemSelector)].forEach((el) => {
+    let holdTimer = null;
+    el.addEventListener("pointerdown", (event) => {
+      /* A swipeable row decides for itself. It cannot be judged by the control check below,
+         because the revealed action buttons sit on top of the row's own box until the row is
+         slid aside — a press anywhere near the right edge lands on an invisible `.swipe-action`
+         button, that check sees "a control", and the swipe never starts. startSwipe() hit-tests
+         the row body itself and treats a press on a visible action as a tap. */
+      if (el.classList.contains("swipeable")) {
+        startSwipe(el, event);
+        return;
+      }
+      // A press that starts on a control belongs to the control. Without this, tapping a checkbox
+      // on a phone would begin a gesture and the checkbox would never fire.
+      if (event.target.closest("button, input, a, select, textarea")) return;
+      if (!startTracking) return;
+      holdTimer = setTimeout(() => startTracking(el), 350);
+    });
+    el.addEventListener("pointerup", () => {
+      // A press that ended before the hold elapsed was a tap, not a drag. Clearing the timer is
+      // what stops a tap from becoming a reorder a second later.
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    });
+    el.addEventListener("pointercancel", () => {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    });
+  });
+}
+
 function enableListReordering(container, options = {}) {
   const {
     itemSelector = "[data-reorder-id]",
@@ -7398,7 +7648,8 @@ function enableListReordering(container, options = {}) {
   };
 
   const abort = () => {
-    clearTimeout(holdTimer);
+    // No timer to clear: bindRowGestures owns it and clears it on pointerup, which is the only
+    // event that can reach here with a hold still pending.
     if (dragged) dragged.classList.remove("reorder-dragging");
     container.classList.remove("reorder-active");
     dragged = null;
@@ -7436,21 +7687,154 @@ function enableListReordering(container, options = {}) {
       // break the reorder again, and swallowing it here fails loudly instead of silently.
       event.preventDefault();
     });
-    el.addEventListener("pointerdown", (event) => {
-      // A press that starts on a control belongs to the control. Without this, tapping a checkbox
-      // on a phone would begin a drag and the checkbox would never fire.
-      if (event.target.closest("button, input, a, select, textarea")) return;
-      if (tracking) return;
-      holdTimer = setTimeout(() => startTracking(el), holdDelay);
-    });
-    el.addEventListener("pointerup", () => {
-      // A press that ended before the hold elapsed was a tap, not a drag. Clearing the timer is
-      // what stops a tap from becoming a reorder a second later.
-      if (!pointerDragging) clearTimeout(holdTimer);
+  });
+
+  // The press-and-hold gesture is bound here rather than inline above, so the same binder serves
+  // the swipe-only lists that never call this function.
+  bindRowGestures(container, itemSelector, startTracking);
+
+  return { order, items };
+}
+
+/* ---------- Swipe to act on a row ----------
+
+   A horizontal drag across a row slides it aside to reveal Archive and Delete. It is the gesture a
+   phone user already expects, and it is the only way to act on a single row without opening it.
+
+   It shares this module with press-and-hold reordering, and the two must never fight. They are
+   kept apart by *which branch the row takes* in bindRowGestures: a swipeable row returns before
+   the hold timer is ever set, and a reorderable row never reaches the swipe branch. So no row is
+   ever half in both, and there is no timer to race against.
+
+   A vertical move is always a scroll, never a swipe, which is what keeps a long list scrollable
+   when rows are swipeable. */
+const SWIPE_TRIGGER = 56;
+const SWIPE_MAX_WIDTH = 168;
+
+function startSwipe(el, event) {
+  /* A press on a *revealed* action button belongs to the button. Without this, setPointerCapture
+     below would retarget the following pointerup and click onto the row itself, so the button's
+     own handler never ran and a revealed action did nothing at all.
+
+     The test is a hit-test, not `event.target.closest(...)`, because which element is under the
+     finger is not the question — the revealed buttons sit over the row's own box, so the target
+     can be either. The question is whether the row is currently showing them. */
+  if (el.classList.contains("swiped-open") && event.target.closest(".swipe-action")) {
+    swipeOpenRow = null;
+    return;
+  }
+  const startX = event.clientX;
+  const startY = event.clientY;
+  let decided = null;
+  let offset = 0;
+  // Pointer capture keeps receiving moves even once the finger leaves the row, which on a phone is
+  // most of the gesture.
+  try {
+    el.setPointerCapture(event.pointerId);
+  } catch (err) {
+    /* Older browsers without pointer capture: the move listener below still works while the
+       pointer is over the row, which is enough to recognise a short swipe. */
+  }
+
+  const onMove = (moveEvent) => {
+    const dx = moveEvent.clientX - startX;
+    const dy = moveEvent.clientY - startY;
+    if (decided === null) {
+      // A small wobble is not a decision; waiting for it stops a tap being read as a swipe.
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) > Math.abs(dx)) {
+        decided = "scroll";
+        return;
+      }
+      decided = dx < 0 ? "swipe" : "ignore";
+      if (decided === "swipe") {
+        /* No drag can begin on a swipeable row — bindRowGestures returns before setting the hold
+           timer for these — so there is no pending timer to cancel here. The two gestures are
+           separated by which branch the row takes, not by racing them. */
+        el.classList.add("swiping");
+      }
+    }
+    if (decided !== "swipe") return;
+    moveEvent.preventDefault();
+    // Rubber-banding to the left only: swiping right would fight the back gesture.
+    offset = Math.max(-SWIPE_MAX_WIDTH, Math.min(0, dx));
+    el.style.transform = `translateX(${offset}px)`;
+  };
+
+  const finish = () => {
+    el.removeEventListener("pointermove", onMove);
+    el.removeEventListener("pointerup", finish);
+    el.removeEventListener("pointercancel", finish);
+    el.classList.remove("swiping");
+    const committed = decided === "swipe" && -offset >= SWIPE_TRIGGER;
+    // Snap fully open, or closed. Half-open looks broken and the row stays unusable.
+    el.style.transform = committed ? `translateX(-${SWIPE_MAX_WIDTH}px)` : "";
+    el.classList.toggle("swiped-open", committed);
+    offset = 0;
+    swipeOpenRow = committed ? el : null;
+    /* A gesture that moved is not a tap. The browser still fires a click on pointerup after a
+       swipe — the row was dragged, not pressed — and that click fell through to openPanel(), so a
+       swipe opened the very item the person was trying to swipe.
+
+       Scoped to this row's own handler, and only for this one gesture: the click lands on the
+       element under the finger, so the row is the only handler that can read it. A module-level
+       flag had to expire on a timer, and that timer then swallowed the *next* real tap — including
+       a deliberate press on a revealed action button, which is how a swipe became unusable. */
+    el.swallowNextClick = decided === "swipe" ? true : el.swallowNextClick;
+  };
+
+  el.addEventListener("pointermove", onMove);
+  el.addEventListener("pointerup", finish);
+  el.addEventListener("pointercancel", finish);
+}
+
+let swipeOpenRow = null;
+
+/* Tapping anywhere else closes a row left open by a swipe. Without this, a row stays slid aside
+   and covers the content beside it with no visible way back. */
+function closeOpenSwipe() {
+  if (!swipeOpenRow) return;
+  swipeOpenRow.style.transform = "";
+  swipeOpenRow.classList.remove("swiped-open");
+  swipeOpenRow = null;
+}
+
+/* The revealed actions. Built with the DOM API because a task title is free text and goes into a
+   label — the same reason fillMergeTargets does not build options by string concatenation. */
+function attachSwipeActions(row, item) {
+  if (row.querySelector(".swipe-actions")) return;
+  const actions = document.createElement("div");
+  actions.className = "swipe-actions";
+
+  const add = (labelText, className, handler) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `swipe-action ${className}`;
+    button.textContent = labelText;
+    button.onclick = (e) => {
+      e.stopPropagation();
+      closeOpenSwipe();
+      handler();
+    };
+    actions.appendChild(button);
+  };
+
+  add("Done", "swipe-done", () => toggleDone(item.id));
+  add("Archive", "swipe-archive", () => {
+    if (isArchived(item)) return;
+    item.archivedAt = Date.now();
+    cancelReminderFor(item.id);
+    dbSaveItem(item).then(() => {
+      renderAll();
+      showUndoAction("Archived 1 item", () => unarchiveItems([{ ...item }]));
     });
   });
 
-  return { order, items };
+  const strip = document.createElement("div");
+  strip.className = "swipe-row-body";
+  strip.append(...Array.from(row.childNodes));
+  row.append(actions);
+  row.append(strip);
 }
 
 function readStoredOrder(key) {
@@ -10164,6 +10548,7 @@ restoreNudge();
 restoreDashboardLayout();
 enableDashboardDragging();
 initShortcuts();
+  initBulkToggles();
 initTheme();
 initBackNavigation();
 initInfoTips();

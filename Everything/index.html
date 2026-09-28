@@ -423,6 +423,22 @@
             </div>
             <div class="search-dropdown" id="searchDropdown" hidden></div>
           </div>
+          <!--
+            The palette's touch entry point. Ctrl+Shift+K is the keyboard route, and a phone has no
+            keyboard — so without this button the palette was reachable only by attaching a
+            Bluetooth keyboard, which made the feature desktop-only in a phone-first app. Hidden on
+            wide screens, where the shortcut and the header search already cover it and the topbar
+            has room to spare.
+          -->
+          <button
+            class="icon-btn palette-btn"
+            id="paletteBtn"
+            onclick="openCommandPalette()"
+            title="Jump to anything"
+            aria-label="Jump to a page, task, person or project"
+          >
+            <i data-lucide="command" aria-hidden="true"></i>
+          </button>
           <button
             class="icon-btn theme-toggle"
             onclick="toggleTheme()"
@@ -718,9 +734,15 @@
               style="margin-bottom: 12px"
             />
             <div class="tabs" id="inboxTabs"></div>
+            <!-- The Inbox holds every capture, so it outgrows the Tasks list and needed the same
+                 bulk actions. Built from one template in script.js rather than a second copy of
+                 the markup: two hand-written bars drift, and the drift is invisible until one of
+                 them is missing a button the other has. -->
+            <div id="inboxBulkMount"></div>
             <div class="card">
               <div class="inbox-list" id="inboxList"></div>
             </div>
+            <div id="inboxBulkToggleMount"></div>
           </div>
 
           <!-- TASKS VIEW -->
@@ -793,8 +815,8 @@
             <button
               class="btn"
               id="bulkToggle"
+              data-bulk-scope="tasks"
               style="margin-top: 12px"
-              onclick="toggleSelectMode()"
             >
               <i data-lucide="list-checks" aria-hidden="true"></i>
               <span>Select multiple</span>

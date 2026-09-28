@@ -597,10 +597,13 @@ check('reordering works by press-and-hold, and only one implementation exists', 
   // it started on, so a listener bound to that row would receive one move and no more.
   assert.match(engine, /document\.addEventListener\("pointermove"/,
     'the reorder must track moves on the document, not on the row');
-  assert.match(engine, /setTimeout\(\(\) => startTracking\(el\), holdDelay\)/,
+  // The press-and-hold delay lives in the shared binder now, not inside the reorder itself, so
+  // the swipe-only lists get the same treatment without owning a drag.
+  const binder = betweenBlock('function bindRowGestures', 'function enableListReordering');
+  assert.match(binder, /setTimeout\(\(\) => startTracking\(el\), 350\)/,
     'there is no press-and-hold delay, so a tap would start a drag');
   // A control inside a row must still be tappable.
-  assert.match(engine, /closest\("button, input, a, select, textarea"\)/,
+  assert.match(binder, /closest\("button, input, a, select, textarea"\)/,
     'pressing a checkbox inside a row would start a drag instead');
   // One engine, not one per list.
   const dash = between('function enableDashboardDragging', 'function isTypingTarget');
