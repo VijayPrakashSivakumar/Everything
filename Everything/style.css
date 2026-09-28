@@ -1115,6 +1115,180 @@ input[type="password"]::-ms-clear {
   line-height: var(--lh-dense-2);
 }
 
+/* ---------- Inline help (the "i" beside a confusing field) ----------
+
+   A tooltip that only answers on hover is invisible on a phone, which is where this app is most
+   often opened. So the two cases are separated on purpose: `:hover` is applied only inside
+   `@media (hover: hover)`, and tapping the dot toggles `.is-open` everywhere. Without that split,
+   a tap on a touch device leaves the element in a stuck :hover state and the bubble never closes.
+
+   Everything is a token, so the bubble reads correctly in all ten concepts without a per-theme
+   rule. The glyph is a CSS `::before` rather than an icon: an inline <i> would need the Lucide
+   script to have run, and this must never be the reason a tooltip fails to appear. */
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  /* --tip-shift is set by positionTip() to keep the bubble on screen when its dot sits near an
+     edge. The default has to live HERE, on the element script.js writes to — declaring it inside
+     .info-tip__bubble would shadow the inherited inline value and the nudge would silently do
+     nothing, which is exactly the bug this comment is here to stop. */
+  --tip-shift: 0px;
+  /* Negative margins let the dot sit inside a label row without opening the spacing up. */
+  margin: 0 -2px;
+  padding: 0;
+  border: var(--border-w) solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+  vertical-align: middle;
+  /* Without this the bubble is painted behind the card it belongs to. */
+  z-index: 30;
+}
+
+.info-tip::before {
+  content: "i";
+  font-family: var(--font-display);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-bold);
+  font-style: italic;
+  line-height: 1;
+  /* A real circle rather than a filled dot, so it reads as "information" and not as a control. */
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  border: var(--border-w) solid currentColor;
+  border-radius: 50%;
+}
+
+.info-tip:hover,
+.info-tip:focus-visible,
+.info-tip.is-open {
+  color: var(--accent);
+  background: var(--blue-bg);
+}
+
+.info-tip:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.info-tip__bubble {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(calc(-50% + var(--tip-shift))) translateY(4px);
+  width: max-content;
+  /* A cap, so a long note wraps instead of running off the side of a 390px phone. */
+  max-width: min(250px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body-s);
+  font-style: normal;
+  font-weight: var(--fw-normal);
+  line-height: var(--lh-normal);
+  text-align: left;
+  white-space: normal;
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 31;
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease), visibility var(--dur-2);
+}
+
+/* The tail. A rotated square rather than a CSS triangle, so it picks up the border and the
+   rounded corners the bubble already has. */
+.info-tip__bubble::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  /* The tail has to travel with the bubble. Left at 50% it would point at empty screen the moment
+     the bubble is nudged inwards to stay on a narrow display. */
+  margin: -5px 0 0 -4.5px;
+  margin-left: calc(-4.5px + var(--tip-shift));
+  width: 9px;
+  height: 9px;
+  border-right: var(--border-w) solid var(--border);
+  border-bottom: var(--border-w) solid var(--border);
+  background: var(--card);
+  transform: rotate(45deg);
+}
+
+/* Opened by tap or by script: works on every device, hover or not. */
+.info-tip.is-open .info-tip__bubble,
+.info-tip:focus-visible .info-tip__bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(calc(-50% + var(--tip-shift))) translateY(0);
+}
+
+/* Keyboard and pointer devices only. Scoped to the media query on purpose — see the note above. */
+@media (hover: hover) and (pointer: fine) {
+  .info-tip:hover .info-tip__bubble {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(calc(-50% + var(--tip-shift))) translateY(0);
+  }
+}
+
+/* Clicked shut while the pointer is still resting on the dot. Without this, tapping the icon to
+   close it does nothing on a desktop: `:hover` is still true, so the bubble stays visible and the
+   control feels broken. Cleared as soon as the pointer leaves. */
+.info-tip.is-dismissed .info-tip__bubble {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Near the top of the screen there is no room above, so the bubble opens downward instead. The
+   class is set by positionTip() rather than by guessing in CSS, because the dot moves as the page
+   scrolls. */
+.info-tip.below .info-tip__bubble {
+  bottom: auto;
+  top: calc(100% + 9px);
+  transform: translateX(calc(-50% + var(--tip-shift))) translateY(-4px);
+}
+
+.info-tip.below .info-tip__bubble::after {
+  top: auto;
+  bottom: 100%;
+  margin: -5px 0 0 -4.5px;
+  border: 0;
+  border-left: var(--border-w) solid var(--border);
+  border-top: var(--border-w) solid var(--border);
+}
+
+.info-tip.below.is-open .info-tip__bubble,
+.info-tip.below:focus-visible .info-tip__bubble {
+  transform: translateX(calc(-50% + var(--tip-shift))) translateY(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .info-tip.below:hover .info-tip__bubble {
+    transform: translateX(calc(-50% + var(--tip-shift))) translateY(0);
+  }
+}
+
+/* On a phone the bubble is a tap target's worth of reading, not a hover: give it room to breathe
+   without letting it outgrow the sheet. */
+@media (max-width: 480px) {
+  .info-tip__bubble {
+    max-width: min(220px, calc(100vw - 40px));
+    font-size: var(--fs-meta);
+  }
+}
+
 .theme-scheme-select {
   padding: 7px 10px;
   border-radius: var(--radius-ctl);

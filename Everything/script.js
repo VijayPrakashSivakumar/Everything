@@ -7408,6 +7408,139 @@ function initTheme() {
   applyThemeConcept(currentThemeConcept());
 }
 
+/* ---------- Inline help ----------
+
+   One delegated listener for every `.info-tip` on the page, so a tip added later needs no wiring
+   and the capture sheet — which is rebuilt constantly — does not need rebinding.
+
+   Three ways to open (hover on a pointer device, focus from the keyboard, tap anywhere) and three
+   ways to close (pointer leaving, blur, Escape or a tap elsewhere). The tap case is the one that
+   matters: this app is mostly opened on a phone, where `mouseenter` never fires. */
+let infoTipSeq = 0;
+
+function infoTipMarkup(text) {
+  const id = `tip-${++infoTipSeq}`;
+  // The text lives in the bubble and nowhere else, so there is one source of truth and the button
+  // stays empty for a screen reader to announce through aria-describedby rather than twice.
+  return `<button type="button" class="info-tip" aria-expanded="false" aria-describedby="${id}">`
+    + `<span class="info-tip__bubble" id="${id}" role="tooltip" aria-hidden="true">${escapeHtml(text)}</span>`
+    + `</button>`;
+}
+
+// The bubble hangs above by default and below when there is no room, because the capture sheet
+// opens over the bottom of a phone screen where an upward bubble would be clipped by it. It is also
+// nudged sideways: the sheet puts Repeats in the right-hand column of a two-up grid, so a bubble
+// centred on the dot runs straight off a 390px screen.
+function positionTip(tip) {
+  if (!tip) return;
+  const bubble = tip.querySelector(".info-tip__bubble");
+  if (!bubble) return;
+  tip.classList.remove("below");
+  const box = tip.getBoundingClientRect();
+  const height = bubble.offsetHeight || 70;
+  const width = bubble.offsetWidth || 200;
+  // No room above the dot but some below: flip rather than render off-screen.
+  if (box.top - height - 16 < 0) tip.classList.add("below");
+
+  // Shift so the bubble stays inside the viewport, but never so far that it detaches from its dot
+  // — past halfway the bubble is further from the dot than from the screen edge, so clamp there.
+  const margin = 8;
+  const overflowRight = box.left + box.width / 2 + width / 2 - (window.innerWidth - margin);
+  const overflowLeft = margin - (box.left + box.width / 2 - width / 2);
+  let shift = 0;
+  if (overflowRight > 0) shift = -Math.min(overflowRight, width / 2 - 12);
+  if (overflowLeft > 0) shift = Math.min(overflowLeft, width / 2 - 12);
+  tip.style.setProperty("--tip-shift", `${shift.toFixed(1)}px`);
+  tip.classList.toggle("edge-right", shift < 0);
+  tip.classList.toggle("edge-left", shift > 0);
+}
+
+function closeInfoTips(except) {
+  for (const tip of document.querySelectorAll(".info-tip.is-open")) {
+    if (tip === except) continue;
+    tip.classList.remove("is-open");
+    tip.setAttribute("aria-expanded", "false");
+    const bubble = tip.querySelector(".info-tip__bubble");
+    if (bubble) bubble.setAttribute("aria-hidden", "true");
+  }
+}
+
+/* The notes themselves. Kept together, keyed by the control they explain, so the copy can be
+   reviewed in one place and a field can never carry a tip describing something else. The
+   questions are the ones the fields do not answer on their own — not a restatement of the label. */
+const FIELD_HELP = {
+  captureSmartEnabled:
+    "Everything reads what you type and fills in the type, date, person, project and priority for you. A clear sentence saves itself with no button. Turn this off to type the fields yourself.",
+  capturePriority:
+    "Higher priority sorts nearer the top of Today and Tasks. It does not change the due date or send a reminder on its own.",
+  captureDueDate:
+    "A date and time puts this on your Schedule, and starts a reminder if you have notifications on.",
+  captureRecurrence:
+    "Finishing a repeating task creates the next one automatically, a week (or a month) after the date you completed it.",
+  capturePerson:
+    "Linking a person keeps their notes and contact details together, and lets Ask answer questions about who is involved.",
+  captureProject:
+    "Group related items so they show up together in Projects and in your Reports.",
+  panelStatusSelect:
+    "Planned is not on today yet. Today means you intend to do it now. In progress means started. Waiting is blocked on someone else. Someday is deliberately not now.",
+  editPriority: "Higher priority sorts nearer the top of Today and Tasks.",
+  editRecurrence: "Finishing a repeating task creates the next one automatically.",
+};
+
+/* Puts the "i" beside a label. Runs once, at boot, and skips anything already mounted so it is
+   safe to call again after a partial re-render. */
+function mountFieldHelp() {
+  for (const [id, text] of Object.entries(FIELD_HELP)) {
+    const label = document.querySelector(`label[for="${id}"]`);
+    if (!label || label.dataset.helpMounted) continue;
+    label.dataset.helpMounted = "1";
+    // Inside the label so it reads as part of the caption, and after the text so the eye reaches
+    // the words first and the dot second.
+    label.insertAdjacentHTML("beforeend", infoTipMarkup(text));
+  }
+}
+
+function initInfoTips() {
+  if (initInfoTips.done) return;
+  initInfoTips.done = true;
+  mountFieldHelp();
+
+  document.addEventListener("click", (e) => {
+    const tip = e.target.closest(".info-tip");
+    if (!tip) {
+      closeInfoTips();
+      return;
+    }
+    // Only one bubble at a time: a second opening over the first is just noise.
+    closeInfoTips(tip);
+    const open = !tip.classList.contains("is-open");
+    tip.classList.toggle("is-open", open);
+    tip.setAttribute("aria-expanded", String(open));
+    const bubble = tip.querySelector(".info-tip__bubble");
+    if (bubble) bubble.setAttribute("aria-hidden", String(!open));
+    // Closing it has to beat the stylesheet's :hover rule, or on a desktop the bubble stays up
+    // because the pointer never left. Lifted again on the way out, so the next hover still works.
+    tip.classList.toggle("is-dismissed", !open);
+    if (open) positionTip(tip);
+  });
+
+  document.addEventListener("mouseover", (e) => {
+    const tip = e.target.closest && e.target.closest(".info-tip");
+    if (tip) tip.classList.remove("is-dismissed");
+  });
+
+  // Escape closes the open one. The app already binds Escape for layers; this sits alongside that
+  // rather than inside closeTopmostOverlay, because a tooltip is not a layer and must never be
+  // counted as one by the back guard.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeInfoTips();
+  });
+
+  // A tip whose dot has scrolled away must not stay open over whatever moved into its place.
+  window.addEventListener("scroll", () => closeInfoTips(), true);
+  window.addEventListener("resize", () => closeInfoTips());
+}
+
 /* Swatches show the concept's own palette, so the choice is visible before it is applied. The
    colours come off the theme entry, which is why adding a concept cannot leave this behind. */
 function themeSwatch(theme) {
@@ -8215,6 +8348,7 @@ enableDashboardDragging();
 initShortcuts();
 initTheme();
 initBackNavigation();
+initInfoTips();
 applyLaunchShortcut();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker

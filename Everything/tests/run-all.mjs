@@ -33,6 +33,9 @@ const SUITES = [
   { name: 'theme', file: 'theme-probe.mjs', timeoutMs: 120000 },
   { name: 'back', file: 'back-nav-probe.mjs', timeoutMs: 120000 },
   { name: 'search', file: 'search-probe.mjs', timeoutMs: 120000 },
+  // The inline-help notes are the one feature whose whole job is to be seen. A probe that only
+  // checked the CSS existed would pass while nothing was ever visible to anyone.
+  { name: 'help', file: 'help-probe.mjs', timeoutMs: 120000 },
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },

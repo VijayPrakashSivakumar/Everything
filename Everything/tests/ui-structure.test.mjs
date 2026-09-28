@@ -1698,11 +1698,43 @@ check('dictation language is chosen, not inherited from the browser', () => {
   assert.match(js, /language: kind === "voice" && captureVoiceLanguage/, 'the dictated language is not saved');
 });
 
+/* Everything in the stylesheet that is NOT inside an @media block.
+ *
+ * The intent of the checks below is "this rule must exist unconditionally, not only on a phone".
+ * They used to ask for `css.slice(0, css.indexOf('@media (max-width'))`, which silently assumed
+ * no media query appears before the rules being checked — so adding one `@media (max-width: 480px)`
+ * block near the top of the file for an unrelated feature made two language-picker checks report
+ * the base rules as missing, when they were present and fine all along.
+ *
+ * This strips the media blocks by brace count instead, so the answer no longer depends on where
+ * anything happens to sit in the file. */
+function cssOutsideMediaQueries(source) {
+  let out = '';
+  let depth = 0;
+  let i = 0;
+  while (i < source.length) {
+    const at = source.indexOf('@media', i);
+    if (at === -1) { out += depth ? '' : source.slice(i); break; }
+    if (!depth) out += source.slice(i, at);
+    // Walk the block, counting braces, so a nested brace or a string cannot end it early.
+    const open = source.indexOf('{', at);
+    if (open === -1) break;
+    let d = 0;
+    let j = open;
+    for (; j < source.length; j += 1) {
+      if (source[j] === '{') d += 1;
+      else if (source[j] === '}') { d -= 1; if (d === 0) { j += 1; break; } }
+    }
+    i = j;
+  }
+  return out;
+}
+const cssBaseRules = cssOutsideMediaQueries(css);
+
 check('the language picker is styled on desktop, not only on phones', () => {
   // Styles added inside the 900px block would leave the desktop capture sheet unstyled.
-  const base = css.slice(0, css.indexOf('@media (max-width'));
-  assert.match(base, /\.voice-lang-block\s*\{/, '.voice-lang-block must have a base rule');
-  assert.match(base, /#voiceLangRow\s*\{/, '#voiceLangRow must have a base rule');
+  assert.match(cssBaseRules, /\.voice-lang-block\s*\{/, '.voice-lang-block must have a base rule');
+  assert.match(cssBaseRules, /#voiceLangRow\s*\{/, '#voiceLangRow must have a base rule');
 });
 
 check('image text reading is local, opt-in and cannot break capture', () => {
@@ -1724,8 +1756,7 @@ check('image text reading is local, opt-in and cannot break capture', () => {
 });
 
 check('the OCR language picker is styled and reset with the capture sheet', () => {
-  const base = css.slice(0, css.indexOf('@media (max-width'));
-  assert.match(base, /#voiceLangRow\s*\{/, 'language chip styles are missing');
+  assert.match(cssBaseRules, /#voiceLangRow\s*\{/, 'language chip styles are missing');
   assert.match(js, /renderOcrLanguages\(\);/, 'the OCR language picker is never rendered on open');
   assert.match(js, /imageOcrText = "";[\s\S]{0,200}?renderOcrLanguages\(\);/, 'OCR state must reset when the sheet opens');
 });

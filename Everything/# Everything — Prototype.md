@@ -51,6 +51,7 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - **Back navigation** — swipe-back walks the pages and unwinds nested layers; see
   *Mobile back navigation*.
 - **Themes** — four looks over one set of design tokens; see *Themes*.
+- **Inline help** — an "i" beside the fields that are not self-explanatory; see *Inline help*.
 
 ## Mobile back navigation
 
@@ -691,6 +692,45 @@ can see which one actually answered.
 
 > Fallback only covers *provider* failures. If you exceed a token limit on every configured
 > provider, Ask falls back to local keyword results.
+
+## Inline help
+
+A field whose meaning is not obvious gets an **"i"** beside its label. Tap it and a note explains
+what the field actually does; tap again, press Escape, or tap anywhere else and it goes away. The
+notes answer the question the field does not answer on its own — *what does "Repeats" do when I
+finish the task?* — rather than restating the label.
+
+**Hover is not enough, and that is the whole design problem.** This app is mostly opened on a
+phone, where there is no `mouseenter` at all. So the two cases are split on purpose: `:hover` is
+applied only inside `@media (hover: hover) and (pointer: fine)`, and the tap-to-toggle works
+everywhere. Without that split, tapping on a touch device leaves the element in a stuck `:hover`
+state and the bubble never closes.
+
+Three details that were wrong first and are easy to get wrong again:
+
+- **Clicking the icon shut has to beat `:hover`.** On a desktop the pointer is still resting on the
+  dot, so a plain close is invisible and the control feels broken. `.is-dismissed` holds it shut and
+  is lifted when the pointer leaves.
+- **`--tip-shift` is declared on `.info-tip`, not on the bubble.** The bubble is what moves, but
+  `positionTip()` writes the value to its parent — and a custom property declared *inside* the
+  bubble would shadow the inherited inline value, leaving the edge clamp silently inert.
+- **The tail travels with the bubble.** Nudged inwards to stay on a 390px screen, a tail left at
+  `left: 50%` would point at empty space.
+
+The notes themselves live in one `FIELD_HELP` map in `script.js`, keyed by control id, so the copy
+can be reviewed in one place and a field can never carry a tip describing something else. The
+bubble is built from design tokens, so it reads correctly in all ten themes with no per-theme rule.
+
+`help-probe.mjs` drives the real thing: it asserts the bubble is genuinely **visible** (opacity and
+`visibility`, not merely present in the DOM), that a second tap closes it, that Escape and an
+outside tap close it, that only one is ever open, that it fits a 390px screen when tapped on a
+phone, and that its own text clears 3:1 on its own background in every theme. A probe that only
+checked the CSS existed would pass while nothing was ever visible to anyone.
+
+**Side effect worth knowing:** the labels for these fields had no `for`, so they were not associated
+with their controls at all — clicking a label did not focus the field, and a screen reader had no
+name for it. Eighteen labels are now associated, which is an accessibility fix independent of the
+tooltips.
 
 ## Note on multi-user sync
 The app runs as a static site with Supabase for accounts and shared data, Vercel serverless

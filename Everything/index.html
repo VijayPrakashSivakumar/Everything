@@ -1167,7 +1167,7 @@
                     </div>
 
                     <div style="margin-top: 14px">
-                      <label style="font-size: 12.5px; color: var(--muted)">Model</label>
+                      <label style="font-size: 12.5px; color: var(--muted)" for="localModelSelect">Model</label>
                       <select
                         class="capture-input"
                         id="localModelSelect"
@@ -1497,7 +1497,7 @@
           <span class="field-label">Status</span><span id="panelStatus"></span>
         </div>
         <div class="field-row task-only" id="panelTaskStatusRow" hidden>
-          <span class="field-label">Workflow</span>
+          <label class="field-label" for="panelStatusSelect">Workflow</label>
           <select
             id="panelStatusSelect"
             class="task-select"
@@ -1725,7 +1725,7 @@
 
         <!-- Smart capture suggestions: every value is editable before saving. -->
         <div class="capture-hint-row">
-          <label class="capture-smart-toggle">
+          <label class="capture-smart-toggle" for="captureSmartEnabled">
             <input
               type="checkbox"
               id="captureSmartEnabled"
@@ -1793,7 +1793,7 @@
         >
           <!-- Priority -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label for="capturePriority" style="font-size: 12.5px; color: var(--muted)">
               Priority
             </label>
 
@@ -1818,7 +1818,7 @@
 
           <!-- Due date & time -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label style="font-size: 12.5px; color: var(--muted)" for="captureDueDate">
               Due date & time
             </label>
 
@@ -1842,7 +1842,7 @@
         >
           <!-- Repeats -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label style="font-size: 12.5px; color: var(--muted)" for="captureRecurrence">
               Repeats
             </label>
 
@@ -1867,7 +1867,7 @@
 
           <!-- Person -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label style="font-size: 12.5px; color: var(--muted)" for="capturePerson">
               Person
             </label>
 
@@ -1882,12 +1882,12 @@
 
         <!-- Project -->
         <div style="margin-top: 10px">
-          <label style="font-size: 12.5px; color: var(--muted)">
+          <label style="font-size: 12.5px; color: var(--muted)" for="captureProject">
             Project (optional)
           </label>
 
           <select
-            id="captureProject"
+              id="captureProject"
             style="
               width: 100%;
               padding: 9px;
@@ -1958,7 +1958,7 @@
         >
           <!-- Priority -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label style="font-size: 12.5px; color: var(--muted)" for="editPriority">
               Priority
             </label>
 
@@ -1983,7 +1983,7 @@
 
           <!-- Due date & time -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label style="font-size: 12.5px; color: var(--muted)" for="editDueDate">
               Due date & time
             </label>
 
@@ -2007,7 +2007,7 @@
         >
           <!-- Repeats -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label style="font-size: 12.5px; color: var(--muted)" for="editRecurrence">
               Repeats
             </label>
 
@@ -2032,7 +2032,7 @@
 
           <!-- Person -->
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">
+            <label style="font-size: 12.5px; color: var(--muted)" for="editPerson">
               Person
             </label>
 
@@ -2047,12 +2047,12 @@
 
         <!-- Project -->
         <div id="editProjectContainer" style="margin-top: 10px">
-          <label style="font-size: 12.5px; color: var(--muted)">
+          <label style="font-size: 12.5px; color: var(--muted)" for="editProject">
             Project
           </label>
 
           <select
-            id="editProject"
+              id="editProject"
             style="
               width: 100%;
               padding: 9px;
@@ -2067,12 +2067,12 @@
 
         <!-- Goal -->
         <div id="editGoalContainer" style="margin-top: 10px">
-          <label style="font-size: 12.5px; color: var(--muted)">
+          <label style="font-size: 12.5px; color: var(--muted)" for="editGoal">
             Goal
           </label>
 
           <select
-            id="editGoal"
+              id="editGoal"
             style="
               width: 100%;
               padding: 9px;
@@ -2118,9 +2118,9 @@
             <i data-lucide="x" aria-hidden="true"></i>
           </button>
         </div>
-        <label style="font-size: 12.5px; color: var(--muted)">Notes</label>
+        <label style="font-size: 12.5px; color: var(--muted)" for="personNotes">Notes</label>
         <textarea
-          id="personNotes"
+              id="personNotes"
           placeholder="Anything worth remembering about them…"
           style="
             width: 100%;
@@ -2141,16 +2141,16 @@
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px">
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">Phone</label>
+            <label style="font-size: 12.5px; color: var(--muted)" for="personPhone">Phone</label>
             <input class="capture-input" id="personPhone" placeholder="+91 90000 00000" style="margin: 4px 0 0" />
           </div>
           <div>
-            <label style="font-size: 12.5px; color: var(--muted)">Email</label>
+            <label style="font-size: 12.5px; color: var(--muted)" for="personEmail">Email</label>
             <input class="capture-input" id="personEmail" placeholder="name@example.com" style="margin: 4px 0 0" />
           </div>
         </div>
         <div style="margin-top: 8px">
-          <label style="font-size: 12.5px; color: var(--muted)">Birthday</label>
+          <label style="font-size: 12.5px; color: var(--muted)" for="personBirthday">Birthday</label>
           <input class="capture-input" id="personBirthday" type="date" style="margin: 4px 0 0" />
         </div>
         <div class="card-head" style="margin-top: 14px">
