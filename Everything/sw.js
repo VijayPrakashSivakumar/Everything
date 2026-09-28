@@ -45,6 +45,68 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
+/* ---------- share target ----------
+
+   A share target receives a POST, not a navigation. A POST to a page has nowhere to render, so
+   without this the share opens Everything and silently drops whatever was shared. The shared text
+   is stashed in Cache Storage and the page is redirected to collect it.
+
+   This is a second, separate fetch listener on purpose: it only ever claims a POST carrying
+   `?share=1`, and everything else falls straight through to the routing below untouched. */
+const SHARE_KEY = './__shared-capture__';
+
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'POST') return;
+
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch (e) {
+    return;
+  }
+  if (url.searchParams.get('share') !== '1') return;
+
+  event.respondWith(stashSharedCapture(request));
+});
+
+async function stashSharedCapture(request) {
+  let text = '';
+  let title = '';
+  let link = '';
+  let imageCount = 0;
+
+  try {
+    const form = await request.formData();
+    text = typeof form.get('text') === 'string' ? form.get('text') : '';
+    title = typeof form.get('title') === 'string' ? form.get('title') : '';
+    link = typeof form.get('url') === 'string' ? form.get('url') : '';
+    form.forEach((value) => {
+      // A shared photo arrives as a File, not a string. It is counted, not kept: holding the bytes
+      // in Cache Storage would pin a photo per share, and the capture sheet takes its own file
+      // through the normal picker instead.
+      if (typeof value !== 'string') imageCount += 1;
+    });
+  } catch (e) {
+    /* A malformed share must not break the app — the page simply opens empty. */
+  }
+
+  // Title, text and link are joined so the reader sees the whole sentence. Sharing a page sends a
+  // title and a URL and no text, and reading only the title would throw the link away.
+  const combined = [text, title, link].filter(Boolean).join('\n');
+
+  const cache = await caches.open(REMINDER_CACHE);
+  await cache.put(
+    SHARE_KEY,
+    new Response(JSON.stringify({ text, title, url: link, imageCount, combined }), {
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  );
+
+  // 303 so the browser follows it with a GET, as a redirect after a POST must.
+  return Response.redirect('./?share=1', 303);
+}
+
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
@@ -476,6 +538,27 @@ self.addEventListener('message', event => {
 
   if (data.type === 'CHECK_REMINDERS') {
     event.waitUntil(checkMissedReminders());
+    return;
+  }
+
+  /* Hand the shared capture to the page exactly once. Deleting it here, before replying, is what
+     makes a share single-use: without that, every reload would reopen the sheet with the same
+     words, which is a very annoying way to lose a reload. */
+  if (data.type === 'READ_SHARE') {
+    event.waitUntil((async () => {
+      const cache = await caches.open(REMINDER_CACHE);
+      const hit = await cache.match(SHARE_KEY);
+      let shared = null;
+      if (hit) {
+        try {
+          shared = await hit.json();
+        } catch (e) {
+          shared = null;
+        }
+        await cache.delete(SHARE_KEY);
+      }
+      if (event.ports && event.ports[0]) event.ports[0].postMessage(shared);
+    })());
     return;
   }
 

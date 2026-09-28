@@ -732,6 +732,56 @@ with their controls at all — clicking a label did not focus the field, and a s
 name for it. Eighteen labels are now associated, which is an accessibility fix independent of the
 tooltips.
 
+## Share target — capture from any app
+
+Smart capture is only useful if you can reach it at the moment the thought arrives. Dictation was
+that moment on a phone; **sharing is that moment in every other app.** Share a message, a page, or a
+photo to Everything, and it lands in the capture sheet.
+
+```json
+"share_target": { "action": "./?share=1", "method": "POST", "enctype": "multipart/form-data" }
+```
+
+### It is captured and *read*, not just filed
+
+Shared text goes through `onCaptureInput()` — the same entry point as typing and dictation. So
+sharing **"call Ravi tomorrow"** from a chat arrives as a **task with a person and a date**, exactly
+as if you had typed it. Routing it anywhere else would make sharing a second-class way to capture,
+which defeats the point of adding it.
+
+A shared page arrives as a title *and* a URL, and both are joined: reading only the title would
+throw the link away. The URL is then placed in the link field, where it is validated as a URL.
+
+A shared **photo** is counted and reported, not kept. Holding the bytes in Cache Storage would pin a
+photo per share, so instead the capture sheet says one was shared and lets you attach it through the
+normal picker — which keeps the OCR path, the upload and the reading all on their existing,
+tested rails.
+
+### The two non-obvious parts
+
+**A share is a top-level navigation, not a fetch.** The OS opens the app *at* the share target and
+POSTs to it, and a POST has nowhere to render. The service worker intercepts it, stashes the fields
+in Cache Storage, and answers `303` to `./?share=1`; the browser then makes a real GET and the page
+loads on that URL. The first version of the probe used `fetch()`, which followed the redirect
+silently, left the page on its old URL, and never ran the collection code at all — a green test for
+a completely dead feature. The probe now submits a **real form**, because that is what the OS does.
+
+**A share is collected exactly once.** The worker deletes the entry as it replies, so a reload finds
+nothing. Without that, every reload would reopen the sheet with the same words — a very annoying way
+to lose a reload.
+
+### The cache trap
+
+A share target added without bumping the shell cache is **invisible to anyone who already installed
+the app**: the worker keeps serving the old manifest and the OS simply never offers to share. It
+looks broken on a phone and fine on a laptop. The probe asserts the *cached* manifest is current,
+not just the one on disk, so this cannot regress quietly.
+
+`share-target-probe.mjs` drives the real worker with a real form navigation at 390px: that the
+manifest declares a POST share target, that the shell cache carries it, that a shared sentence is
+read into the sheet, that a shared link keeps its URL, that a reload does not replay it, and that
+sharing nothing does not open a blank sheet.
+
 ## The morning digest
 
 The app was **pull-based only**: you open it, and it tells you what's on. That works right up until

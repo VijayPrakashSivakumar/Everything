@@ -7600,6 +7600,72 @@ function applyLaunchShortcut() {
   if (params.get("capture") === "1") openCapture();
 }
 
+/* ---------- share target ----------
+
+   Asks the service worker for anything that was shared into the app. The worker deletes it as it
+   replies, so this is single-use: a reload finds nothing and leaves the capture sheet alone. */
+async function readSharedCapture() {
+  if (!("serviceWorker" in navigator)) return null;
+  const reg = await serviceWorkerRegistration();
+  if (!reg || !reg.active) return null;
+
+  const channel = new MessageChannel();
+  const reply = new Promise((resolve) => {
+    channel.port1.onmessage = (event) => resolve(event.data || null);
+  });
+  try {
+    reg.active.postMessage({ type: "READ_SHARE" }, [channel.port2]);
+  } catch (e) {
+    return null;
+  }
+  // A worker that never answers must not leave the app waiting forever.
+  return Promise.race([reply, new Promise((resolve) => setTimeout(() => resolve(null), 1500))]);
+}
+
+/* Shared text is captured, not just filed.
+
+   This deliberately goes through onCaptureInput() — the same entry point as typing and dictation —
+   so a sentence shared from a message is *read* exactly like one you typed: "Call Ravi tomorrow"
+   arrives as a task with a person and a date, not as a wall of text in the inbox. Routing it
+   anywhere else would make sharing a second-class way to capture, which is the whole point of it. */
+async function applySharedCapture() {
+  if (!new URLSearchParams(location.search).has("share")) return;
+
+  const shared = await readSharedCapture();
+  if (!shared || !shared.combined) return;
+
+  if (syncReadyPromise) {
+    try {
+      await syncReadyPromise;
+    } catch (e) {
+      /* The capture sheet still works without the data layer. */
+    }
+  }
+
+  openCapture();
+  const input = document.getElementById("captureText");
+  if (!input) return;
+
+  input.value = shared.combined;
+  onCaptureInput();
+  setCaptureHint(
+    icon("share-2") +
+      (shared.imageCount
+        ? ` Shared from another app${shared.imageCount > 1 ? ` with ${shared.imageCount} images` : ""}.`
+        : " Shared from another app."),
+  );
+  if (shared.url) {
+    // A shared page is a link, and links are captured in their own field, validated as URLs.
+    const linkInput = document.getElementById("linkUrlInput");
+    if (linkInput) linkInput.value = shared.url;
+  }
+  if (shared.imageCount) {
+    setVoiceDictationStatus(
+      "An image was shared too. Choose it below to read its text and add it to this capture.",
+    );
+  }
+}
+
 /* ---------- Theme ----------
 
    Two independent axes. `data-theme` keeps its original light/dark meaning and every rule that
@@ -8873,6 +8939,7 @@ initTheme();
 initBackNavigation();
 initInfoTips();
 applyLaunchShortcut();
+applySharedCapture();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker
     .register("./sw.js", { scope: "./" })

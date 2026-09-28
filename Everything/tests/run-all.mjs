@@ -43,6 +43,8 @@ const SUITES = [
   { name: 'nextaction', file: 'next-action-probe.mjs', timeoutMs: 120000 },
   // Mostly about silence: a daily notification that nags is worse than none.
   { name: 'digest', file: 'morning-digest-probe.mjs', timeoutMs: 120000 },
+  // Sharing must be a real top-level navigation, or the test passes while the feature is dead.
+  { name: 'share', file: 'share-target-probe.mjs', timeoutMs: 180000 },
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },
