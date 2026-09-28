@@ -7584,21 +7584,6 @@ async function showLocalNotification(title, options) {
   }
 }
 
-function requestNotifications() {
-  if (!("Notification" in window)) {
-    alert("Notifications aren't supported in this browser.");
-    return;
-  }
-
-  Notification.requestPermission().then((perm) => {
-    updateNotifBtn();
-    if (perm === "granted") {
-      new Notification("Everything", {
-        body: "Reminders are on — you'll get notified when tasks are due.",
-      });
-    }
-  });
-}
 function getNotificationItems() {
   return state.items.filter(
     (i) =>

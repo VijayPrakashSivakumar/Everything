@@ -717,6 +717,20 @@ or happy-path test will show, so the invariant is now asserted rather than remem
 to be opened as a shared collection, subscribed with `onSnapshot`, and present as a key in the state
 that path builds. Adding a fifth collection without wiring it up fails the suite.
 
+The same reasoning is why `dead-code-audit.mjs` exists, and why it runs as a suite (`npm test` → the
+`deadcode` row). Anything that merely looks plausible — a function nothing calls, a class nothing
+applies, a route the client never requests, an npm script pointing at a deleted file — is reported
+with the counts behind it, so a finding can be argued with instead of trusted. Two details matter:
+
+- **`--debug` is a self-check.** It prints tallies for names that are definitely live. An audit that
+  cries wolf is worse than none, because the reader learns to skip it, and that is exactly how a
+  real finding gets missed.
+- **"used only by a test" is not dead.** A function kept alive by a probe is a reason to keep it. It
+  is reported in its own bucket and does not fail the run.
+
+`/api/health` is whitelisted as an operations endpoint. The page never calls it — monitoring, a
+deploy check or a person with curl does — so flagging it every run would be noise.
+
 ## Pushing to GitHub
 
 ```bash
