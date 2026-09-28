@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node Everything/tests/ui-structure.test.mjs && node Everything/tests/ask-adapter.test.mjs && node Everything/tests/mobile-audit.mjs && node Everything/tests/plan-probe.mjs && node Everything/tests/plan-visual.mjs && node Everything/tests/autosave-probe.mjs && node Everything/tests/theme-probe.mjs && node Everything/tests/back-nav-probe.mjs && node Everything/tests/search-probe.mjs",
+    "test": "node Everything/tests/run-all.mjs",
     "test:plan": "node Everything/tests/plan-probe.mjs",
     "test:visual": "node Everything/tests/plan-visual.mjs",
     "test:autosave": "node Everything/tests/autosave-probe.mjs",

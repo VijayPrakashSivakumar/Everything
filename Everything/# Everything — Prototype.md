@@ -489,10 +489,41 @@ node Everything/tests/back-nav-probe.mjs       # history stack, layers, the menu
 node Everything/tests/search-probe.mjs        # exact-first ranking, plurals, typos, speed
 ```
 
-`npm test` runs all of them, plus the mobile audit. The two plan checks need Playwright (already a
-dev dependency) and start their own static server (ports 4399 and 4402); they mock `/api/ask`, so
-they need no API key and make no model call. `plan-visual.mjs` writes `tmp/plan-desktop.png` and
-`tmp/plan-mobile.png` so the layout can be looked at rather than inferred.
+`npm test` runs all nine through `Everything/tests/run-all.mjs`. The two plan checks need Playwright
+(already a dev dependency) and start their own static server (ports 4399 and 4402); they mock
+`/api/ask`, so they need no API key and make no model call. `plan-visual.mjs` writes
+`tmp/plan-desktop.png` and `tmp/plan-mobile.png` so the layout can be looked at rather than inferred.
+
+```bash
+npm install && npx playwright install chromium   # once, before the browser suites
+npm test                                          # all nine, with a summary
+node Everything/tests/run-all.mjs ask mobile      # only the named suites
+node Everything/tests/run-all.mjs --bail          # stop at the first failure
+```
+
+**Why the runner exists rather than a `&&` chain.** The old script was
+`node a.mjs && node b.mjs && …`, and `&&` ends the run at the first non-zero exit — including a
+suite that never started. Playwright was declared in `devDependencies` but had not been installed,
+so `plan-probe.mjs` died with `ERR_MODULE_NOT_FOUND` and the **six suites after it never ran at
+all**. The output simply stopped mid-list, which reads like a finished run: two thirds of the
+browser coverage vanished silently, and the exit code was the only clue.
+
+`run-all.mjs` runs every suite regardless, each under its own 120s timeout so a hung browser or a
+hung socket cannot block the terminal, and classifies the outcome per suite:
+
+| Result | Meaning |
+| --- | --- |
+| `PASSED` | the suite ran and its own banner confirms every check |
+| `FAILED` | it ran and something failed, or it could not start for a real reason |
+| `SKIPPED` | a dependency is missing, named in the line — missing coverage, **not** a pass |
+| `TIMEOUT` | it exceeded its budget and was killed |
+
+It prints `N of 9 suites ran` and exits non-zero if any suite was skipped, so a partial run can
+never read as a green one. Set `ALLOW_SKIP=1` to accept a partial run deliberately.
+
+`mobile-audit.mjs` is the one exception: it drives the installed Google Chrome over the DevTools
+protocol using only Node's standard library, so it needs no `npm install` and keeps working on a
+machine that has never run one.
 
 The second suite has an opt-in live probe that checks the deployed database really does expose an
 orderable created column on every table:
