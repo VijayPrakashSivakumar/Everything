@@ -104,6 +104,17 @@ export default async function handler(req, res) {
       });
     }
 
+    // The daily digest rides on this same run, because this is the only moment the server is awake
+    // to reach a phone with the app closed. It is counted, never allowed to fail the run: a broken
+    // digest must not cost anyone their reminders.
+    let digest = { attempted: 0, delivered: 0, skipped: 0 };
+    try {
+      digest = await deliverDailyDigests(now);
+    } catch (error) {
+      console.error('morning digest failed:', error);
+      digest = { attempted: 0, delivered: 0, skipped: 0, error: String(error.message || error) };
+    }
+
     return res.status(200).json({
       ok: true,
       checked: items.length,
@@ -111,6 +122,7 @@ export default async function handler(req, res) {
       delivered,
       failed,
       skipped,
+      digest,
       window: { from: sinceIso, to: nowIso }
     });
   } catch (error) {
@@ -156,6 +168,227 @@ function safeJson(text) {
   } catch (error) {
     return {};
   }
+}
+
+/* ---------- the daily digest ----------
+
+   The client sends this while the app is open. The server sends it with the app genuinely closed,
+   which is the only way a digest can reach a phone that has not been opened. Both legs must obey the
+   same rules — see buildDigest and the quiet checks below — or the app would argue with itself
+   about whether a day was worth mentioning.
+
+   Deliberately per-user rather than per-household: the digest says "you have three overdue", and
+   your partner's overdue items are not yours to be nagged about. */
+
+const DIGEST_WAITING_STALE_DAYS = 14;
+const DIGEST_MAX_NAMES = 3;
+const DIGEST_SEND_HOUR = 8;
+
+function digestTimeZoneOffset(item) {
+  const tz = String((item && item.timezone) || process.env.REMINDER_TIMEZONE || 'UTC');
+  try {
+    return tz;
+  } catch (error) {
+    return 'UTC';
+  }
+}
+
+/* Local hour and calendar day for a subscriber, so "8am" means 8am where the person is. A digest
+   that fires at 8am UTC reaches 3am in India, and a notification at 3am is how a feature gets muted
+   for good. */
+function localHourAndDay(date, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour12: false
+    }).formatToParts(date);
+
+    const get = (type) => (parts.find(p => p.type === type) || {}).value || '';
+    const hour = Number(get('hour'));
+    return {
+      hour: hour === 24 ? 0 : hour,
+      minute: Number(get('minute')) || 0,
+      day: `${get('year')}-${get('month')}-${get('day')}`
+    };
+  } catch (error) {
+    return { hour: date.getUTCHours(), minute: 0, day: date.toISOString().slice(0, 10) };
+  }
+}
+
+function isOverdueItem(item, now) {
+  if (!item || item.done || item.archived_at) return false;
+  if (!item.due_date) return false;
+  const due = new Date(item.due_date).getTime();
+  if (!Number.isFinite(due) || due >= now) return false;
+  // Not overdue on its own day — the same rule as the client's isOverdue, so the two agree.
+  return !sameLocalDay(new Date(due), new Date(now), digestTimeZoneOffset(item));
+}
+
+function sameLocalDay(a, b, timeZone) {
+  return localHourAndDay(a, timeZone).day === localHourAndDay(b, timeZone).day;
+}
+
+function isDueTodayItem(item, now) {
+  if (!item || item.done || item.archived_at) return false;
+  if (!item.due_date) return false;
+  if (isOverdueItem(item, now)) return false;
+  return sameLocalDay(new Date(item.due_date), new Date(now), digestTimeZoneOffset(item));
+}
+
+function isStaleWaitingItem(item, now) {
+  if (!item || item.done || item.archived_at) return false;
+  if (item.kind !== 'waiting' || item.due_date) return false;
+  const created = new Date(item.created || 0).getTime();
+  if (!Number.isFinite(created) || created <= 0) return false;
+  return created < now - DIGEST_WAITING_STALE_DAYS * 86400000;
+}
+
+function buildDigest(items, now) {
+  const overdue = items.filter(item => isOverdueItem(item, now));
+  const dueToday = items.filter(item => isDueTodayItem(item, now));
+  const staleWaiting = items.filter(item => isStaleWaitingItem(item, now));
+
+  // The quiet rule. Nothing needs you, so nothing is sent — same as the client.
+  if (!overdue.length && !dueToday.length && !staleWaiting.length) return null;
+
+  const parts = [];
+  if (overdue.length) parts.push(`${overdue.length} overdue`);
+  if (dueToday.length) parts.push(`${dueToday.length} due today`);
+  if (staleWaiting.length) parts.push(`${staleWaiting.length} waiting too long`);
+
+  const ranked = [
+    ...overdue.map(item => ({ item, rank: 0 })),
+    ...dueToday.map(item => ({ item, rank: 1 })),
+    ...staleWaiting.map(item => ({ item, rank: 2 }))
+  ].sort((a, b) => a.rank - b.rank);
+
+  const named = ranked
+    .slice(0, DIGEST_MAX_NAMES)
+    .map(entry => (entry.item.title || '').trim())
+    .filter(Boolean);
+  const rest = ranked.length - named.length;
+
+  return {
+    title: `Good morning · ${parts.join(' · ')}`,
+    body: named.length
+      ? `${named.join(' · ')}${rest > 0 ? ` · and ${rest} more` : ''}`
+      : parts.join(' · '),
+    counts: {
+      overdue: overdue.length,
+      dueToday: dueToday.length,
+      staleWaiting: staleWaiting.length
+    }
+  };
+}
+
+function digestPayload(digest) {
+  return JSON.stringify({
+    title: digest.title,
+    body: digest.body,
+    url: './?view=today',
+    digest: true,
+    // The same tag as the client, so a digest from the server replaces one already on screen
+    // instead of stacking a second identical notification underneath it.
+    tag: 'everything-morning-digest',
+    data: { url: './?view=today', digest: true }
+  });
+}
+/* Whether a user has opted in, and whether today's digest already went out. The row is the whole
+   memory: no row means off, which is the safe default for a feature that must never appear
+   uninvited. Kept separate from notification_log so the daily send is a single keyed row rather
+   than a query over an ever-growing audit table. */
+async function fetchDigestPreferences() {
+  const primary = await supabase
+    .from('digest_preferences')
+    .select('*')
+    .eq('enabled', true);
+
+  if (!primary.error) return primary.data || [];
+
+  // A database that has not run migration 008 yet simply has no digests, which is exactly the
+  // behaviour we want: absent schema must degrade to silence, not to an error every hour.
+  if (isMissingColumn(primary.error) || isMissingRelation(primary.error)) return [];
+
+  throw new Error(primary.error.message);
+}
+
+function isMissingRelation(error) {
+  const code = (error && error.code) || '';
+  return code === '42P01' || /does not exist/i.test((error && error.message) || '');
+}
+
+async function deliverDailyDigests(now) {
+  const preferences = await fetchDigestPreferences();
+  if (!preferences.length) return { attempted: 0, delivered: 0, skipped: 0, quiet: 0, early: 0 };
+
+  const result = { attempted: 0, delivered: 0, skipped: 0, quiet: 0, early: 0 };
+
+  for (const pref of preferences) {
+    if (!pref.user_id) continue;
+    result.attempted += 1;
+
+    const timeZone = pref.timezone || 'UTC';
+    const local = localHourAndDay(new Date(now), timeZone);
+
+    // Before the hour the person chose. A digest at 3am is worse than no digest at all.
+    if (local.hour < DIGEST_SEND_HOUR) {
+      result.early += 1;
+      continue;
+    }
+
+    // One a day, by the day key in their own timezone. UTC would send it twice, or at 3am.
+    if (local.day === pref.last_sent_on) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const { data: items } = await supabase
+      .from('items')
+      .select('*')
+      .eq('owner_id', pref.user_id)
+      .eq('done', false);
+
+    const open = (items || []).filter(item => !item.archived_at);
+    const digest = buildDigest(open, now);
+
+    if (!digest) {
+      // Nothing needed them. The day is deliberately NOT recorded as sent, so something that
+      // becomes due later today is still mentioned — the same rule the client follows.
+      result.quiet += 1;
+      continue;
+    }
+
+    const { data: subscriptions } = await supabase
+      .from('push_subscriptions')
+      .select('*')
+      .eq('user_id', pref.user_id)
+      .eq('enabled', true);
+
+    const rows = (subscriptions || []).filter(row => row.subscription && row.subscription.endpoint);
+    if (!rows.length) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const sent = await sendToSubscriptions(rows, digestPayload(digest));
+    result.delivered += sent.sent;
+
+    if (sent.sent) {
+      // Only a real send marks the day, so a failed push is retried on the next run rather than
+      // silently skipped for the rest of the day.
+      await supabase
+        .from('digest_preferences')
+        .update({ last_sent_on: local.day, last_sent_at: new Date(now).toISOString() })
+        .eq('user_id', pref.user_id);
+    }
+  }
+
+  return result;
 }
 
 /* Prefer items.reminder_at (snooze-aware) and fall back to due_date so the endpoint

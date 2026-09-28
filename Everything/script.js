@@ -972,6 +972,9 @@ async function startSupabaseSync(userId) {
   renderGoals();
   renderNav();
   renderReports();
+  // Review renders itself rather than waiting to be visited, so the nav badge and any deep link
+  // into it are correct from a cold load.
+  renderReview();
 
   structuredChannels.push(
     sb.channel("projects-sync")
@@ -1552,6 +1555,7 @@ const NAV = [
   { id: "people", icon: "users", label: "People" },
   { id: "projects", icon: "folder-kanban", label: "Projects" },
   { id: "goals", icon: "target", label: "Goals" },
+  { id: "review", icon: "clipboard-check", label: "Review" },
   { id: "reports", icon: "chart-no-axes-combined", label: "Reports" },
   { id: "insights", icon: "sparkles", label: "Insights" },
   { id: "logout", icon: "log-out", label: "Logout", divider: true },
@@ -2335,6 +2339,7 @@ function switchView(id, options = {}) {
   closeSidebar();
   if (id === "schedule") renderCalendar();
   if (id === "reports") renderReports();
+  if (id === "review") renderReview();
   if (id === "projects") renderProjects();
   if (id === "goals") renderGoals();
   if (id === "tasks") renderTasks();
@@ -3625,6 +3630,145 @@ function logCompletion(id, done) {
    captured. */
 function completedWhen(item) {
   return item.completedAt || doneLog[item.id] || item.created;
+}
+
+const REVIEW_DONE_DAYS = 7;
+const REVIEW_QUIET_PROJECT_DAYS = 14;
+
+function renderReview() {
+  const statsEl = document.getElementById("reviewStats");
+  if (!statsEl) return;
+
+  const now = Date.now();
+  const open = currentItems().filter((item) => !item.done && !isArchived(item));
+
+  const overdue = open.filter((item) => isOverdue(item));
+  const staleWaiting = open.filter(
+    (item) =>
+      item.kind === "waiting" &&
+      !item.dueDate &&
+      Number(item.created || 0) > 0 &&
+      Number(item.created) < now - REVIEW_QUIET_PROJECT_DAYS * 86400000,
+  );
+  // Overdue and stale waiting rarely overlap; if they do, the item is listed once, not twice.
+  const stuck = [...overdue, ...staleWaiting]
+    .filter((item, index, list) => list.findIndex((o) => o.id === item.id) === index)
+    .sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0) || a.created - b.created);
+
+  const doneWeek = currentItems()
+    .filter((item) => item.done && !isArchived(item))
+    .filter((item) => completedWhen(item) >= now - REVIEW_DONE_DAYS * 86400000)
+    .sort((a, b) => completedWhen(b) - completedWhen(a));
+
+  // Open work with no day and no rhythm: it can never surface on its own, so nothing else in the
+  // app will ever mention it. This is the same gap the next-step card and the digest both look for.
+  const undated = open.filter(
+    (item) =>
+      !item.dueDate &&
+      !item.recurrence &&
+      (item.kind === "task" || item.kind === "waiting"),
+  );
+
+  statsEl.innerHTML = `
+    <div class="stat-card"><div class="stat-icon" style="background:var(--red-bg);color:var(--red-fg);"><i data-lucide="triangle-alert"></i></div><div><div class="stat-num">${stuck.length}</div><div class="stat-label">Need a decision</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${doneWeek.length}</div><div class="stat-label">Finished this week</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);"><i data-lucide="calendar-x"></i></div><div><div class="stat-num">${undated.length}</div><div class="stat-label">No next step</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${open.length}</div><div class="stat-label">Open</div></div></div>
+  `;
+  refreshIcons();
+
+  const stuckEl = document.getElementById("reviewStuck");
+  if (stuckEl) {
+    stuckEl.innerHTML = stuck.length
+      ? stuck
+          .slice(0, 12)
+          .map(
+            (item) => `<div class="task-row" onclick="openPanel(${jsStr(item.id)})" style="cursor:pointer">
+        <div class="task-meta"><div class="task-title">${escapeHtml(item.title)}</div>
+        <div class="task-sub">${escapeHtml(reviewStuckReason(item))}</div></div></div>`,
+          )
+          .join("") +
+        (stuck.length > 12
+          ? `<p class="empty">and ${stuck.length - 12} more — open the view they belong to.</p>`
+          : "")
+      : '<p class="empty">Nothing is stuck. That is a good week.</p>';
+  }
+
+  const doneEl = document.getElementById("reviewDone");
+  if (doneEl) {
+    doneEl.innerHTML = doneWeek.length
+      ? doneWeek
+          .slice(0, 12)
+          .map(
+            (item) => `<div class="task-row"><div class="checkbox checked">${icon("check")}</div>
+        <div class="task-meta"><div class="task-title">${escapeHtml(item.title)}</div>
+        <div class="task-sub">Finished ${timeAgo(completedWhen(item))}</div></div></div>`,
+          )
+          .join("")
+      : '<p class="empty">Nothing finished in the last 7 days.</p>';
+  }
+
+  const projectsEl = document.getElementById("reviewProjects");
+  if (projectsEl) projectsEl.innerHTML = reviewQuietProjects(now);
+
+  const undatedEl = document.getElementById("reviewUndated");
+  if (undatedEl) {
+    undatedEl.innerHTML = undated.length
+      ? undated
+          .slice(0, 12)
+          .map(
+            (item) => `<div class="task-row" onclick="openPanel(${jsStr(item.id)})" style="cursor:pointer">
+        <div class="task-meta"><div class="task-title">${escapeHtml(item.title)}</div>
+        <div class="task-sub">${item.kind === "waiting" ? "Waiting, with no check-back day" : "No day on it"}</div></div></div>`,
+          )
+          .join("")
+      : '<p class="empty">Everything open has a day or a rhythm.</p>';
+  }
+}
+
+/* Says *why* something is stuck, because "overdue" alone does not tell you whether to do it, move
+   it, or drop it — and that choice is the whole point of a review. */
+function reviewStuckReason(item) {
+  if (isOverdue(item)) {
+    const days = Math.max(1, Math.round((Date.now() - new Date(item.dueDate).getTime()) / 86400000));
+    return `Overdue by ${days} day${days === 1 ? "" : "s"}`;
+  }
+  const days = Math.max(1, Math.round((Date.now() - Number(item.created || Date.now())) / 86400000));
+  return `Waiting ${days} day${days === 1 ? "" : "s"} with no check-back`;
+}
+
+/* A project is quiet when nothing in it has moved for a fortnight — not when it is old, and not
+   when it is empty. A project with no items has nothing to be stuck on. */
+function reviewQuietProjects(now) {
+  const cutoff = now - REVIEW_QUIET_PROJECT_DAYS * 86400000;
+  const live = currentItems().filter((item) => !isArchived(item));
+  const names = [
+    ...new Set(live.map((item) => String(item.project || "").trim()).filter(Boolean)),
+  ];
+
+  const quiet = [];
+  for (const name of names) {
+    const inProject = live.filter((item) => item.project === name);
+    if (!inProject.length) continue;
+    // "Moving" is a completion or a new capture. A project that only collects new items and never
+    // finishes any is not quiet, it is working.
+    const lastMoved = inProject.reduce((latest, item) => {
+      const touched = Math.max(Number(item.created || 0), item.done ? completedWhen(item) : 0);
+      return Math.max(latest, touched);
+    }, 0);
+    if (lastMoved < cutoff) {
+      quiet.push({ name, open: inProject.filter((item) => !item.done).length });
+    }
+  }
+
+  if (!quiet.length) return '<p class="empty">Every project has moved recently.</p>';
+  return quiet
+    .map(
+      (p) => `<div class="task-row" onclick="switchView('projects')" style="cursor:pointer">
+      <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div>
+      <div class="task-sub">Nothing for ${REVIEW_QUIET_PROJECT_DAYS} days · ${p.open} still open</div></div></div>`,
+    )
+    .join("");
 }
 
 /* ---------- Reports ---------- */
@@ -8591,10 +8735,35 @@ function checkMorningDigest(reason) {
 function setMorningDigestEnabled(enabled) {
   writeMorningDigestSettings({ enabled: !!enabled, lastSentOn: "" });
   renderMorningDigestSettings();
+  syncDigestPreference(!!enabled);
   if (enabled) {
     // Turning it on should not wait until tomorrow, but it still has to be after the chosen hour
     // and it still says nothing if there is genuinely nothing to say.
     checkMorningDigest("enabled");
+  }
+}
+
+/* Tells the server whether this person wants the digest, so it can reach a phone with the app
+   closed. Best effort in both directions: with no account it is a no-op, and a failure here must
+   never stop the local setting from being honoured by the client leg. */
+async function syncDigestPreference(enabled) {
+  if (!sbUser || !structuredSyncAvailable()) return false;
+  try {
+    const { error } = await sb.from("digest_preferences").upsert({
+      user_id: sbUser,
+      enabled: !!enabled,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    });
+    if (error) {
+      // A database that has not run migration 008 simply cannot do closed-app digests. The client
+      // leg still works, so this is a note, not a failure.
+      console.warn("Digest preference not synced:", error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn("Digest preference not synced:", e.message || e);
+    return false;
   }
 }
 

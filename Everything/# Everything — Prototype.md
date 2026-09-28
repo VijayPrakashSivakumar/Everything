@@ -732,6 +732,72 @@ with their controls at all — clicking a label did not focus the field, and a s
 name for it. Eighteen labels are now associated, which is an accessibility fix independent of the
 tooltips.
 
+### The server leg — reaching a phone with the app closed
+
+The client digest fires when the app is open, or has been opened that day. That is not good enough:
+the whole point is to be told what needs you *without* having to go and look. The digest now also
+runs from `api/send-due-notifications.js`, which is the only moment the server is awake.
+
+It obeys the **same rules**, deliberately duplicated rather than shared: same three counts, same
+"say nothing when there is nothing to say", same *do not mark the day when nothing was sent*, and the
+same notification `tag`, so a server digest replaces a client one instead of stacking a second
+identical notification underneath it. If the two legs disagreed, the app would argue with itself about
+whether a day was worth mentioning.
+
+Four things the server leg has to get right that the client never had to:
+
+- **Per-user, not per-household.** The digest says *"you have three overdue"*. Your partner's overdue
+  items are not yours to be nagged about, so the query filters on `owner_id` and pushes only to that
+  person's subscriptions.
+- **Local hour, local day.** 8am UTC is 3pm in India. A digest at 3am is how a feature gets muted for
+  good, so both the hour and the once-a-day key are computed in the subscriber's own timezone, taken
+  from the `timezone` column `push_subscriptions` already stored.
+- **A quiet day does not mark the day.** Same rule as the client, so something that becomes due later
+  that day is still mentioned.
+- **A failed push does not mark the day**, so the next cron run retries instead of skipping the day.
+
+`digest_preferences` (migration `008`) is the opt-in: **no row means off**, and a database without the
+table degrades to silence rather than erroring every hour. Its RLS policy lets a person read and write
+their own row and nobody else's; the cron uses the service role. The client syncs the preference on
+every toggle, best-effort — if migration 008 has not run, the client leg still works and logs a note.
+
+## Review — the missing half of the loop
+
+Capture, clarify and next-action all work. **Reflect** did not exist, and that is the half of the
+loop that catches drift before anything has to remind you. A new **Review** view, next to Reports and
+Insights.
+
+Reports and Insights were both already there, and both are **history** — what you did. Review is the
+present tense: what is stuck *right now*.
+
+| section | what it answers |
+| --- | --- |
+| **Needs a decision** | what is overdue, or waiting too long — with *why*, and by how much |
+| **Finished this week** | what you actually got done |
+| **Quiet projects** | where nothing has moved for a fortnight |
+| **No next step** | open work with no day and no rhythm, so it can never surface on its own |
+
+### It says why, not just what
+
+*"Overdue by 3 days"* and *"Waiting 12 days with no check-back"* rather than a bare list, because the
+reason is what tells you whether to **do it, move it, or drop it** — and that choice is the entire
+point of a review.
+
+### It is allowed to say nothing
+
+A review that always finds something is a review people stop opening. A clean week reads *"Nothing is
+stuck. That is a good week."* and an empty account gets an honest page rather than a wall of zeroes.
+
+It is built from `created`, `done` and `dueDate` alone, reuses the same `isOverdue` as the rest of the
+app, and works offline for free. A **recurring** task is never counted as having no next step — a
+weekly task has a rhythm already, and nagging it for a date too would be pressure, not help.
+
+`review-probe.mjs` checks it says something *true*: that an overdue task and a stale waiting item are
+both reported with the right reason, that a clean week and an empty account are both reported
+honestly, that a completion from a month ago is not counted as this week, that a quiet project is
+named while a moving one is not, and that a title containing an apostrophe and quotes cannot break
+the row.
+
 ## Share target — capture from any app
 
 Smart capture is only useful if you can reach it at the moment the thought arrives. Dictation was
