@@ -760,6 +760,280 @@ input[type="password"]::-ms-clear {
   --sidebar-badge-fg: #d6e2ef;
 }
 
+/* Sage — botanical and calm. A muted green over warm paper, soft but not round, and slow enough
+   to feel considered. The only concept built around a natural hue rather than a primary. */
+
+:root[data-concept="sage"] {
+  --radius-xs: 6px;
+  --radius-sm: 7px;
+  --radius-md: 8px;
+  --radius-row: 9px;
+  --radius-tag: 11px;
+  --radius-ctl: 10px;
+  --radius-card: 14px;
+  --radius-modal: 15px;
+  --radius-lg: 20px;
+  --radius-sheet: 19px;
+  --type-scale: 1.02;
+  --tracking-wide: 0.25px;
+  --density: 1.04;
+  --border-w: 1px;
+  --ring-w: 2px;
+  --motion-scale: 1.1;
+  --ease: cubic-bezier(0.25, 0.6, 0.3, 1);
+  --brand-gradient: linear-gradient(135deg, #1e2a22 0%, #4a7c59 60%, #8fb99a 140%);
+  --logo-gradient: linear-gradient(145deg, #dceade, #7fae8b);
+  --logo-fg: #1e2a22;
+}
+
+:root[data-scheme="light"][data-concept="sage"] {
+  --sidebar: #1e2a22;
+  --sidebar-hover: #29382d;
+  --sidebar-active: #3a4d3f;
+  --accent: #4a7c59;
+  --accent-2: #6b8f71;
+  --bg: #f3f6f2;
+  --card: #ffffff;
+  --border: #dde5dd;
+  --text: #1a211b;
+  --muted: #5f6b60;
+  --red-bg: #fbe9e6;
+  --red-fg: #a5372a;
+  --amber-bg: #faf0d9;
+  --amber-fg: #8a6414;
+  --green-bg: #e2f0e6;
+  --green-fg: #2e6b41;
+  --blue-bg: #e4ecf2;
+  --blue-fg: #2f5670;
+  --purple-bg: #ebe7f0;
+  --purple-fg: #5a4a6b;
+  --shadow-card: 0 1px 3px rgba(30, 42, 34, 0.06), 0 8px 24px rgba(30, 42, 34, 0.05);
+  --shadow-pop: 0 14px 36px rgba(30, 42, 34, 0.16);
+  --sidebar-fg: #c3d4c6;
+  --sidebar-fg-strong: #ffffff;
+  --sidebar-fg-muted: #93a897;
+  --sidebar-caption: #86a08c;
+  --nav-fg: #b6c9b9;
+  --sidebar-badge-bg: #3a4d3f;
+  --sidebar-badge-fg: #e4f0e6;
+}
+
+:root[data-scheme="dark"][data-concept="sage"] {
+  --sidebar: #0f1712;
+  --sidebar-hover: #1a2620;
+  --sidebar-active: #27362d;
+  --accent: #8fbd9d;
+  --accent-2: #b8d4c0;
+  --bg: #0e1511;
+  --card: #151d18;
+  --border: #26322a;
+  --text: #edf3ee;
+  --muted: #8fa294;
+  --red-bg: #3a1f1c;
+  --red-fg: #e59a8d;
+  --amber-bg: #372d14;
+  --amber-fg: #dcb96a;
+  --green-bg: #17301f;
+  --green-fg: #7cc494;
+  --blue-bg: #1a2830;
+  --blue-fg: #8fb4c9;
+  --purple-bg: #26222f;
+  --purple-fg: #b0a0c4;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 10px 28px rgba(0, 0, 0, 0.34);
+  --shadow-pop: 0 18px 48px rgba(0, 0, 0, 0.58);
+  --sidebar-fg: #a9bdae;
+  --sidebar-fg-strong: #ffffff;
+  --sidebar-fg-muted: #7d8f80;
+  --sidebar-caption: #718675;
+  --nav-fg: #9db3a1;
+  --sidebar-badge-bg: #27362d;
+  --sidebar-badge-fg: #d8e8dc;
+}
+
+/* Bordeaux — the deepest and richest of the set. A wine bar rather than a colour scheme: tighter
+   corners than Premium, a little more contrast between bar and page, and a warm amber second
+   accent so the red never reads as an error colour. */
+
+:root[data-concept="bordeaux"] {
+  --radius-xs: 4px;
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-row: 7px;
+  --radius-tag: 9px;
+  --radius-ctl: 8px;
+  --radius-card: 10px;
+  --radius-modal: 12px;
+  --radius-lg: 16px;
+  --radius-sheet: 16px;
+  --type-scale: 1.03;
+  --tracking-wide: 0.2px;
+  --tracking-caps: 1.2px;
+  --density: 1.03;
+  --border-w: 1px;
+  --ring-w: 2px;
+  --motion-scale: 1.05;
+  --ease: cubic-bezier(0.3, 0.55, 0.35, 1);
+  --brand-gradient: linear-gradient(135deg, #2a1119 0%, #8e2f4a 60%, #c98a9a 140%);
+  --logo-gradient: linear-gradient(145deg, #f0d9dd, #c4778c);
+  --logo-fg: #2a1119;
+}
+
+:root[data-scheme="light"][data-concept="bordeaux"] {
+  --sidebar: #2a1119;
+  --sidebar-hover: #3a1a24;
+  --sidebar-active: #4d2431;
+  --accent: #8e2f4a;
+  --accent-2: #a8734a;
+  --bg: #faf5f4;
+  --card: #ffffff;
+  --border: #ecdcda;
+  --text: #241417;
+  --muted: #7a5f62;
+  --red-bg: #fbe8e6;
+  --red-fg: #a32b28;
+  --amber-bg: #f9eed8;
+  --amber-fg: #8a5e12;
+  --green-bg: #e6efe4;
+  --green-fg: #3a6b3f;
+  --blue-bg: #e6eaf1;
+  --blue-fg: #33455f;
+  --purple-bg: #efe4ec;
+  --purple-fg: #6b3a5c;
+  --shadow-card: 0 1px 3px rgba(42, 17, 25, 0.06), 0 10px 28px rgba(42, 17, 25, 0.06);
+  --shadow-pop: 0 16px 42px rgba(42, 17, 25, 0.18);
+  --sidebar-fg: #e0c2c9;
+  --sidebar-fg-strong: #fff5f7;
+  --sidebar-fg-muted: #b08a92;
+  --sidebar-caption: #a47c85;
+  --nav-fg: #d4b0b8;
+  --sidebar-badge-bg: #4d2431;
+  --sidebar-badge-fg: #f7e2e6;
+}
+
+:root[data-scheme="dark"][data-concept="bordeaux"] {
+  --sidebar: #180a0f;
+  --sidebar-hover: #26121a;
+  --sidebar-active: #361a25;
+  --accent: #e08a9e;
+  --accent-2: #d9a878;
+  --bg: #14090c;
+  --card: #1c0f13;
+  --border: #2e1a20;
+  --text: #f6ecee;
+  --muted: #a3868a;
+  --red-bg: #3a1717;
+  --red-fg: #e8908a;
+  --amber-bg: #372814;
+  --amber-fg: #dcb06a;
+  --green-bg: #1c2f1e;
+  --green-fg: #85bf88;
+  --blue-bg: #1b1f2c;
+  --blue-fg: #93a6c9;
+  --purple-bg: #2b1a2a;
+  --purple-fg: #c79ac0;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 20px 52px rgba(0, 0, 0, 0.62);
+  --sidebar-fg: #c9aab2;
+  --sidebar-fg-strong: #ffffff;
+  --sidebar-fg-muted: #9a747c;
+  --sidebar-caption: #8a6670;
+  --nav-fg: #bd9ba4;
+  --sidebar-badge-bg: #361a25;
+  --sidebar-badge-fg: #f4dbe1;
+}
+
+/* Rose — the softest of the set and the one with the most air. A dusty rose over warm white with a
+   lavender second accent, generous corners and the loosest leading outside Editorial. */
+
+:root[data-concept="rose"] {
+  --radius-xs: 8px;
+  --radius-sm: 9px;
+  --radius-md: 10px;
+  --radius-row: 11px;
+  --radius-tag: 13px;
+  --radius-ctl: 12px;
+  --radius-card: 16px;
+  --radius-modal: 18px;
+  --radius-lg: 22px;
+  --radius-sheet: 20px;
+  --type-scale: 1.05;
+  --lh-normal: 1.5;
+  --lh-base: 1.52;
+  --tracking-wide: 0.3px;
+  --density: 1.07;
+  --border-w: 1px;
+  --ring-w: 2px;
+  --motion-scale: 1.2;
+  --ease: cubic-bezier(0.3, 0.7, 0.4, 1);
+  --brand-gradient: linear-gradient(135deg, #2e2430 0%, #b5677f 60%, #d9a8b6 140%);
+  --logo-gradient: linear-gradient(145deg, #f7dfe6, #d490a4);
+  --logo-fg: #2e2430;
+}
+
+:root[data-scheme="light"][data-concept="rose"] {
+  --sidebar: #2e2430;
+  --sidebar-hover: #3d3141;
+  --sidebar-active: #4f4054;
+  --accent: #b5677f;
+  --accent-2: #7a6a9c;
+  --bg: #fbf6f7;
+  --card: #ffffff;
+  --border: #eddfe3;
+  --text: #261a1e;
+  --muted: #7d666c;
+  --red-bg: #fceaeb;
+  --red-fg: #ab3a48;
+  --amber-bg: #f9efdc;
+  --amber-fg: #8a6118;
+  --green-bg: #e7f0e6;
+  --green-fg: #3d6b43;
+  --blue-bg: #e7ecf3;
+  --blue-fg: #384a66;
+  --purple-bg: #f0e6f0;
+  --purple-fg: #6e4470;
+  --shadow-card: 0 1px 3px rgba(46, 36, 48, 0.05), 0 10px 30px rgba(46, 36, 48, 0.06);
+  --shadow-pop: 0 16px 44px rgba(46, 36, 48, 0.16);
+  --sidebar-fg: #dcc8d0;
+  --sidebar-fg-strong: #fdf4f6;
+  --sidebar-fg-muted: #ab93a0;
+  --sidebar-caption: #9f8794;
+  --nav-fg: #cfb8c2;
+  --sidebar-badge-bg: #4f4054;
+  --sidebar-badge-fg: #f6e4e9;
+}
+
+:root[data-scheme="dark"][data-concept="rose"] {
+  --sidebar: #1b1419;
+  --sidebar-hover: #271d24;
+  --sidebar-active: #362a32;
+  --accent: #e0a3b4;
+  --accent-2: #b0a2d8;
+  --bg: #140f12;
+  --card: #1c151a;
+  --border: #2c2228;
+  --text: #f7eef1;
+  --muted: #a68b93;
+  --red-bg: #391b22;
+  --red-fg: #ea98a8;
+  --amber-bg: #362915;
+  --amber-fg: #ddb471;
+  --green-bg: #1c2f20;
+  --green-fg: #8ac390;
+  --blue-bg: #1d2130;
+  --blue-fg: #9fabd6;
+  --purple-bg: #2c1e2f;
+  --purple-fg: #cfa6d4;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.26), 0 10px 30px rgba(0, 0, 0, 0.36);
+  --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.6);
+  --sidebar-fg: #c6b2bb;
+  --sidebar-fg-strong: #ffffff;
+  --sidebar-fg-muted: #94808a;
+  --sidebar-caption: #87737e;
+  --nav-fg: #b89faa;
+  --sidebar-badge-bg: #362a32;
+  --sidebar-badge-fg: #f2dfe5;
+}
+
 /* ---------- Theme picker ---------- */
 .theme-picker-hint {
   margin: 0 0 12px;

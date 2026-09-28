@@ -98,14 +98,23 @@ The visual concept is a second, independent attribute: `data-concept`.
 | **Premium** | warm neutrals, bronze accent, softer corners, lifted shadow |
 | **Deep Work** | near-monochrome, flat, square, high contrast |
 | **Casual** | warm and round, terracotta and teal |
+| **Aurora** | violet-to-cyan wash behind glass, the largest corners in the app |
+| **Editorial** | serif on warm paper, hairline rules, nothing lifted off the page |
+| **Dense** | monospaced headings, tight rows, built for the screen you work in |
+| **Sage** | botanical green over warm paper — the only natural hue, slow and considered |
+| **Bordeaux** | deep wine, the tightest corners outside Dense, warm amber second accent |
+| **Rose** | dusty rose and lavender, the most air and the loosest leading outside Editorial |
 
 `data-scheme` is the resolved light/dark value, always written explicitly. Having it as an
 attribute is what lets a concept choose its own palette for each scheme with a plain selector,
 instead of fighting the OS media query with specificity.
 
 Colours, corners and shadows are all design tokens, so **a new theme is one block of CSS plus one
-line in `APP_THEMES`** — no component is duplicated or restyled. Adding a fifth theme is a
-five-minute change.
+line in `APP_THEMES`** — no component is duplicated or restyled. Adding another theme is a
+five-minute change, and `theme-probe.mjs` picks it up on its own: it reads the concept list from the
+app, so a new theme is contrast-checked, screenshot and lightness-checked without editing the probe.
+It also requires every concept to carry **its own accent**, so two themes cannot quietly collapse
+into the same look.
 
 The concept is applied by a small inline script in `<head>`, before first paint, so the app does
 not flash the default and snap a frame later.

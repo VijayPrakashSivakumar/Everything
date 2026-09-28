@@ -176,7 +176,9 @@ try {
     const aurora = await read('aurora');
     assert.match(aurora.filter, /blur/, `Aurora cards must be glassy, got ${aurora.filter}`);
     assert.notEqual(aurora.image, 'none', 'Aurora must paint a gradient behind the app');
-    for (const c of ['default', 'premium', 'focus', 'casual', 'editorial', 'dense']) {
+    // Derived, not listed. A hard-coded allowlist is how a concept added later would grow a blur
+    // and go unchecked, which is the whole failure this probe exists to prevent.
+    for (const c of CONCEPTS.filter((id) => id !== 'aurora')) {
       const other = await read(c);
       assert.equal(other.filter, 'none', `${c} must not blur what is behind its cards`);
     }

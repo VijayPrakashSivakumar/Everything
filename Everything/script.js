@@ -7343,6 +7343,9 @@ const APP_THEMES = [
   { id: "aurora", label: "Aurora", hint: "Gradient and glass", swatch: ["#f3f1fd", "#6d3bf5", "#2a1a5e", "#d8ccff"] },
   { id: "editorial", label: "Editorial", hint: "Serif, paper, quiet", swatch: ["#f7f4ec", "#9a3f2d", "#f4efe4", "#fffdf8"] },
   { id: "dense", label: "Dense", hint: "Monospace, compact, fast", swatch: ["#f2f4f7", "#0b6bcb", "#101720", "#dbe0e7"] },
+  { id: "sage", label: "Sage", hint: "Botanical, calm, natural", swatch: ["#f3f6f2", "#4a7c59", "#1e2a22", "#ffffff"] },
+  { id: "bordeaux", label: "Bordeaux", hint: "Deep wine, rich and warm", swatch: ["#faf5f4", "#8e2f4a", "#2a1119", "#ffffff"] },
+  { id: "rose", label: "Rose", hint: "Soft, airy, elegant", swatch: ["#fbf6f7", "#b5677f", "#2e2430", "#ffffff"] },
 ];
 const THEME_STATE_KEY = "themeConcept";
 const themeSchemeMedia =
