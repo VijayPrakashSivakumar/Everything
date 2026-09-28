@@ -590,6 +590,28 @@ Gemini is listed first, because its token allowance is the larger of the two, an
 spends the same model on extraction as well. Groq is the automatic fallback; to make it primary
 instead, set `AI_PROVIDER=groq` in Vercel.
 
+### Reasoning models and the empty 200
+
+Both free defaults are *reasoning* models, and they can each return **HTTP 200 with no text at
+all** rather than an error. This is not a provider outage and nothing in the status code points at
+it, so it is worth stating plainly:
+
+- **Groq `openai/gpt-oss-120b`** emits a `reasoning` field before `content`, and with a tight
+  budget every token can land in `reasoning`. The adapter reads all the places text can appear, and
+  sends `reasoning_effort: "low"` for GPT-OSS models only.
+- **Gemini 2.5+** counts thinking tokens against `maxOutputTokens` — Google documents that
+  *"because `max_output_tokens` applies to the combined total of thinking tokens and output
+  tokens, setting a low limit can truncate responses"*. A short probe can therefore be answered
+  entirely in thought. The request sets `generationConfig.thinkingConfig.thinkingBudget = 0`
+  (nested inside `generationConfig`, not beside it), which suits this app: it only ever asks
+  short, structured, fact-retrieval questions, where reasoning buys nothing.
+
+This is why the cheap `?probe=1` check exists. It catches both failures in about a second, and the
+shape report it returns on an empty 200 now carries `finishReason` and the `usage` token counts —
+`MAX_TOKENS` with `thoughts` spent and `output: 0` is the signature of a budget problem rather
+than a dead provider. Only key names, counts and finish reasons are ever reported; no response
+content and no key material.
+
 **The model is a bonus, not the engine.** The ranked local search scores title, whole phrase,
 aliases, status and due date across every field, so a plain lookup ("gym") is answered instantly
 from local data with no network call and no quota spent. Only a query that reads as a question

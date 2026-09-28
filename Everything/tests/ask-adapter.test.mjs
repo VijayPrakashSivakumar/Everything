@@ -606,6 +606,50 @@ await check('the Gemini path is a working default, not just a reordered list', a
   }
 });
 
+await check('Gemini thinking cannot swallow the whole token budget', async () => {
+  // Gemini 2.5+ counts thinking tokens against maxOutputTokens, so a request that does not switch
+  // thinking off can return HTTP 200 with no text — the exact failure that made Gemini primary
+  // report "gemini:empty" and quietly hand every answer to the fallback.
+  freshEnv({ GEMINI_API_KEY: 'g' });
+  seen = [];
+  let sent = '';
+  try {
+    globalThis.fetch = async (url, init) => {
+      seen.push(String(url));
+      sent = String(init.body || '');
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] }) };
+    };
+    await complete({ prompt: 'q' });
+    const body = JSON.parse(sent);
+    const thinking = body.generationConfig?.thinkingConfig;
+    assert.ok(thinking, 'thinkingConfig must be set, or thinking tokens eat maxOutputTokens');
+    assert.equal(thinking.thinkingBudget, 0, 'this app asks short factual questions, so thinking buys nothing');
+    assert.equal(body.thinkingConfig, undefined, 'thinkingConfig nests inside generationConfig; a top-level copy is rejected');
+  } finally {
+    installMockFetch();
+  }
+});
+
+await check('an empty Gemini reply reports the thinking tokens that caused it', async () => {
+  // The shape report is the only thing visible from outside the function, so it has to carry the
+  // evidence: MAX_TOKENS with thoughts spent and no output is a budget bug, not a dead provider.
+  freshEnv({ GEMINI_API_KEY: 'sk-LEAK-CANARY-9f3a2b' });
+  handler = () => ({
+    status: 200,
+    body: {
+      candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '' }] } }],
+      usageMetadata: { promptTokenCount: 8, thoughtsTokenCount: 61, candidatesTokenCount: 0, totalTokenCount: 69 },
+    },
+  });
+  const r = await complete({ prompt: 'q' });
+  const shape = (r.shapes || [])[0] || {};
+  assert.match(shape.finishReason || '', /MAX_TOKENS/, 'the finish reason must be reported');
+  assert.equal(shape.usage?.thoughts, 61, 'thought tokens are the proof, and they are a plain number');
+  assert.equal(shape.usage?.output, 0, 'zero output tokens is what made it empty');
+  // A real secret, not a one-character needle: 'g' matches "candidates" and proves nothing.
+  assert.doesNotMatch(JSON.stringify(shape), /LEAK-CANARY/, 'no part of the key may appear in the shape');
+});
+
 await check('an OpenAI-style reply is never trusted from the Gemini path', async () => {
   // A cross-wired or misconfigured proxy must not be able to make the parser read the wrong field.
   freshEnv({ GEMINI_API_KEY: 'g' });

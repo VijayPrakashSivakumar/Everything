@@ -186,6 +186,22 @@ function describeShape(data) {
     }
   } else if (Array.isArray(data.candidates)) {
     out.candidates = data.candidates.length;
+    const candidate = data.candidates[0];
+    if (candidate && typeof candidate === 'object') {
+      out.candidateKeys = Object.keys(candidate).slice(0, 12);
+      if (candidate.finishReason) out.finishReason = candidate.finishReason;
+    }
+    // A thinking model can burn the whole token budget on reasoning and return no visible text.
+    // MAX_TOKENS plus a non-zero `thoughts` count is that exact proof, and both are plain numbers
+    // — no content, nothing derived from the key.
+    const usage = data.usageMetadata;
+    if (usage && typeof usage === 'object') {
+      out.usage = {
+        ...(typeof usage.thoughtsTokenCount === 'number' ? { thoughts: usage.thoughtsTokenCount } : {}),
+        ...(typeof usage.candidatesTokenCount === 'number' ? { output: usage.candidatesTokenCount } : {}),
+        ...(typeof usage.totalTokenCount === 'number' ? { total: usage.totalTokenCount } : {}),
+      };
+    }
   }
   if (typeof data.error === 'object' && data.error) out.errorKeys = Object.keys(data.error).slice(0, 8);
   return out;
@@ -199,7 +215,17 @@ function callGemini({ key, model, prompt, maxTokens, signal }) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 },
+        // Gemini 2.5+ thinks before it answers, and those thinking tokens are billed *and counted*
+        // against `maxOutputTokens`. With the budget set low, every token can go to reasoning and
+        // the response arrives as a 200 with no text at all ("gemini:empty") — the Gemini twin of
+        // the GPT-OSS bug above, and the reason it appears on the cheap probe first. Ask for no
+        // thinking at all: this app sends short, structured, fact-retrieval prompts where reasoning
+        // buys nothing. `thinkingConfig` is a field of `generationConfig`, not a sibling of it.
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          temperature: 0.2,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
       signal,
     },
