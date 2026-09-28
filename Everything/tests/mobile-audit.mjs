@@ -124,6 +124,45 @@ async function main() {
     return r.result.value;
   };
 
+  /* The search field, and the width its placeholder actually needs, in one measurement. The 390px
+     pass and the narrower widths below both use this, so there is exactly one implementation of
+     "does the placeholder still fit".
+
+     Two earlier versions of this check silently reported every string as fitting, because one of
+     them measured a detached probe node — always 0 wide, so it could not fail. The probe therefore
+     has to be in the document before it is measured, and has to carry the input's font longhands
+     rather than the `font` shorthand. */
+  const measureSearchField = () => evaluate(`(() => {
+    const box = document.getElementById('searchBox');
+    const input = document.getElementById('searchInput');
+    if (!box || !input) return { missing: true };
+    const cs = getComputedStyle(input);
+    const probe = document.createElement('span');
+    probe.style.position = 'absolute';
+    probe.style.visibility = 'hidden';
+    probe.style.whiteSpace = 'pre';
+    probe.style.left = '-9999px';
+    probe.style.top = '0';
+    probe.style.display = 'inline-block';
+    probe.style.fontFamily = cs.fontFamily || 'sans-serif';
+    probe.style.fontSize = cs.fontSize || '16px';
+    probe.style.fontWeight = cs.fontWeight || '400';
+    probe.style.letterSpacing = cs.letterSpacing || 'normal';
+    probe.textContent = input.placeholder;
+    document.body.appendChild(probe);
+    const needed = probe.getBoundingClientRect().width;
+    probe.remove();
+    return {
+      missing: false,
+      text: input.placeholder,
+      needed: Math.round(needed),
+      avail: Math.round(input.clientWidth),
+      boxWidth: Math.round(box.getBoundingClientRect().width),
+      vw: document.documentElement.clientWidth,
+      docWidth: document.documentElement.scrollWidth,
+    };
+  })()`);
+
   const base = await evaluate(`(() => ({
     vw: document.documentElement.clientWidth,
     docWidth: document.documentElement.scrollWidth,
@@ -207,32 +246,9 @@ async function main() {
   // A placeholder that does not fit is truncated by the browser mid-word, and "Search an" reads as
   // a bug rather than as a hint. It is not a horizontal-overflow failure, so nothing above catches
   // it: the field is the right width and the text is simply too long for it. Measured by comparing
-  // the placeholder against the space actually available inside the input.
-  //
-  // The probe must be in the document *before* it is measured, and must carry the input's font
-  // longhands rather than the `font` shorthand. Two versions of this check silently reported every
-  // string as fitting: one measured a detached node, which is always 0 wide, so it could not fail.
-  const placeholder = await evaluate(`(() => {
-    const i = document.getElementById('searchInput');
-    if (!i) return { missing: true };
-    const cs = getComputedStyle(i);
-    const probe = document.createElement('span');
-    probe.style.position = 'absolute';
-    probe.style.visibility = 'hidden';
-    probe.style.whiteSpace = 'pre';
-    probe.style.left = '-9999px';
-    probe.style.top = '0';
-    probe.style.display = 'inline-block';
-    probe.style.fontFamily = cs.fontFamily || 'sans-serif';
-    probe.style.fontSize = cs.fontSize || '16px';
-    probe.style.fontWeight = cs.fontWeight || '400';
-    probe.style.letterSpacing = cs.letterSpacing || 'normal';
-    probe.textContent = i.placeholder;
-    document.body.appendChild(probe);
-    const needed = probe.getBoundingClientRect().width;
-    probe.remove();
-    return { missing: false, text: i.placeholder, needed: Math.round(needed), avail: Math.round(i.clientWidth) };
-  })()`);
+  // the placeholder against the space actually available inside the input — the how lives in
+  // measureSearchField above, so this pass and the narrow-phone pass below cannot drift apart.
+  const placeholder = await measureSearchField();
   record(!placeholder.missing && placeholder.avail >= placeholder.needed,
     'the search placeholder fits without being cut mid-word',
     `"${placeholder.text}" needs ${placeholder.needed}px, has ${placeholder.avail}px`);
@@ -349,6 +365,43 @@ async function main() {
   })()`);
   record(taps.length === 0, 'top-bar icon buttons are at least 40x40',
     taps.length ? JSON.stringify(taps) : 'all large enough');
+
+  /* ---------- The same topbar on a narrower phone ----------
+
+     390px is not the only phone. It is the width this audit was written at, and the 120px search
+     floor above was only ever asserted there — so a topbar that just fits at 390 can collapse a few
+     pixels narrower and nothing here says so.
+
+     It collapses on the search field, because the field is the only child of the topbar allowed to
+     shrink (`.search-wrap { flex: 1 1 auto; min-width: 0 }`); every control beside it has a fixed
+     width and a 40px tap target, so the whole shortfall lands in that one place. Measured with the
+     theme toggle restored: 128px at 390px, 98px at 360px and 58px at 320px, with the placeholder
+     cut to "Searc" and then to a single character.
+
+     360px is a 1080px screen at DPR 3 — most Android phones — and 375px is every iPhone from the
+     SE2 to the 13 mini, so the two widths below are the range that matters. The floor is asserted
+     where it can hold. At 320px seven controls and a 120px field cannot coexist, and this repo has
+     already ruled that hiding a control to make a row fit is the worse trade, so what is checked
+     there is the visible symptom: the placeholder still fitting. */
+  for (const width of [360, 320]) {
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width, height: 800, deviceScaleFactor: 2, mobile: true,
+    });
+    await client.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
+    await sleep(2500);
+
+    const narrow = await measureSearchField();
+    record(!narrow.missing && narrow.docWidth <= narrow.vw + 1,
+      `no horizontal overflow at ${width}px`,
+      `viewport=${narrow.vw} document=${narrow.docWidth}`);
+    if (width >= 360) {
+      record(!narrow.missing && narrow.boxWidth >= 120,
+        `the search field keeps its 120px floor at ${width}px`, `width=${narrow.boxWidth}`);
+    }
+    record(!narrow.missing && narrow.avail >= narrow.needed,
+      `the search placeholder still fits at ${width}px`,
+      `"${narrow.text}" needs ${narrow.needed}px, has ${narrow.avail}px (field ${narrow.boxWidth}px)`);
+  }
 
   client.close();
 }

@@ -733,6 +733,34 @@ placeholder that does not fit is not a horizontal-overflow failure, so nothing e
 "Search..." measures 64px against 77px available; the first attempt, "Search or ask...", is 112px
 and truncated just as badly. Both numbers are measured, not estimated.
 
+### The topbar only fit the one phone it was measured on
+
+The section above fixed the topbar at 390px, and said so. The floor was real, the arithmetic was
+right, and both were only true at that one width. The search field is the only child of the topbar
+allowed to shrink (`.search-wrap { flex: 1 1 auto; min-width: 0 }`) while every control beside it is
+a fixed 40px tap target, so the whole shortfall lands on the field and nothing else moves. On a
+360px screen — a 1080px display at DPR 3, which is most Android phones — it measured **98px** with
+the placeholder cut to "Searc"; at 320px it was **58px**, one character wide. The audit passed
+throughout, because the audit only ever opened a 390px viewport.
+
+**A layout fixed by reclaiming space has to say which width it reclaimed it for.** Each of the 22px
+the theme toggle cost came from somewhere different — the gap, the side padding, the capture mark —
+and every one of those was sized against 390px and nothing else.
+
+What gives way is the capture mark, below 382px: the width at which the other six children, the 2px
+gaps and the side padding come to 262px and leave the field exactly 120px. It is the one topbar
+element that is a logo rather than a control, and it duplicates the mark in the sidebar brand, so
+the trade is a duplicate against a readable field rather than a feature against a readable field —
+which is the distinction the theme toggle taught. Below 336px the last 20px comes out of the gaps
+and the field's own inner padding, because the controls cannot give anything without dropping under
+the 40px tap minimum the same audit holds them to.
+
+`mobile-audit.mjs` measures 360px and 320px now, which is what should have been there from the
+start. The 120px floor is asserted where it can hold; at 320px, where seven controls and a 120px
+field cannot coexist, the check is the visible symptom instead — that the placeholder still fits.
+Both failures were reproduced at both widths before the CSS was written, so the new checks are known
+to bite rather than assumed to.
+
 ### Bulk actions reached the Tasks list and not the Inbox
 
 The Inbox holds every capture, is the list people revisit most, and outgrows the Tasks list
@@ -775,6 +803,60 @@ Plus the one that would have made the whole gesture pointless: **a swipe ends wi
 that click fell through to `openPanel()`, so swiping a row opened the very item being swiped. The
 suppression is per-row and read once — a module-level flag on a timer swallowed the *next* real
 tap, including a deliberate press on a revealed button.
+
+### The swipe worked, and was still wrong on a phone
+
+Two screenshots, a palette overlapping the page and an Inbox painting its buttons over its own
+text. Every test that existed passed, because every one of them asked whether the gesture
+*worked*, and it did — on a desktop viewport, with a single row, opened once.
+
+Four separate causes, none of which is visible in the source:
+
+1. **The palette had a class with no rule under it anywhere.** It reuses `.ask-overlay` but carries
+   its own `.ask-panel`, which appears in the markup and nowhere in the stylesheet. An unstyled div
+   is transparent *and* shrink-to-fit, so the panel opened as a 222px hole in a 390px screen: the
+   dashboard, the capture bar and the stat cards all showed through it, and the input was only as
+   wide as its own default size, which cut the placeholder to `"Jump to a page, a task, a pe"`.
+
+   The lesson is not "add the CSS". It is that **a class used in markup is a claim about the
+   stylesheet, and nothing checked the claim.** Fourteen desktop checks opened this palette, found
+   rows in it and matched text in it. A feature can be entirely reachable and entirely unusable at
+   the same time, and reachability is what the tests were measuring.
+
+2. **The row's layout lived on the row, and the swipe put a wrapper in between.** On a phone
+   `.task-row` becomes a grid keyed on its *direct* children — `.task-row > .checkbox`,
+   `.task-row > .task-meta`. Wrapping those children in `.swipe-row-body` to make them slideable
+   moved them one level down, and every one of those selectors stopped matching the moment a row
+   became swipeable. A swipeable row on a phone had no grid at all: the checkbox, title and badges
+   collapsed into a single flex line, and the revealed buttons were painted straight over them.
+
+3. **The strip was only as wide as its own text.** It is what covers the buttons until the swipe,
+   and an opaque strip that does not reach the edges is not a cover. So every *closed* row showed
+   a slice of its own buttons beside its title — the overlap in the screenshot, on rows nobody had
+   touched.
+
+4. **The transform was on the row, which moved the buttons with it.** The actions are positioned
+   against the row, so translating the row left them stranded 168px from the edge they are pinned
+   to. The reveal is now the strip sliding out from under buttons that stay put, which is what
+   "swipe to reveal" has always meant.
+
+The fourth one had a consequence worth writing down, because the fix nearly introduced a worse bug.
+Closing the row inside the gesture's own `pointerup` — correct on its own, and needed so that
+opening a second row closes the first — also fired on a **tap**, and a tap is not a swipe. The row
+was therefore already shut by the time the click arrived, and the click found no `swiped-open` to
+match, so tapping a row to close it opened the item instead. The tap-to-close path is a race
+between two handlers for one gesture, and the fix was to let `finish()` do nothing at all unless a
+swipe was actually decided.
+
+**One row at a time is the whole invariant.** `swipeOpenRow` is a single slot, and opening a
+second row used to overwrite the pointer to the first — which stayed slid aside with nothing able
+to close it, its buttons sitting on top of the row below. There is no timer and no cleanup list
+because there is only ever one value to keep correct.
+
+What all four have in common: each was invisible to a test that asked the feature-level question.
+The checks that catch them are geometry checks — *is the panel opaque*, *is the strip as wide as the
+row*, *is the button block as wide as the slide* — and those only exist because the failure was
+reproduced in a real browser and measured rather than reasoned about.
 
 # Working in this repo — read this before editing
 

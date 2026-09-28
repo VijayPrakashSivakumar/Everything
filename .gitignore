@@ -9,4 +9,5 @@ node_modules/
 # Scratch files from browser checks and commit messages. These are local tooling, not source, and a
 # `git add -A` should never be able to sweep one into a commit.
 tmp-*
+tmp/
 shot-*.png

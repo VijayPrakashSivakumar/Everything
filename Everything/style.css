@@ -2467,17 +2467,51 @@ h1.page-title {
   /* Vertical scrolling must keep working, so the browser is told it owns the y axis and the swipe
      handler claims only x. Getting this wrong makes a long list unscrollable. */
   touch-action: pan-y;
+  /* The row stops being a layout box and becomes a positioned, clipping frame. Its own layout is
+     the strip's job, and on a phone the row's layout is a grid keyed on *direct* children
+     (`.task-row > .checkbox`) — which the strip has just nested one level deeper, so every one of
+     those rules stopped matching the moment a row became swipeable. Keeping the layout on the row
+     and only translating the strip was the arrangement that broke it. */
+  display: block;
+  padding: 0;
+  /* The row is the surface the revealed strip is cut out of, so it carries the card colour. Left
+     transparent, a swiped row showed a grey hole the width of the buttons where its own text used
+     to be. The strip above it does the rounding, via this row's `overflow: hidden`. */
+  background: var(--card);
+}
+
+.task-row.swipeable:hover {
+  background: var(--bg);
 }
 
 .task-row .swipe-row-body {
+  /* The row's own layout, so a swipeable row is laid out exactly like a row that is not one. */
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: inherit;
+  gap: var(--gap-row);
+  padding: var(--pad-row-y) var(--pad-row-x);
+  border: var(--border-w) solid transparent;
   background: var(--card);
   position: relative;
   z-index: 1;
-  min-height: inherit;
+  /* Fills the row. As a bare flex or grid item it was only as wide as its own text, and an opaque
+     strip that does not reach the edges is not a cover: every closed row showed a slice of its own
+     buttons beside the text. */
+  min-width: 0;
+  min-height: 100%;
+}
+
+/* The strip is opaque, so it also has to carry the row's own state colours. Without these, hover
+   and selection stopped working on exactly the list people swipe most. */
+.task-row.swipeable:hover .swipe-row-body {
+  background: var(--bg);
+}
+
+.task-row.swipeable.selected .swipe-row-body {
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  /* The row's own selection bar is an inset shadow, and the strip now covers the row, so the bar
+     has to be drawn on the strip to stay visible. */
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .task-row .swipe-actions {
@@ -2488,6 +2522,12 @@ h1.page-title {
   display: flex;
   align-items: stretch;
   z-index: 0;
+  /* Exactly as wide as the distance the strip travels, so the two cannot disagree. The reveal
+     distance is a JS constant (SWIPE_MAX_WIDTH) because it has to be known mid-gesture, before
+     anything is measured; the buttons are sized to that, and an earlier version left the block at
+     whatever its labels and padding came to — 145px against a 168px slide, which showed as a strip
+     of bare row between the text and the first button. */
+  width: 168px;
   /* Invisible until the row is slid aside, so a press on a closed row can never land on a button
      that is not yet showing. Without this the buttons are hit-testable through the row body and a
      swipe starting near the right edge is read as a press on a control. */
@@ -2506,6 +2546,10 @@ h1.page-title {
   font-weight: 600;
   color: #fff;
   cursor: pointer;
+  /* Two actions split the revealed width evenly. Left to their own padding they came out narrower
+     than the distance the row slides, which left a strip of bare row showing beside them. */
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .swipe-done {
@@ -2521,12 +2565,16 @@ h1.page-title {
 }
 
 /* No transition while the finger is down, so the row tracks it exactly; the transition is for the
-   snap open or shut, which is what should feel sprung rather than glued to the finger. */
-.task-row.swiping {
+   snap open or shut, which is what should feel sprung rather than glued to the finger.
+
+   The transition is on the body, not the row, and that is the whole difference between a reveal
+   and a translation. Transforming the row moved the buttons along with it, so the buttons ended up
+   stranded 168px from the edge they are supposed to be pinned to. */
+.task-row.swiping .swipe-row-body {
   transition: none;
 }
 
-.task-row.swipeable:not(.swiping) {
+.task-row.swipeable:not(.swiping) .swipe-row-body {
   transition: transform 180ms var(--ease, ease);
 }
 
@@ -3426,6 +3474,63 @@ h1.page-title {
   box-shadow: var(--shadow-pop);
 }
 
+/* The command palette reuses .ask-overlay but not .ask-box, and for a long time it had a class of
+   its own with no rule under it anywhere in this file. A div with no styles is transparent and
+   shrink-to-fit, so the palette opened as a 222px-wide hole in the page: the dashboard, the
+   capture bar and the stat cards all showed through it, and the input was only as wide as its own
+   default size, which cut the placeholder off mid-word.
+
+   So this is not a nicety. An unstyled panel is a panel you can see the app through, and a feature
+   that was made reachable by touch on a phone, where it was least usable. */
+.ask-panel {
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  /* A width, not a max-width: an unstyled panel is shrink-to-fit, and a cap on its own leaves it at
+     whatever the input's default size happens to be — which is how this panel ended up 222px wide
+     on a 390px screen. 34rem is the 560px this was capped at before, in rem so it follows the
+     user's text size the way the rest of the sizing does. */
+  width: min(34rem, 100%);
+  max-height: min(75vh, calc(100dvh - 24px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-pop);
+}
+
+.ask-panel > input {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-bottom: var(--border-w) solid var(--border);
+  outline: none;
+  background: transparent;
+  padding: 15px 18px;
+  font-size: var(--fs-input);
+  color: var(--text);
+}
+
+/* The one scrolling region in the panel. It has to be allowed to shrink below its content, or the
+   flex column pushes the panel past max-height and the hint strip falls off the bottom. */
+#commandList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 8px;
+}
+
+.command-hint {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 14px;
+  padding: 10px 18px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
 .ask-input-row {
   display: flex;
   align-items: center;
@@ -3952,13 +4057,30 @@ h1.page-title {
     order: initial;
   }
 
+  /* The swipe strip nests the row's children one level deeper, so the row's own direct-child rules
+     have to be restated for the strip. Without this, a swipeable row on a phone loses the wrap
+     every non-swipeable row has, which is how the badges ended up underneath the revealed buttons. */
+  .swipe-row-body {
+    flex-wrap: wrap;
+  }
+
   .task-meta {
     flex-basis: 100%;
     order: initial;
   }
 
+  .swipe-row-body .task-meta {
+    flex-basis: 100%;
+  }
+
   .task-time,
   .task-row>.badge {
+    order: initial;
+    margin-top: 4px;
+  }
+
+  .swipe-row-body .task-time,
+  .swipe-row-body>.badge {
     order: initial;
     margin-top: 4px;
   }
@@ -4394,8 +4516,23 @@ body.overlay-open .content {
     order: initial;
   }
 
+  /* On a phone the row is a grid keyed on its *direct* children, and the swipe strip sits between
+     the two. So the strip becomes the grid and takes the same template, and every direct-child
+     rule below is restated for the strip's children. Without this, a swipeable row on a phone had
+     no grid at all: the checkbox, title and badges collapsed into one flex line and the revealed
+     buttons were painted straight over them. */
+  .swipe-row-body {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    column-gap: 10px;
+    row-gap: 4px;
+  }
+
   .task-row > .checkbox,
-  .task-row > .avatar {
+  .task-row > .avatar,
+  .swipe-row-body > .checkbox,
+  .swipe-row-body > .avatar {
     grid-column: 1;
     grid-row: 1;
   }
@@ -4406,13 +4543,26 @@ body.overlay-open .content {
     min-width: 0;
   }
 
+  .swipe-row-body > .task-meta {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+
   .task-row > .task-meta:only-child {
+    grid-column: 1 / -1;
+  }
+
+  .swipe-row-body > .task-meta:only-child {
     grid-column: 1 / -1;
   }
 
   .task-row > .task-time,
   .task-row > .badge,
-  .task-row > .btn {
+  .task-row > .btn,
+  .swipe-row-body > .task-time,
+  .swipe-row-body > .badge,
+  .swipe-row-body > .btn {
     grid-column: 2;
     justify-self: start;
     margin-top: 0;
@@ -4420,6 +4570,11 @@ body.overlay-open .content {
   }
 
   .task-row > .btn:last-child {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .swipe-row-body > .btn:last-child {
     grid-column: 1 / -1;
     justify-self: end;
   }
@@ -5197,5 +5352,45 @@ body.overlay-open .content {
   .capture-undo {
     bottom: 76px;
     font-size: var(--fs-body-s);
+  }
+}
+
+/* ---------- Phones narrower than the one this layout was measured on ----------
+
+   The 120px floor under the search field is a real constraint, but 390px is only where it was
+   measured. The field is the single child of the topbar allowed to shrink
+   (`.search-wrap { flex: 1 1 auto; min-width: 0 }`), and every control beside it has a fixed width
+   and a 40px tap target, so every pixel a narrower phone is short lands in that one place and
+   nothing else moves. At 360px — a 1080px screen at DPR 3, which is most Android phones — the field
+   was 98px and the placeholder was cut to "Searc"; at 320px it was 58px with room for one
+   character. The row above holds both halves of the 390px trade in place, and neither of them says
+   anything about the phone that is 30px narrower.
+
+   382px is where the arithmetic stops working: with the capture mark present, the other six
+   children, the 2px gaps and the side padding come to 262px, which leaves the field exactly 120px
+   at 382px and less below it. So the mark is what goes, and it is the right thing to lose: it is
+   the one topbar element that is a logo rather than a control, and the app carries the same mark in
+   the sidebar brand while the Capture button stays one tap away in the menu. Losing a duplicate
+   beats losing width from the field the user is actually reading. */
+@media (max-width: 381px) {
+  .mobile-capture-btn {
+    display: none;
+  }
+}
+
+/* The last 20px, for a 320px screen. Nothing else is left to give: the controls are already at
+   their 40px tap minimum and the side padding is down to 8px, so this comes out of the space
+   *between* things rather than out of anything tappable. 2px between two 40px buttons is not a
+   readable difference, and the field's own inner padding is the difference between its placeholder
+   fitting and being cut mid-word. */
+@media (max-width: 335px) {
+  .topbar {
+    gap: 0;
+    padding-left: max(6px, env(safe-area-inset-left));
+    padding-right: max(6px, env(safe-area-inset-right));
+  }
+
+  .search-box {
+    padding: 9px 8px;
   }
 }

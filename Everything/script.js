@@ -7747,6 +7747,11 @@ function startSwipe(el, event) {
     swipeOpenRow = null;
     return;
   }
+  /* What slides is the strip, not the row. The actions are positioned against the row, so
+     transforming the row carried them left along with it and left them stranded in the middle of
+     the list instead of pinned to the edge the finger pulled from. */
+  const body = el.querySelector(".swipe-row-body");
+  if (!body) return;
   const startX = event.clientX;
   const startY = event.clientY;
   let decided = null;
@@ -7782,7 +7787,7 @@ function startSwipe(el, event) {
     moveEvent.preventDefault();
     // Rubber-banding to the left only: swiping right would fight the back gesture.
     offset = Math.max(-SWIPE_MAX_WIDTH, Math.min(0, dx));
-    el.style.transform = `translateX(${offset}px)`;
+    body.style.transform = `translateX(${offset}px)`;
   };
 
   const finish = () => {
@@ -7791,11 +7796,27 @@ function startSwipe(el, event) {
     el.removeEventListener("pointercancel", finish);
     el.classList.remove("swiping");
     const committed = decided === "swipe" && -offset >= SWIPE_TRIGGER;
-    // Snap fully open, or closed. Half-open looks broken and the row stays unusable.
-    el.style.transform = committed ? `translateX(-${SWIPE_MAX_WIDTH}px)` : "";
-    el.classList.toggle("swiped-open", committed);
+    /* Only ever one open row. `swipeOpenRow` is a single slot, so opening a second row only
+       overwrote the pointer to the first — which stayed slid aside with nothing left able to close
+       it, its buttons sitting on top of the row below. Closing first is what makes the slot mean
+       "the open row" rather than "the most recently swiped row". */
+    if (committed) closeOpenSwipe();
+    /* Every one of the lines below is guarded on a swipe having actually been decided, and that
+       guard is load-bearing rather than tidiness. `finish` runs on every pointerup, and a tap is
+       not a swipe: `decided` is still null, so there is nothing to snap and no row to reopen. The
+       click handler is what decides "close this open row" instead of "open the item behind it",
+       and it reads `swiped-open` when the click arrives. Toggling the class here on a tap closed
+       the row a moment too early, and the click then found nothing to match and opened the item —
+       so tapping a swiped-open row did the one thing it is not supposed to do. */
+    if (decided === "swipe") {
+      // Snap fully open, or closed. Half-open looks broken and the row stays unusable.
+      body.style.transform = committed ? `translateX(-${SWIPE_MAX_WIDTH}px)` : "";
+      el.classList.toggle("swiped-open", committed);
+      // Same guard: on a tap the row is untouched, so the slot has to keep pointing at it too.
+      // Nulling it here meant the click that closes the row found nothing to close.
+      swipeOpenRow = committed ? el : null;
+    }
     offset = 0;
-    swipeOpenRow = committed ? el : null;
     /* A gesture that moved is not a tap. The browser still fires a click on pointerup after a
        swipe — the row was dragged, not pressed — and that click fell through to openPanel(), so a
        swipe opened the very item the person was trying to swipe.
@@ -7818,6 +7839,11 @@ let swipeOpenRow = null;
    and covers the content beside it with no visible way back. */
 function closeOpenSwipe() {
   if (!swipeOpenRow) return;
+  // The transform lives on the strip, so that is the copy that has to be cleared. The row's own is
+  // cleared too, defensively: nothing sets it any more, and a stray one would slide the buttons off
+  // the edge they are pinned to.
+  const body = swipeOpenRow.querySelector(".swipe-row-body");
+  if (body) body.style.transform = "";
   swipeOpenRow.style.transform = "";
   swipeOpenRow.classList.remove("swiped-open");
   swipeOpenRow = null;

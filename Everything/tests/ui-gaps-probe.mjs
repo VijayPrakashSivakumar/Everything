@@ -438,12 +438,17 @@ try {
       const row = document.querySelector('#inboxList .task-row');
       return {
         open: row.classList.contains('swiped-open'),
-        transform: row.style.transform,
+        // The transform is on the strip, not the row: the actions are positioned against the row,
+        // so translating the row carried them off the edge they are pinned to.
+        transform: row.querySelector('.swipe-row-body')?.style.transform || '',
+        rowTransform: row.style.transform,
         dragGhost: !!document.querySelector('.reorder-dragging'),
       };
     });
     assert.ok(open.open, 'a horizontal drag did not open the row');
-    assert.match(open.transform, /translateX\(-/, 'the row is not actually slid aside');
+    assert.match(open.transform, /translateX\(-/, 'the row content is not actually slid aside');
+    assert.equal(open.rowTransform, '',
+      'the row itself was translated, which drags the revealed buttons off the edge with it');
     // The two gestures must not both fire: a swipe that also started a drag would have moved the
     // row in the list, which is a different and confusing result.
     assert.equal(open.dragGhost, false, 'the swipe also started a reorder drag');
@@ -453,15 +458,140 @@ try {
     await page.waitForTimeout(300);
     const closed = await page.evaluate(() => {
       const row = document.querySelector('#inboxList .task-row');
-      return { open: row.classList.contains('swiped-open'), transform: row.style.transform };
+      return {
+        open: row.classList.contains('swiped-open'),
+        transform: row.querySelector('.swipe-row-body')?.style.transform || '',
+      };
     });
     assert.equal(closed.open, false, 'tapping a swiped-open row did not close it');
     assert.equal(closed.transform, '', 'a closed row still carries a transform');
   });
 
+  /* The three checks below exist because the swipe looked correct in the source and was wrong on
+     the screen. Each one is a separate way the same feature could fail, and each had a test that
+     passed anyway. */
+
+  await check('only one row can be swiped open at a time', async () => {
+    /* `swipeOpenRow` is a single slot. Opening a second row used to overwrite the pointer to the
+       first, which then stayed slid aside with nothing able to close it — two rows of buttons on
+       screen at once, each drawn over the row below. */
+    await page.evaluate(() => {
+      state.items = [
+        { id: 'm1', kind: 'text', title: 'One', done: false, created: 3 },
+        { id: 'm2', kind: 'text', title: 'Two', done: false, created: 2 },
+        { id: 'm3', kind: 'text', title: 'Three', done: false, created: 1 },
+      ];
+      switchView('inbox');
+    });
+    await page.waitForTimeout(350);
+
+    const dragRow = async (index) => {
+      const box = await page.locator('#inboxList .task-row').nth(index).boundingBox();
+      await page.mouse.move(box.x + box.width - 30, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 40, box.y + box.height / 2, { steps: 12 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+    };
+
+    await dragRow(0);
+    await dragRow(1);
+    const out = await page.evaluate(() => ({
+      open: [...document.querySelectorAll('#inboxList .task-row.swiped-open')].length,
+      // A row still carrying a transform without the class would never be closed by a tap either.
+      transformed: [...document.querySelectorAll('#inboxList .swipe-row-body')]
+        .filter((b) => b.style.transform).length,
+    }));
+    assert.equal(out.open, 1, `swiping a second row left ${out.open} rows open at once`);
+    assert.equal(out.transformed, 1, 'a row is still slid aside with nothing able to close it');
+    // Left open deliberately would bleed into the next check: its drag starts on this row, and the
+    // tap that follows would close this one and open the item instead.
+    await page.evaluate(() => closeOpenSwipe());
+    await page.waitForTimeout(250);
+  });
+
+  await check('the revealed buttons cover exactly the strip the row vacates', async () => {
+    /* The buttons sit behind the row content, and only the strip covering them makes them invisible
+       until the swipe. As a bare flex or grid item the strip was only as wide as its own text, so
+       every closed row showed a slice of its own buttons beside its title. */
+    await page.evaluate(() => {
+      state.items = [
+        { id: 'k1', kind: 'text', title: 'Short', done: false, created: 3 },
+        { id: 'k2', kind: 'text', title: 'Also short', done: false, created: 2 },
+      ];
+      switchView('inbox');
+    });
+    await page.waitForTimeout(350);
+    const out = await page.evaluate(() => {
+      const row = document.querySelector('#inboxList .task-row');
+      const body = row.querySelector('.swipe-row-body');
+      const actions = row.querySelector('.swipe-actions');
+      const r = row.getBoundingClientRect();
+      const b = body.getBoundingClientRect();
+      const a = actions.getBoundingClientRect();
+      return {
+        open: row.classList.contains('swiped-open'),
+        uncovered: Math.round(Math.max(0, r.width - b.width)),
+        spillsBottom: Math.round(a.bottom - r.bottom),
+        spillsTop: Math.round(r.top - a.top),
+      };
+    });
+    assert.equal(out.open, false, 'precondition: the row should start closed');
+    assert.ok(out.uncovered <= 2,
+      `the row content leaves ${out.uncovered}px of the revealed buttons showing on a closed row`);
+    assert.ok(out.spillsBottom <= 1 && out.spillsTop <= 1,
+      'the revealed buttons spill past the top or bottom of their own row');
+  });
+
+  await check('the revealed buttons stay pinned to the edge they were pulled from', async () => {
+    /* The actions are positioned against the row, so translating the row moved them along with it
+       and left them stranded mid-list. This is a different failure from the reveal width, and it is
+       the one that looked like a bug in the swipe rather than in the layout. */
+    await page.evaluate(() => {
+      state.items = [{ id: 'p1', kind: 'text', title: 'Pin me', done: false, created: 1 }];
+      switchView('inbox');
+    });
+    await page.waitForTimeout(350);
+    const box = await page.locator('#inboxList .task-row').first().boundingBox();
+    await page.mouse.move(box.x + box.width - 30, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + box.height / 2, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(320);
+    const out = await page.evaluate(() => {
+      const row = document.querySelector('#inboxList .task-row');
+      const actions = row.querySelector('.swipe-actions');
+      const a = actions.getBoundingClientRect();
+      const list = document.getElementById('inboxList').getBoundingClientRect();
+      return {
+        open: row.classList.contains('swiped-open'),
+        inset: Math.round(list.right - a.right),
+        // The buttons have to be exactly as wide as the slide, or the gap shows as bare row.
+        width: Math.round(a.width),
+        travel: Math.abs(parseFloat(
+          row.querySelector('.swipe-row-body').style.transform.match(/-?[\d.]+/)[0])),
+      };
+    });
+    assert.ok(out.open, 'precondition: the row should be open');
+    // The list's own right edge is the edge the finger pulled from, give or take the row's border.
+    assert.ok(out.inset <= 4,
+      `the revealed buttons sit ${out.inset}px inside the right edge instead of on it`);
+    assert.ok(Math.abs(out.width - out.travel) <= 2,
+      `the buttons are ${out.width}px wide but the row slides ${out.travel}px, `
+      + 'so the gap between the text and the first button shows bare row');
+    // Same reason as above: an open row here swallows the next check's gesture and opens a panel.
+    await page.evaluate(() => closeOpenSwipe());
+    await page.waitForTimeout(250);
+  });
+
   await check('a vertical drag scrolls instead of swiping', async () => {
     /* Getting this wrong makes a long list unscrollable on the phone, which is worse than having no
        swipe at all. */
+    await page.evaluate(() => {
+      if (typeof closePanel === 'function') closePanel();
+      if (typeof closeOpenSwipe === 'function') closeOpenSwipe();
+    });
+    await page.waitForTimeout(200);
     await page.evaluate(() => {
       state.items = [
         { id: 'v1', kind: 'text', title: 'One', done: false, created: 3 },
@@ -471,6 +601,10 @@ try {
       switchView('inbox');
     });
     await page.waitForTimeout(350);
+    // Close anything still slid aside, and park the pointer off the list, so this gesture starts
+    // from the same clean state a person arriving at the Inbox would have.
+    await page.evaluate(() => closeOpenSwipe());
+    await page.mouse.move(5, 5);
     const box = await (await page.locator('#inboxList .task-row').first()).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -480,7 +614,12 @@ try {
     await page.waitForTimeout(300);
     const out = await page.evaluate(() => {
       const row = document.querySelector('#inboxList .task-row');
-      return { open: row.classList.contains('swiped-open'), transform: row.style.transform };
+      return {
+        open: row.classList.contains('swiped-open'),
+        // The transform lives on the strip. Reading the row's own transform would be empty for
+        // every swipe, so this assertion would pass without ever looking at the gesture.
+        transform: row.querySelector('.swipe-row-body')?.style.transform || '',
+      };
     });
     assert.equal(out.open, false, 'a vertical scroll was read as a swipe');
     assert.equal(out.transform, '', 'a vertical scroll left the row transformed');
@@ -488,10 +627,15 @@ try {
 
   await check('the swipe action actually acts, and is undoable', async () => {
     await page.evaluate(() => {
+      if (typeof closePanel === 'function') closePanel();
+      if (typeof closeOpenSwipe === 'function') closeOpenSwipe();
       state.items = [{ id: 's9', kind: 'text', title: 'Archive by swipe', done: false, created: 1 }];
       switchView('inbox');
     });
     await page.waitForTimeout(350);
+    // Park the pointer away from the list, so the drag below cannot begin on whatever the previous
+    // check happened to leave under the cursor.
+    await page.mouse.move(5, 5);
     const box = await (await page.locator('#inboxList .task-row').first()).boundingBox();
     await page.mouse.move(box.x + box.width - 30, box.y + box.height / 2);
     await page.mouse.down();
@@ -600,6 +744,65 @@ try {
       assert.ok(opened.open, 'tapping the palette button on a phone did not open it');
       assert.equal(opened.focused, 'commandInput', 'the palette opened without taking focus');
       assert.ok(opened.rows > 5, `the palette opened empty on a phone (${opened.rows} rows)`);
+    } finally {
+      await phone.close();
+    }
+  });
+
+  await check('the palette is a panel, not a hole in the page', async () => {
+    /* The palette reuses .ask-overlay but has a class of its own, and for a long time that class had
+       no rule anywhere in the stylesheet. An unstyled div is transparent and shrink-to-fit, so the
+       dashboard showed straight through it and the input was only as wide as its default size, which
+       cut the placeholder off mid-word.
+
+       Fourteen desktop checks opened this palette, found rows in it and matched text in it, and every
+       one of them passed while it looked like that. */
+    const phone = await browser.newPage({ viewport: { width: 360, height: 780 }, hasTouch: true });
+    try {
+      await phone.goto(testUrl(PORT), { waitUntil: 'commit' });
+      await phone.waitForFunction(() => typeof window.openCommandPalette === 'function');
+      await phone.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
+      await phone.evaluate(() => openCommandPalette());
+      await phone.waitForTimeout(300);
+
+      const out = await phone.evaluate(() => {
+        const panel = document.querySelector('#commandPalette .ask-panel');
+        const input = document.getElementById('commandInput');
+        const list = document.getElementById('commandList');
+        const cs = getComputedStyle(panel);
+        // Measure the placeholder as rendered, so this fails on a real clip rather than a guess.
+        const probe = document.createElement('span');
+        probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+        probe.style.font = getComputedStyle(input).font;
+        probe.textContent = input.placeholder;
+        document.body.appendChild(probe);
+        const needed = probe.getBoundingClientRect().width;
+        probe.remove();
+        return {
+          // An alpha of 0 is what let the page show through.
+          alpha: cs.backgroundColor === 'rgba(0, 0, 0, 0)' ? 0 : 1,
+          overflow: cs.overflow,
+          display: cs.display,
+          panelWidth: Math.round(panel.getBoundingClientRect().width),
+          overlayWidth: document.getElementById('commandPalette').clientWidth,
+          roomNeeded: Math.ceil(needed),
+          roomAvailable: input.clientWidth,
+          // The hint strip has to stay inside the panel, not fall off the bottom of the screen.
+          hintInside: list.getBoundingClientRect().bottom
+            <= panel.getBoundingClientRect().bottom + 1,
+        };
+      });
+
+      assert.equal(out.alpha, 1, 'the palette panel is transparent, so the app shows through it');
+      assert.notEqual(out.overflow, 'visible',
+        'the palette does not clip its own contents, so they run past the panel');
+      assert.equal(out.display, 'flex', 'the palette panel is not a column, so it cannot scroll');
+      assert.ok(out.panelWidth >= out.overlayWidth - 24,
+        `the palette panel is only ${out.panelWidth}px wide on a ${out.overlayWidth}px screen`);
+      assert.ok(out.roomAvailable >= out.roomNeeded,
+        `the palette placeholder needs ${out.roomNeeded}px and has ${out.roomAvailable}px, `
+        + 'so it is cut off mid-word');
+      assert.ok(out.hintInside, 'the palette list runs past the bottom of the panel');
     } finally {
       await phone.close();
     }
