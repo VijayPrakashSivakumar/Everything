@@ -588,6 +588,41 @@ is public; the live probe reads every table as the anonymous role and fails if a
 back. That is the difference between a private app and every capture published to anyone who loads
 the page.
 
+### The other three collections — and the half-fix
+
+Fixing items and stopping there would have been the worst outcome. `startSupabaseSync` had the
+identical bug **three lines further down**, for the collections that had no merge at all:
+
+```js
+if (projectRows) state.projects = projectRows.map(...)   // wholesale replace
+if (goalRows)     state.goals    = goalRows.map(...)     // wholesale replace
+if (peopleRows)   state.people   = peopleRows.map(...)   // wholesale replace
+```
+
+and their realtime path was `list[index] = { ...list[index], ...normalized }` — a last-write-wins
+spread. A person added on a phone with no signal vanished on the next load, along with their
+phone number and every item linked to them. **This was running in production.**
+
+`mergeRecordLists()` / `mergeRecordPair()` now cover all three, driven by one loop over
+`["project", "goal", "person"]`, so a collection added later is picked up rather than silently
+skipped. The conflict card already existed and needed no change.
+
+### One asymmetry, stated plainly
+
+`items` uses the **client's** edit time, deliberately — that is migration 009, and the trigger was
+left off on purpose.
+
+`projects`, `goals` and `people` use the **server's** clock, because those three have carried an
+`updated_at` trigger since migration 002. Dropping it to match items was declined in favour of not
+touching working tables.
+
+What that costs, stated honestly: those three conflicts are ordered by *when the server recorded
+the write*, not when the edit was made. In practice that is a difference of seconds, and it buys a
+single consistent clock instead of comparing two device clocks that cannot be trusted to agree — so
+it is a defensible trade, but it is not the same guarantee as items, and it should not be described
+as though it were. Nothing is lost either way: the losing version is kept and shown regardless of
+which clock decided the order.
+
 ## Typo-tolerant search
 The exact matcher is substring-only, so a plural or a single typo found nothing. A fuzzy fallback now
 runs when — and only when — the exact pass returns nothing, so existing results keep their exact

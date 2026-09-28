@@ -242,6 +242,14 @@ function normaliseStructuredRecord(kind, row) {
     scope: row.scope || row.visibility || row.metadata?.scope || "shared",
     ownerId: row.user_id || row.owner_id || null,
     created: row.created ?? (row.created_at ? Date.parse(row.created_at) : Date.now()),
+    // projects/goals/people already carry updated_at with a server-side trigger, so unlike items
+    // this is the server's clock and not the edit time. That is a real asymmetry and is the
+    // reason their conflicts are ordered by "when the server recorded the write" — a difference of
+    // seconds in practice, and a single consistent clock rather than a comparison across two
+    // device clocks that cannot be trusted to agree.
+    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : 0,
+    // A row that came back from the server is by definition already stored there.
+    dirty: false,
   };
   if (kind === "goal") {
     normalized.done = row.done ?? row.status === "completed";
@@ -257,16 +265,115 @@ function normaliseStructuredRecord(kind, row) {
   return normalized;
 }
 
+/* --- Conflict-safe merge for projects, goals and people ---------------------------------
+
+   These three had the same bug that items had, in the same place, and it was left in place when
+   items was fixed:
+
+     if (projectRows) state.projects = projectRows.map(...)   // wholesale replace
+     if (goalRows)     state.goals    = goalRows.map(...)     // wholesale replace
+     if (peopleRows)   state.people   = peopleRows.map(...)   // wholesale replace
+
+   A person added on a phone with no signal vanished on the next load, along with their phone
+   number and every item linked to them. The same three rules as items apply here — keep what the
+   server has never seen, take the server's copy when this device is clean, and on a genuine
+   divergence keep *both* versions rather than silently picking one. */
+
+const RECORD_LIST_KEY = { project: "projects", goal: "goals", person: "people" };
+
+function recordTitle(kind, record) {
+  return String(record?.title || record?.name || "Untitled").trim();
+}
+
+/* Identity and sync bookkeeping are excluded: two copies of one record differ on those by
+   definition, and counting that as a difference would report a conflict on every single sync. */
+function recordContentKey(record) {
+  if (!record) return "";
+  const copy = { ...record };
+  ["id", "clientId", "backendId", "created", "updatedAt", "dirty", "ownerId", "scope"].forEach(
+    (key) => delete copy[key],
+  );
+  // Sorted keys, because JSON.stringify preserves insertion order and two records assembled by
+  // different code paths would otherwise serialise differently and look like a conflict.
+  return JSON.stringify(Object.keys(copy).sort().map((key) => [key, copy[key]]));
+}
+
+function mergeRecordPair(localRecord, remoteRecord, kind) {
+  const clean = { ...remoteRecord, dirty: false };
+  if (localRecord.dirty !== true) return { item: clean, conflict: null };
+  if (recordContentKey(localRecord) === recordContentKey(remoteRecord)) {
+    return { item: clean, conflict: null };
+  }
+
+  const localStamp = Number(localRecord.updatedAt) || 0;
+  const remoteStamp = Number(remoteRecord.updatedAt) || 0;
+  const localWins = localStamp > remoteStamp;
+  const chosen = localWins ? { ...localRecord } : { ...remoteRecord };
+  // The copy that lost is still an unsaved edit, so it still has to be pushed.
+  chosen.dirty = localWins;
+
+  return {
+    item: chosen,
+    conflict: {
+      id: localRecord.id,
+      kind,
+      at: Date.now(),
+      kept: localWins ? "local" : "remote",
+      title: recordTitle(kind, localRecord) || recordTitle(kind, remoteRecord),
+      local: { ...localRecord },
+      remote: { ...remoteRecord },
+    },
+  };
+}
+
+function mergeRecordLists(localRecords, remoteRecords, kind, onPending) {
+  const local = Array.isArray(localRecords) ? localRecords : [];
+  const remote = Array.isArray(remoteRecords) ? remoteRecords : [];
+  const byId = new Map(local.map((record) => [record.id, record]));
+  const seen = new Set();
+  const merged = [];
+  const conflicts = [];
+
+  for (const remoteRecord of remote) {
+    seen.add(remoteRecord.id);
+    const localRecord = byId.get(remoteRecord.id);
+    if (!localRecord) {
+      merged.push({ ...remoteRecord, dirty: false });
+      continue;
+    }
+    const outcome = mergeRecordPair(localRecord, remoteRecord, kind);
+    merged.push(outcome.item);
+    if (outcome.conflict) conflicts.push(outcome.conflict);
+  }
+
+  // Anything the server never had is a local-only edit: keep it, and hand it back.
+  for (const localRecord of local) {
+    if (seen.has(localRecord.id)) continue;
+    merged.push(localRecord);
+    if (onPending) onPending(localRecord);
+  }
+  return { items: merged, conflicts };
+}
+
 function mergeStructuredStateRecord(kind, row) {
   if (!row || !canReadStructuredRow(row)) return;
   const normalized = normaliseStructuredRecord(kind, row);
-  const list = kind === "project" ? state.projects : kind === "goal" ? state.goals : state.people;
+  const list = state[RECORD_LIST_KEY[kind]];
   if (!Array.isArray(list)) return;
   const index = list.findIndex(
     (entry) => entry.id === normalized.id || (normalized.backendId && entry.backendId === normalized.backendId),
   );
-  if (index >= 0) list[index] = { ...list[index], ...normalized };
-  else list.unshift(normalized);
+  if (index < 0) {
+    list.unshift(normalized);
+    return;
+  }
+  /* Merge rather than spread. `list[index] = { ...list[index], ...normalized }` was wholesale
+     last-write-wins: another device's push landed while this one had unsaved edits, and those
+     edits were simply gone. */
+  const outcome = mergeRecordPair(list[index], normalized, kind);
+  list[index] = outcome.item;
+  if (outcome.conflict) recordSyncConflicts([outcome.conflict]);
+  if (outcome.item.dirty) queueStructuredRecordSync(kind, outcome.item);
 }
 
 function removeStructuredStateRecord(kind, row) {
@@ -346,6 +453,10 @@ async function deleteStructuredRecord(kind, record) {
 
 async function persistStructuredRecord(kind, record) {
   if (!structuredSyncAvailable() || !record?.id) return false;
+  /* Same choke point idea as dbSaveItem. Every project/goal/person write lands here, so this is
+     where "this device has an edit the server has not seen" is recorded. */
+  record.updatedAt = Math.max(Date.now(), (Number(record.updatedAt) || 0) + 1);
+  record.dirty = true;
   const payload = buildStructuredRecordPayload(kind, record);
   const result = await structuredRequest(
     `/api/${kind}?household_id=${encodeURIComponent(currentHouseholdId)}`,
@@ -1254,12 +1365,25 @@ async function startSupabaseSync(userId) {
     )
     .subscribe();
 
-  const projectRows = await loadStructuredCollection("projects", "projects");
-  if (projectRows) state.projects = projectRows.map((row) => normaliseStructuredRecord("project", row));
-  const goalRows = await loadStructuredCollection("goals", "goals");
-  if (goalRows) state.goals = goalRows.map((row) => normaliseStructuredRecord("goal", row));
-  const peopleRows = await loadStructuredCollection("people", "people");
-  if (peopleRows) state.people = peopleRows.map((row) => normaliseStructuredRecord("person", row));
+  /* Merge each structured collection, never replace it. See mergeRecordLists() for why: the
+     three `.map()` assignments this replaced deleted every person, goal and project that had
+     been created or edited while the server was unreachable. */
+  for (const kind of ["project", "goal", "person"]) {
+    const key = RECORD_LIST_KEY[kind];
+    const rows = await loadStructuredCollection(key, key);
+    if (!rows) continue;
+    const pending = [];
+    const { items, conflicts } = mergeRecordLists(
+      state[key],
+      rows.map((row) => normaliseStructuredRecord(kind, row)),
+      kind,
+      (record) => pending.push(record),
+    );
+    state[key] = items;
+    recordSyncConflicts(conflicts);
+    pending.forEach((record) => queueStructuredRecordSync(kind, record));
+  }
+  renderSyncConflictBanner();
   renderProjects();
   renderGoals();
   renderNav();

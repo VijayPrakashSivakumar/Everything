@@ -416,6 +416,46 @@ check('an item arriving from the server is never marked dirty', () => {
   assert.match(body, /dirty: false/, 'a row read from the server must be clean');
 });
 
+check('the structured collections merge instead of being replaced', () => {
+  /* The same data-loss bug that was fixed for items was still live here, in the same function,
+     three lines apart. Fixing one collection of four and leaving the siblings looking handled is
+     the failure mode these guards exist to prevent. */
+  const body = stripComments(betweenBlock('async function startSupabaseSync', 'renderProjects();'));
+  assert.doesNotMatch(
+    body,
+    /state\.(projects|goals|people)\s*=\s*\w+Rows\.map/,
+    'a structured collection is still replaced wholesale — that deleted people, goals and projects added offline',
+  );
+  assert.match(body, /for \(const kind of \["project", "goal", "person"\]\)/,
+    'all three structured collections must go through the merge loop');
+  assert.match(body, /mergeRecordLists\(/, 'the structured load path must merge');
+  assert.match(body, /queueStructuredRecordSync\(kind, record\)/,
+    'a record the server never saw must be pushed, not merely kept locally');
+});
+
+check('a structured record arriving by realtime is merged, not spread over', () => {
+  const body = stripComments(between('function mergeStructuredStateRecord', 'function removeStructuredStateRecord'));
+  assert.doesNotMatch(
+    body,
+    /list\[index\]\s*=\s*\{\s*\.\.\.list\[index\]/,
+    'the realtime path must not last-write-wins a whole structured record',
+  );
+  assert.match(body, /mergeRecordPair\(/, 'the realtime path must merge the record it received');
+  assert.match(body, /recordSyncConflicts\(/, 'a structured conflict must be reported');
+});
+
+check('a structured write marks the record dirty and stamps the edit time', () => {
+  const body = stripComments(between('async function persistStructuredRecord', 'async function processStructuredOperation'));
+  assert.match(body, /record\.dirty\s*=\s*true/, 'a local edit must be marked dirty');
+  assert.match(body, /record\.updatedAt\s*=\s*Math\.max\(/, 'the edit time must be monotonic');
+});
+
+check('a record read from the server is never marked dirty', () => {
+  const body = stripComments(between('function normaliseStructuredRecord', 'function mergeStructuredStateRecord'));
+  assert.match(body, /dirty: false/, 'a row read from the server must be clean');
+  assert.match(body, /updatedAt: row\.updated_at/, 'the server timestamp must be read, not invented');
+});
+
 check('both search entry points share one matcher', () => {
   assert.match(js, /function searchMatches\(q\)/, 'searchMatches helper missing');
   // Exactly one place may decide what matches. searchMatches and the two helpers it delegates

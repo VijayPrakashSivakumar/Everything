@@ -164,6 +164,78 @@ try {
     assert.equal(out.visible, true, 'the user was never told');
   });
 
+  await check('a person added offline survives the pull', async () => {
+    // The same catastrophic case as items, in the collection that hurts most to lose: a
+    // contact record carries a phone number, an email and every item linked to it.
+    const out = await page.evaluate(() => {
+      const pending = [];
+      const merged = mergeRecordLists(
+        [{ id: 'p1', name: 'Priya', phone: '555-0100', updatedAt: 5000, dirty: true }],
+        [{ id: 'p9', name: 'Someone else', updatedAt: 9000 }],
+        'person',
+        (r) => pending.push(r.id),
+      );
+      return { kept: merged.items.some((i) => i.id === 'p1'), pending };
+    });
+    assert.equal(out.kept, true, 'a person added offline was discarded');
+    assert.deepEqual(out.pending, ['p1'], 'a person the server never saw must be pushed');
+  });
+
+  await check('a goal edited on two devices keeps both versions', async () => {
+    const out = await page.evaluate(() => {
+      const merged = mergeRecordLists(
+        [{ id: 'g1', title: 'Run a marathon', status: 'active', updatedAt: 9000, dirty: true }],
+        [{ id: 'g1', title: 'Run a marathon', status: 'completed', updatedAt: 4000 }],
+        'goal',
+      );
+      return merged;
+    });
+    assert.equal(out.items[0].status, 'active', 'the newer local edit should win');
+    assert.equal(out.conflicts.length, 1, 'a divergent goal must be reported');
+    assert.equal(out.conflicts[0].remote.status, 'completed',
+      'the losing goal version was thrown away instead of kept');
+    assert.equal(out.conflicts[0].kind, 'goal', 'the conflict must say which collection it came from');
+  });
+
+  await check('a clean project list takes the server copy silently', async () => {
+    const out = await page.evaluate(() => mergeRecordLists(
+      [{ id: 'j1', name: 'Old name', updatedAt: 1000, dirty: false }],
+      [{ id: 'j1', name: 'New name', updatedAt: 2000 }],
+      'project',
+    ));
+    assert.equal(out.items[0].name, 'New name');
+    assert.deepEqual(out.conflicts, [], 'an ordinary sync reported a conflict');
+  });
+
+  await check('identical record content is not a conflict', async () => {
+    // Key order must not decide this: the two sides are assembled by different code paths.
+    const out = await page.evaluate(() => mergeRecordLists(
+      [{ id: 'p2', name: 'Sam', email: 's@x.com', updatedAt: 9999, dirty: true }],
+      [{ id: 'p2', email: 's@x.com', name: 'Sam', updatedAt: 1000 }],
+      'person',
+    ));
+    assert.deepEqual(out.conflicts, [], 'identical content was flagged, so key order is leaking in');
+  });
+
+  await check('every structured collection is merged, not replaced', () => {
+    // The guards in ui-structure.test.mjs cover this at the source level; this is the behavioural
+    // statement of the same rule so a future collection added to the loop is obvious.
+    return page.evaluate(() => {
+      const out = [];
+      for (const kind of ['project', 'goal', 'person']) {
+        const merged = mergeRecordLists(
+          [{ id: `${kind}-local`, name: 'Local only', updatedAt: 1, dirty: true }],
+          [{ id: `${kind}-remote`, name: 'Remote only', updatedAt: 2 }],
+          kind,
+        );
+        out.push(merged.items.length);
+      }
+      return out;
+    }).then((counts) => {
+      assert.deepEqual(counts, [2, 2, 2], 'a collection dropped a local-only record');
+    });
+  });
+
   await check('the conflict card appears in the review view', async () => {
     const r = await page.evaluate(() => ({
       card: !!document.getElementById('syncConflictCard'),
