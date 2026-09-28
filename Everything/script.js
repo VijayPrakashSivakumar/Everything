@@ -1301,6 +1301,7 @@ function showSettingsTab(tab) {
   });
   panel.scrollIntoView({ block: "nearest" });
   if (tab === "ai") renderLocalModelSettings();
+  if (tab === "notifications") renderMorningDigestSettings();
   refreshIcons();
 }
 
@@ -8356,7 +8357,256 @@ async function deliverItemReminder(item, options) {
     remindersInFlight.delete(item.id);
   }
 }
-/* ---------- reminder scheduling ---------- */
+/* ---------- the morning digest ----------
+
+   One notification a day, at a time you choose, saying what actually needs you. Everything else in
+   this app is pull-based: you open it, and it tells you what is on. That works right up until the
+   thing you needed was the reason you forgot to open it.
+
+   A daily notification is the easiest thing in this app to get wrong. Get it wrong once and it is
+   muted for good, and a muted digest is worse than none — it is the "pressure" the rest of this app
+   is careful to avoid. So three rules, all enforced below:
+
+     opt in        never on by default
+     say little    counts and two or three names, never the whole list
+     stay quiet    when there is genuinely nothing to say, say nothing at all  */
+
+const MORNING_DIGEST_KEY = "everything_morning_digest_v1";
+const DIGEST_DEFAULT_HOUR = 8;
+const DIGEST_MAX_NAMES = 3;
+/* A waiting item with no check-back day that has sat this long is the one thing a pull-based view
+   never surfaces: it is not overdue, not due today, and not in anybody's way. */
+const DIGEST_WAITING_STALE_DAYS = 14;
+
+function readMorningDigestSettings() {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(MORNING_DIGEST_KEY) || "{}") || {};
+  } catch (error) {
+    saved = {};
+  }
+  if (typeof saved !== "object" || Array.isArray(saved)) saved = {};
+  const hour = Number(saved.hour);
+  return {
+    enabled: saved.enabled === true,
+    hour: Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : DIGEST_DEFAULT_HOUR,
+    lastSentOn: typeof saved.lastSentOn === "string" ? saved.lastSentOn : "",
+  };
+}
+
+function writeMorningDigestSettings(patch) {
+  const next = { ...readMorningDigestSettings(), ...patch };
+  try {
+    localStorage.setItem(MORNING_DIGEST_KEY, JSON.stringify(next));
+  } catch (error) {
+    /* Private mode: today's digest still sends, it just cannot remember that it did. */
+  }
+  return next;
+}
+
+/* A local calendar day, not UTC. toISOString would roll over at midnight UTC, which is the wrong
+   day for most of the world and would send the digest at an odd hour — or twice. */
+function localDayKey(date) {
+  const d = new Date(date || Date.now());
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/* Builds the digest, or null when there is nothing worth interrupting anyone for. Reuses the same
+   isOverdue / isToday the Today view and the notification bell already use, so the digest can never
+   disagree with the rest of the app about what is late. */
+function buildMorningDigest(now) {
+  const at = new Date(now || Date.now());
+  const open = currentItems().filter((item) => !item.done && !isArchived(item));
+
+  const overdue = open.filter((item) => isOverdue(item));
+  const dueToday = open.filter((item) => !isOverdue(item) && isToday(item.dueDate));
+  const staleCutoff = at.getTime() - DIGEST_WAITING_STALE_DAYS * 86400000;
+  const staleWaiting = open.filter(
+    (item) =>
+      item.kind === "waiting" &&
+      !item.dueDate &&
+      Number(item.created || 0) > 0 &&
+      Number(item.created) < staleCutoff,
+  );
+
+  // The quiet rule, in one place. Nothing needs you, so nothing is sent.
+  if (!overdue.length && !dueToday.length && !staleWaiting.length) return null;
+
+  const parts = [];
+  if (overdue.length) parts.push(`${overdue.length} overdue`);
+  if (dueToday.length) parts.push(`${dueToday.length} due today`);
+  if (staleWaiting.length) parts.push(`${staleWaiting.length} waiting too long`);
+
+  // Names the worst first, because the worst is the reason to read the rest.
+  const ranked = [
+    ...overdue.map((item) => ({ item, rank: 0 })),
+    ...dueToday.map((item) => ({ item, rank: 1 })),
+    ...staleWaiting.map((item) => ({ item, rank: 2 })),
+  ].sort((a, b) => a.rank - b.rank);
+
+  const named = ranked
+    .slice(0, DIGEST_MAX_NAMES)
+    .map((entry) => entry.item.title)
+    .filter(Boolean);
+  const rest = ranked.length - named.length;
+
+  return {
+    counts: { overdue: overdue.length, dueToday: dueToday.length, staleWaiting: staleWaiting.length },
+    title: `Good ${at.getHours() < 12 ? "morning" : at.getHours() < 17 ? "afternoon" : "evening"} · ${parts.join(" · ")}`,
+    body: named.length
+      ? `${named.join(" · ")}${rest > 0 ? ` · and ${rest} more` : ""}`
+      : parts.join(" · "),
+    // A tap opens Today, which is where all of these live, rather than an arbitrary item.
+    url: "./?view=today",
+  };
+}
+
+let digestInFlight = false;
+
+/* Sends today's digest, at most once. Every early return is a reason *not* to interrupt someone,
+   and each one says which rule stopped it — which is the difference between a digest people keep
+   and one they mute. */
+async function deliverMorningDigest(reason) {
+  const settings = readMorningDigestSettings();
+  if (!settings.enabled) return { sent: false, why: "not switched on" };
+  if (digestInFlight) return { sent: false, why: "already sending" };
+  if (!notificationSupported() || Notification.permission !== "granted") {
+    return { sent: false, why: "notifications are not permitted on this device" };
+  }
+
+  const today = localDayKey();
+  if (settings.lastSentOn === today) return { sent: false, why: "already sent today" };
+
+  const digest = buildMorningDigest();
+  if (!digest) {
+    // Nothing needed you, so nothing happened — and the day is deliberately NOT marked as sent.
+    // Marking it would suppress the rest of the day: a task snoozed to this afternoon would never
+    // be mentioned. Rebuilding an empty digest every 30s costs one array filter; losing a real
+    // item to save that is a bad trade.
+    return { sent: false, why: "nothing to report" };
+  }
+
+  digestInFlight = true;
+  try {
+    const shown = await showLocalNotification(digest.title, {
+      body: digest.body,
+      // One tag: a second digest on the same day replaces the first rather than stacking.
+      tag: "everything-morning-digest",
+      renotify: true,
+      requireInteraction: false,
+      data: { url: digest.url, digest: true },
+      actions: [{ action: "open", title: "Open" }],
+    });
+
+    if (shown) writeMorningDigestSettings({ lastSentOn: today });
+    return { sent: shown, why: shown ? "sent" : "the notification could not be shown" };
+  } finally {
+    digestInFlight = false;
+  }
+}
+
+/* The catch-up. Called on the same beats as the reminder check — startup, every 30s, the tab
+   becoming visible, the network returning — so a digest missed because the phone was asleep is
+   delivered on the next wake, not skipped. */
+function checkMorningDigest(reason) {
+  const settings = readMorningDigestSettings();
+  if (!settings.enabled) return;
+
+  const now = new Date();
+  // Before the chosen hour, it stays quiet. Catching up tomorrow's overdue items tomorrow is
+  // exactly what the overdue line in the digest is for.
+  if (now.getHours() < settings.hour) return;
+  if (settings.lastSentOn === localDayKey(now)) return;
+
+  deliverMorningDigest(reason || "check");
+}
+
+function setMorningDigestEnabled(enabled) {
+  writeMorningDigestSettings({ enabled: !!enabled, lastSentOn: "" });
+  renderMorningDigestSettings();
+  if (enabled) {
+    // Turning it on should not wait until tomorrow, but it still has to be after the chosen hour
+    // and it still says nothing if there is genuinely nothing to say.
+    checkMorningDigest("enabled");
+  }
+}
+
+function setMorningDigestHour(hour) {
+  const value = Number(hour);
+  if (!Number.isInteger(value) || value < 0 || value > 23) return;
+  writeMorningDigestSettings({ hour: value, lastSentOn: "" });
+  renderMorningDigestSettings();
+}
+
+/* The settings copy answers the only two questions that matter — is it on, and what will it
+   actually say — because "a daily notification" with no stated content is how a feature gets
+   switched off in week one and never turned back on. */
+function renderMorningDigestSettings() {
+  const settings = readMorningDigestSettings();
+  const label = document.getElementById("digestToggleLabel");
+  if (label) label.textContent = settings.enabled ? "On" : "Off";
+
+  const select = document.getElementById("digestHourSelect");
+  if (select && !select.options.length) {
+    for (let hour = 0; hour < 24; hour += 1) {
+      const option = document.createElement("option");
+      option.value = String(hour);
+      option.textContent = `${String(hour).padStart(2, "0")}:00`;
+      select.appendChild(option);
+    }
+  }
+  if (select) select.value = String(settings.hour);
+
+  const status = document.getElementById("digestStatusLine");
+  if (!status) return;
+
+  if (!settings.enabled) {
+    status.textContent = "Off. Everything still works as it does now — nothing is sent.";
+    return;
+  }
+  if (!notificationSupported() || Notification.permission !== "granted") {
+    status.textContent =
+      "On, but this device has not allowed notifications, so nothing can be sent. Turn them on above.";
+    return;
+  }
+  const digest = buildMorningDigest();
+  status.textContent = digest
+    ? `On. Today it would say: "${digest.title} — ${digest.body}". One message a day, never more.`
+    : "On. There is nothing that needs you today, so it will stay silent today.";
+}
+
+function toggleMorningDigest() {
+  const settings = readMorningDigestSettings();
+  setMorningDigestEnabled(!settings.enabled);
+}
+
+/* "See what it would say" shows a real notification using the real text, without sending today's
+   digest and without marking today as done — so it can be tried at any hour, as often as needed. */
+async function previewMorningDigest() {
+  const digest = buildMorningDigest();
+  if (!digest) {
+    const status = document.getElementById("digestStatusLine");
+    if (status) {
+      status.textContent =
+        "Nothing to report right now — which is exactly when a real digest would say nothing too.";
+    }
+    return;
+  }
+  if (!(await requestNotificationPermission())) {
+    const status = document.getElementById("digestStatusLine");
+    if (status) status.textContent = "Notifications are blocked for Everything, so there is nothing to preview.";
+    return;
+  }
+  await showLocalNotification(digest.title, {
+    body: `${digest.body}  ·  (preview)`,
+    tag: "everything-morning-digest-preview",
+    data: { url: digest.url, digest: true },
+    actions: [{ action: "open", title: "Open" }],
+  });
+  renderMorningDigestSettings();
+}
+
 
 function pendingReminderPayloads() {
   return currentItems()
@@ -8428,6 +8678,9 @@ function cancelReminderFor(id) {
    device was offline reaches the user as soon as anything changes. */
 function runReminderCheck(reason) {
   refreshReminderSchedule();
+  // The digest rides on the same beats, so it needs no timer of its own and cannot drift out of
+  // step with the reminders it sits beside.
+  checkMorningDigest(reason);
 
   const now = Date.now();
 
@@ -8480,12 +8733,14 @@ function applyNotificationIntentFromUrl() {
   const action = params.get("notifAction");
   const actionItemId = params.get("itemId");
   const openItemId = params.get("item");
+  const openView = params.get("view");
 
-  if (!action && !openItemId) return;
+  if (!action && !openItemId && !openView) return;
 
   params.delete("notifAction");
   params.delete("itemId");
   params.delete("item");
+  params.delete("view");
 
   const query = params.toString();
   history.replaceState(
@@ -8496,6 +8751,11 @@ function applyNotificationIntentFromUrl() {
 
   if (action && actionItemId) handleNotificationAction(action, actionItemId);
   else if (openItemId && typeof openPanel === "function") openPanel(openItemId);
+  // The digest opens Today, where everything it lists already lives. Guarded on a real view name,
+  // because this comes out of a URL and switchView writes to history.
+  else if (openView && typeof switchView === "function" && /^[a-z-]+$/.test(openView)) {
+    switchView(openView);
+  }
 }
 
 function initNotificationChannel() {

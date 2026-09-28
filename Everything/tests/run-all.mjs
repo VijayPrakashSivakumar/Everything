@@ -41,6 +41,8 @@ const SUITES = [
   { name: 'voice', file: 'voice-understanding-probe.mjs', timeoutMs: 120000 },
   // The next-step card, and above all that it stops asking once it has been turned down.
   { name: 'nextaction', file: 'next-action-probe.mjs', timeoutMs: 120000 },
+  // Mostly about silence: a daily notification that nags is worse than none.
+  { name: 'digest', file: 'morning-digest-probe.mjs', timeoutMs: 120000 },
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },

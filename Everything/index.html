@@ -1034,6 +1034,49 @@
 
                   <div class="card" style="margin-top: 14px">
                     <div class="card-head">
+                      <h3>Morning digest</h3>
+                    </div>
+                    <p class="theme-picker-hint">
+                      One notification a day saying what actually needs you: what is
+                      overdue, what is due today, and anything that has been waiting
+                      too long. It stays silent when there is nothing to report, so a
+                      quiet day really is quiet.
+                    </p>
+                    <div class="field-row">
+                      <span class="field-label">Send a daily digest</span>
+                      <button
+                        class="btn"
+                        id="digestToggleBtn"
+                        onclick="toggleMorningDigest()"
+                      >
+                        <span id="digestToggleLabel">Off</span>
+                      </button>
+                    </div>
+                    <div class="field-row">
+                      <span class="field-label">Arrive at</span>
+                      <select
+                        id="digestHourSelect"
+                        class="theme-scheme-select"
+                        onchange="setMorningDigestHour(this.value)"
+                      ></select>
+                    </div>
+                    <p
+                      id="digestStatusLine"
+                      style="color: var(--muted); font-size: 12.5px; margin: 10px 0 0"
+                    ></p>
+                    <div class="field-row" style="margin-top: 12px">
+                      <span class="field-label">Preview</span>
+                      <button
+                        class="btn"
+                        onclick="previewMorningDigest()"
+                      >
+                        <span>See what it would say</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="card" style="margin-top: 14px">
+                    <div class="card-head">
                       <h3>Delivered on this device</h3>
                     </div>
                     <div id="notifDeliveryLog"></div>

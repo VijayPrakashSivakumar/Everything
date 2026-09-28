@@ -732,6 +732,85 @@ with their controls at all — clicking a label did not focus the field, and a s
 name for it. Eighteen labels are now associated, which is an accessibility fix independent of the
 tooltips.
 
+## The morning digest
+
+The app was **pull-based only**: you open it, and it tells you what's on. That works right up until
+the thing you needed was the reason you forgot to open it. The morning digest is the one thing that
+speaks first — one notification a day, at a time you choose, saying what actually needs you.
+
+> **Good morning · 2 overdue · 3 due today**
+> Call the bank · Send the invoice · Book the dentist · and 2 more
+
+It counts three things:
+
+| | |
+| --- | --- |
+| **overdue** | open work whose day has passed |
+| **due today** | open work due now |
+| **waiting too long** | a `waiting` item with no check-back day after **14 days** |
+
+That third one is the case a pull-based view never surfaces. It is not overdue, not due today, and
+not in anybody's way — it is simply the thing you asked someone for and then never chased. It is
+also the item most likely to be forgotten entirely.
+
+The counts reuse the same `isOverdue` and `isToday` as the Today view and the notification bell, so
+the digest can never disagree with the rest of the app about what is late.
+
+### It is built to stay quiet
+
+A daily notification is the easiest thing in this app to get wrong. Get it wrong once and it is
+muted for good — and **a muted digest is worse than none**, because it is exactly the "pressure"
+the rest of the app works to avoid. So four rules, each one enforced and each one tested:
+
+- **Off by default.** Nothing is sent until you switch it on.
+- **Silent before your hour.** Never at 2am because the default is 8am.
+- **Silent when there is nothing to say.** `buildMorningDigest` returns `null` and no notification
+  is produced. A quiet day really is quiet.
+- **Never twice in a day**, and one tag, so a second send replaces the first rather than stacking.
+
+**It says little, and names the worst first.** At most three names, then *"and 2 more"*. Overdue is
+ranked ahead of merely due today, because the worst thing is the reason to read the rest.
+
+### A detail that turned out to matter
+
+When there is nothing to report, the day is **not** marked as delivered. The first version did mark
+it, to avoid rebuilding an empty digest every 30 seconds — but that would suppress the rest of the
+day, so a task snoozed to this afternoon would never be mentioned. Rebuilding an empty digest costs
+one array filter; losing a real item to save that is a bad trade.
+
+### Seeing it before you trust it
+
+Settings → Notifications has a toggle, an hour picker, and **"See what it would say"** — which
+shows a real notification with the real text, without sending the day's digest and without marking
+today as done. So it can be tried at any hour, as often as you like. The status line states the
+content out loud:
+
+> *On. Today it would say: "Good morning · 2 overdue — Call the bank · Send the invoice". One
+> message a day, never more.*
+
+A daily notification with no stated content is how a feature gets switched off in week one and never
+turned back on, so the settings copy always says what it will do.
+
+Tapping the digest opens **Today**, where everything it lists already lives. That needed a
+`?view=today` deep link, added to the existing `?item=` / `?notifAction=` handler.
+
+### What it does not do
+
+- **The digest is built on the client**, from the items the app has loaded. It therefore fires when
+  the app is open or has been opened that day. Items with a real reminder time are still delivered
+  by the service worker and the server cron with the app genuinely closed; the digest is not, yet.
+  Making it work fully closed means computing it in `api/send-due-notifications.js` from Supabase
+  and pushing to every device — the push machinery is all there, the query is not.
+- The **server** would need the same "stay quiet" rules, or it would disagree with the client about
+  whether a day is worth mentioning.
+- Per-user preference is `localStorage` on one device. A phone and a laptop each keep their own
+  setting, and only one of them sends.
+
+`morning-digest-probe.mjs` is mostly about silence: that a quiet day returns no digest at all, that
+it stays quiet before the chosen hour and when switched off, that it never sends twice, and that a
+day with nothing to do is not recorded as a day it was sent. Then, only once it has proved it can
+stay quiet, that it counts correctly, ranks overdue first, and names at most three things.
+
 ## Next-step suggestions, and learning from being turned down
 
 Open an item and, when there is an obvious thing to do with it, the app offers it — *"This has no
