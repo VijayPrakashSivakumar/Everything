@@ -564,6 +564,30 @@ What is deliberately **not** claimed: full CRDT-level convergence. That needs se
 sequence numbers and conditional updates (`where rev = <seen>`), which is a larger change to
 `api/`. Until then the conflict banner is the backstop, and it is the thing to watch for.
 
+### Verifying it, rather than assuming
+
+Two things can silently undo all of this, and both are now checked.
+
+**The migration.** `detectUpdatedAtColumn()` probes once and falls back to "server copy wins" — so
+an unapplied `009` does not error, it just quietly reverts the fix while every offline test still
+passes. `node Everything/tests/ui-structure.test.mjs --live` now fails loudly and names the
+migration to run.
+
+**The wiring.** The tests above call `mergeItemLists()` directly. That leaves the *call site*
+unguarded, and the two destructive lines in this project's history were both call sites. They
+compile, they leave every unit test green, and they delete data. `ui-structure.test.mjs` now
+asserts the load path merges, the realtime path merges, failed writes are parked rather than
+removed, and `dbSaveItem` stamps `updatedAt`/`dirty` — so a regression fails the build.
+
+Those checks strip comments first, because the fix is documented in a comment that quotes the old
+broken line verbatim; a naive search finds the comment describing its own removal and reports the
+fix as the regression.
+
+**Row Level Security** is also asserted live, not assumed. The anon key ships in `script.js`, so it
+is public; the live probe reads every table as the anonymous role and fails if a single row comes
+back. That is the difference between a private app and every capture published to anyone who loads
+the page.
+
 ## Typo-tolerant search
 The exact matcher is substring-only, so a plural or a single typo found nothing. A fuzzy fallback now
 runs when — and only when — the exact pass returns nothing, so existing results keep their exact

@@ -291,10 +291,130 @@ if (process.argv.includes('--live')) {
         `${table} exposes neither created_at nor created — the resolver cannot order it`,
       );
     }
+
+    /* Migrations 008 and 009. Both are checked here because the app degrades *quietly* when
+       they are missing: detectUpdatedAtColumn() probes once and falls back to "server copy
+       wins", so an unapplied 009 does not error — it silently reverts the conflict fix while
+       every offline test still passes. That is precisely the failure a live probe is for. */
+    await check('the live database has the sync and digest migrations applied', async () => {
+      assert.ok(
+        await probe('items', 'updated_at'),
+        'items.updated_at is missing — run supabase/migrations/009_sync_conflict_metadata.sql. ' +
+          'Conflict resolution is inert until it is applied.',
+      );
+      const digest = await fetch(`${base[1]}/rest/v1/digest_preferences?select=user_id&limit=1`, {
+        headers: { apikey: key[1], Authorization: `Bearer ${key[1]}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      assert.ok(
+        digest.ok,
+        'digest_preferences is missing — run supabase/migrations/008_morning_digest.sql.',
+      );
+    });
+
+    /* The anon key ships in script.js, so it is public. It must read nothing. This is checked
+       rather than assumed: a table with RLS disabled would return rows here, and that is the
+       difference between a private app and every capture published to anyone who loads the page.
+       The key column differs per table, and asking for a column a table lacks is a 400 rather
+       than an empty result, which would otherwise read as a failure to connect. */
+    await check('the anonymous role cannot read any table', async () => {
+      const keyColumn = { items: 'id', entries: 'id', people: 'id', digest_preferences: 'user_id' };
+      for (const [table, column] of Object.entries(keyColumn)) {
+        const res = await fetch(`${base[1]}/rest/v1/${table}?select=${column}&limit=5`, {
+          headers: { apikey: key[1], Authorization: `Bearer ${key[1]}` },
+          signal: AbortSignal.timeout(10000),
+        });
+        assert.ok(res.ok, `${table} did not answer the anonymous probe (HTTP ${res.status})`);
+        const rows = await res.json();
+        assert.equal(
+          rows.length,
+          0,
+          `${table} returned ${rows.length} rows to the anonymous key — RLS is not enabled on it`,
+        );
+      }
+    });
   });
 } else {
   results.push('SKIP  live database probe (re-run with --live)');
 }
+
+/* The call sites, not the merge function.
+
+   mergeItemLists() is exhaustively covered by sync-conflict-probe.mjs, but those tests call the
+   pure function directly. Nothing stopped someone replacing the line that *uses* it — and the
+   two destructive lines in this project's history were exactly those:
+
+     state.items = data.map(rowToItem);   // on load
+     state.items[idx] = updated;          // on every realtime push
+
+   Both compile, both leave every unit test green, and both silently delete data. So the wiring
+   is asserted here, where a regression fails the build instead of a person's notes. */
+check('the load path merges instead of replacing the local list', () => {
+  // Comments are stripped first, and deliberately so: the fix is documented in a comment that
+  // quotes the old line verbatim, so a naive match reports the very fix as the regression.
+  const body = stripComments(betweenBlock('async function startSupabaseSync', 'if (structuredChannels.length)'));
+  assert.doesNotMatch(
+    body,
+    /state\.items\s*=\s*data\.map/,
+    'startSupabaseSync must not overwrite state.items wholesale — that discarded every item captured offline',
+  );
+  assert.match(body, /mergeItemLists\(/, 'the load path must merge');
+  assert.match(
+    body,
+    /onPending:[\s\S]*?pending\.forEach\(\(item\) => queueStructuredItemSync\(item\)\)/,
+    'an item the server never saw must be pushed, not merely kept locally',
+  );
+  assert.match(body, /recordSyncConflicts\(conflicts\)/, 'a conflict must be reported, not merged silently');
+});
+
+check('the realtime path merges one record instead of overwriting it', () => {
+  // Anchored on .subscribe(), which is where the items channel handler actually ends.
+  const body = stripComments(between('sbChannel = sb', '.subscribe();'));
+  assert.doesNotMatch(
+    body,
+    /state\.items\[[^\]]+\]\s*=\s*updated/,
+    'a realtime push must not overwrite the local record wholesale',
+  );
+  assert.match(body, /mergeItemPair\(/, 'the realtime path must merge the record it received');
+});
+
+check('a write that never reached the server is kept, not discarded', () => {
+  const body = between('async function flushStructuredSyncQueue', 'window.addEventListener("online"');
+  assert.doesNotMatch(
+    body,
+    /removeStructuredSyncOperation\(operation\.id\);(?=[\s\S]{0,200}console\.warn[\s\S]{0,120}permanently failed)/,
+    'a permanently failed write must not be removed from the queue',
+  );
+  assert.match(body, /markStructuredSyncFailed\(/, 'a failed write must be parked');
+  assert.match(body, /recordUnsyncedItem\(/, 'a failed write must be reported to the user');
+});
+
+check('every local mutation stamps the edit time and marks the item dirty', () => {
+  // dbSaveItem is the single choke point every mutation funnels through, so this is where the
+  // stamp has to live. A new call site that writes an item without going through it would produce
+  // an edit the merge cannot tell from a stale one.
+  const body = between('async function dbSaveItem', 'async function dbDeleteItem');
+  assert.match(body, /item\.updatedAt\s*=\s*Math\.max\(/, 'the edit time must be monotonic');
+  assert.match(body, /item\.dirty\s*=\s*true/, 'a local edit must be marked dirty');
+});
+
+check('the conflict card can resolve a conflict without losing either version', () => {
+  assert.match(js, /function resolveSyncConflict\(id, choice\)/, 'conflicts cannot be resolved');
+  const body = between('function resolveSyncConflict', 'function renderSyncConflictBanner');
+  assert.match(
+    body,
+    /choice === "local" \? conflict\.local : conflict\.remote/,
+    'resolution must use the kept copy rather than discarding the user\'s choice',
+  );
+  assert.match(body, /dirty: true/, 'a resolved choice is still an unsaved edit and must be pushed');
+});
+
+check('an item arriving from the server is never marked dirty', () => {
+  // The server is the store; anything it returns is already stored. Marking it dirty would make
+  // every sync look like a fresh local edit and report a conflict against itself.
+  const body = between('function rowToItem', 'async function detectUpdatedAtColumn');
+  assert.match(body, /dirty: false/, 'a row read from the server must be clean');
+});
 
 check('both search entry points share one matcher', () => {
   assert.match(js, /function searchMatches\(q\)/, 'searchMatches helper missing');
@@ -373,6 +493,41 @@ const between = (start, end) => {
   assert.ok(to > -1, `no ${JSON.stringify(end)} after ${start}`);
   return js.slice(from, to + end.length);
 };
+/* Removes comments before a source match, so a check cannot be fooled by prose.
+
+   This exists because the conflict fix is documented in a comment that quotes the old broken line
+   verbatim (`state.items = data.map(rowToItem)`). A naive search for that line finds the comment
+   describing its own removal and reports the fix as the regression.
+
+   It is a small scanner rather than a regex because the source is full of strings containing
+   "//" — an https:// URL would otherwise swallow the rest of the line and quietly change what
+   every later match sees. */
+const stripComments = (source) => {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < source.length; i += 1) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (quote) {
+      out += c;
+      if (c === '\\') { out += next ?? ''; i += 1; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; out += c; continue; }
+    if (c === '/' && next === '/') { while (i < source.length && source[i] !== '\n') i += 1; out += '\n'; continue; }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i += 1;
+      out += ' ';
+      continue;
+    }
+    out += c;
+  }
+  return out;
+};
+
 // Slices a run of code out of script.js, from `start` up to (but not including) the line that
 // begins with `end`. The end marker is anchored to the start of a line, so a marker like "}" cannot
 // latch onto the closing brace of an earlier function and silently truncate the slice — which is
