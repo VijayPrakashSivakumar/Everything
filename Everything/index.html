@@ -1244,9 +1244,51 @@
                         />
                       </div>
                       <p class="field-hint" style="margin-top: 6px">
-                        Must be reachable from this browser. If the page is served over HTTPS,
-                        only <code>localhost</code> is allowed as a secure origin.
+                        Must be reachable from this browser. On this computer,
+                        <code>http://localhost:11434</code> works. To use it from your
+                        <strong>phone</strong>, put a free Cloudflare tunnel in front of Ollama and
+                        paste that address here instead.
                       </p>
+                      <details style="margin-top: 10px">
+                        <summary
+                          style="cursor: pointer; font-size: 12.5px; color: var(--accent)"
+                        >
+                          Use this from a phone (free)
+                        </summary>
+                        <div
+                          style="
+                            margin-top: 8px;
+                            padding: 10px 12px;
+                            border: var(--border-w) solid var(--border);
+                            border-radius: 10px;
+                            background: var(--bg);
+                            font-size: 12.5px;
+                            line-height: 1.6;
+                          "
+                        >
+                          <p style="margin: 0 0 8px">
+                            In a terminal on the computer running Ollama:
+                          </p>
+                          <code
+                            style="
+                              display: block;
+                              padding: 8px 10px;
+                              background: var(--card);
+                              border-radius: 8px;
+                              overflow-x: auto;
+                              white-space: pre;
+                            "
+                            >cloudflared tunnel --url http://localhost:11434</code
+                          >
+                          <p style="margin: 8px 0 0">
+                            It prints an address like
+                            <code>https://something.trycloudflare.com</code>. Paste that above and
+                            save. A quick tunnel gives a <strong>new address every time it
+                            restarts</strong>, so paste the new one after each restart — the app
+                            tells you when the address it has has gone stale.
+                          </p>
+                        </div>
+                      </details>
                     </div>
 
                     <div style="margin-top: 14px">

@@ -1350,8 +1350,14 @@ function toggleLocalModel(on) {
   renderLocalModelSettings(true);
 }
 
+/* Accepts whatever was pasted — a bare address, or the whole cloudflared banner with the address
+   buried in it — and puts a tidy address in the box, so the field never shows a message of noise
+   that would then be saved and fail. */
 function saveLocalModelUrl(value) {
-  saveLocalModelConfig({ baseUrl: value });
+  const normalised = normaliseLocalModelUrl(value) || LOCAL_MODEL_URL;
+  const field = document.getElementById("localModelUrl");
+  if (field) field.value = normalised;
+  saveLocalModelConfig({ baseUrl: normalised });
   renderLocalModelSettings(true);
 }
 
@@ -7110,6 +7116,42 @@ function saveLocalModelConfig(patch) {
   return next;
 }
 
+/* Cloudflare's quick tunnel hands out a fresh random address every time cloudflared restarts, so a
+   saved one silently goes stale with nothing actually broken. That one fact turns a baffling "not
+   reachable" into an instruction, and it is worth recognising by name. */
+const QUICK_TUNNEL_HOST = /\.trycloudflare\.com$/i;
+
+/* cloudflared prints a banner with the address buried in the middle of it, so pasting the whole
+   line — which is what people actually do — has to work. Pulls the first https:// address out of
+   whatever was pasted and drops the trailing slash. */
+function normaliseLocalModelUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const match = raw.match(/https?:\/\/[^\s"'<>)\]]+/i);
+  const found = (match ? match[0] : raw).replace(/\/+$/, "");
+  return /^https?:\/\//i.test(found) ? found : "";
+}
+
+/* `reason` is written for the Settings card, so a failure has to say which of the several things
+   that can go wrong actually went wrong — "not reachable" alone sends people to check the wrong
+   one, and these are the three that really happen. */
+function localModelFailureReason(baseUrl) {
+  const host = String(baseUrl || "")
+    .replace(/^https?:\/\//i, "")
+    .split("/")[0];
+
+  if (QUICK_TUNNEL_HOST.test(host)) {
+    return (
+      "That is a quick-tunnel address, and Cloudflare gives a new one every time cloudflared " +
+      "restarts. Copy the address cloudflared is printing now and paste it above."
+    );
+  }
+  if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host)) {
+    return "Not reachable. Start Ollama, and add this site's address to OLLAMA_ORIGINS — the browser blocks the call otherwise.";
+  }
+  return "Not reachable. Check that Ollama is running, that the address is right, and that this site is listed in OLLAMA_ORIGINS.";
+}
+
 /* `reason` is written for the Settings card, so a failure says what to do about it. */
 async function localModelStatus(force = false) {
   if (localModelSession && !force) return localModelSession;
@@ -7136,7 +7178,7 @@ async function localModelStatus(force = false) {
     localModelSession = {
       reachable: false,
       models: [],
-      reason: "Not reachable — start Ollama, and allow this site in OLLAMA_ORIGINS",
+      reason: localModelFailureReason(cfg.baseUrl),
     };
   }
   return localModelSession;

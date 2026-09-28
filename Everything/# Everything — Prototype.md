@@ -473,6 +473,45 @@ Then Settings → AI → pick the model.
   normalised in the browser exactly as the server normalises it, so a capture reads the same
   whichever model answered.
 
+### Using it from a phone — the free tunnel
+
+**This is the only thing that stops a local model being useful.** An HTTPS page is not allowed to
+call a plain-HTTP address on your LAN, and a phone resolves `localhost` to *itself*, not your PC. So
+without help, Ollama only ever works on the computer that runs it.
+
+A **Cloudflare quick tunnel** solves it for nothing: no account, no card, no domain. It gives your
+computer a public HTTPS address, which satisfies the browser's rule *and* makes the model reachable
+from anywhere.
+
+```bash
+cloudflared tunnel --url http://localhost:11434
+```
+
+It prints an address like `https://odd-words-here.trycloudflare.com`. Paste that into
+**Settings → AI → Ollama address** and save. On the phone, the model is now free, unlimited, and
+private.
+
+Two things that are guaranteed to happen, and are handled:
+
+- **You will paste the whole cloudflared banner**, because that is what you have on screen.
+  `normaliseLocalModelUrl()` unwraps the address out of it, so a pasted line works as well as a
+  pasted URL. Nonsense falls back to `localhost` rather than being stored and failing forever.
+- **The address changes every time cloudflared restarts.** A saved one goes stale with nothing
+  actually broken, which used to produce a baffling *"Not reachable"*. The app now recognises a
+  `trycloudflare.com` address and says so: *"Cloudflare gives a new one every time cloudflared
+  restarts — copy the address it is printing now."* A genuine outage on some other address is **not**
+  blamed on the tunnel, because that would send you chasing the wrong thing.
+
+The Settings card carries the command inline, under **"Use this from a phone (free)"**.
+
+**What a quick tunnel does not give you:** a *stable* address. If you want the address to stop
+changing, that needs a named tunnel and a domain you own (~$10/year). The quick tunnel is the free
+option and the right one to start with.
+
+**CORS still applies.** Ollama must be told to allow the site's origin. With a random tunnel address
+you cannot pre-list it, so on a machine you trust, `setx OLLAMA_ORIGINS "*"` is the practical answer
+— and it is only exposed while `cloudflared` is running, which you control.
+
 ## Typo-tolerant search
 The exact matcher is substring-only, so a plural or a single typo found nothing. A fuzzy fallback now
 runs when — and only when — the exact pass returns nothing, so existing results keep their exact
