@@ -4089,6 +4089,9 @@ function openPanel(id) {
     : "badge " + (item.priority || (isTask ? `task-status-badge ${taskStatusClass(status)}` : item.kind));
 
   renderRelatedChips(item);
+  // After the related chips, because it reads as the app's own voice about the item rather than as
+  // another piece of the item — and it hides itself the moment nothing applies.
+  renderNextAction(item);
 
   document.getElementById("overlay").classList.add("open");
   document.getElementById("panel").classList.add("open");
@@ -4158,6 +4161,226 @@ function renderRelatedChips(item) {
         .join("")
     : '<p class="empty" style="padding:0;">Nothing related yet.</p>';
 }
+
+/* ---- Next-step suggestions -----------------------------------------------
+
+   Open an item and the app offers the obvious thing to do with it, then remembers what you turned
+   down. Nothing is ever done for you: every suggestion is a button, which is the same rule the rest
+   of the app already follows — "suggestions, not pressure".
+
+   Three rules ship. Each was picked because it is right far more often than not, and because it can
+   be checked against facts already in the app rather than guessed:
+
+     set-date    an open task, or a waiting item, with no day on it at all
+     link-person someone already in your data is named in the text but never linked
+     recur       you have done this exact job before, and last time it repeated
+
+   A file with no date is the one case the first rule is deliberately quiet about: people park those
+   on purpose, and nagging about them teaches the app nothing useful. */
+
+/* Turn a suggestion down twice and the app stops offering it. Twice, not once, because a single
+   dismissal usually means "not right now" — the same item tomorrow may well need a date. */
+const NEXT_ACTION_SKIP_LIMIT = 2;
+/* …but not forever. A run of bad weeks should not silence a suggestion for the rest of the year, so
+   each turn-down loses its weight after this long and the suggestion is allowed back. */
+const NEXT_ACTION_MEMORY_DAYS = 45;
+const NEXT_ACTION_LEARNING_KEY = "everything_next_action_learning_v1";
+
+function readNextActionLearning() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(NEXT_ACTION_LEARNING_KEY) || "{}");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function writeNextActionLearning(learning) {
+  try {
+    localStorage.setItem(NEXT_ACTION_LEARNING_KEY, JSON.stringify(learning));
+  } catch (error) {
+    /* Private mode: the suggestion still works, it just cannot remember. */
+  }
+}
+
+/* Records a turn-down. Dismissals older than the memory window decay by one rather than vanishing,
+   so a suggestion that was wrong three months ago gets a fair hearing again. */
+function noteNextActionDismissed(id) {
+  if (!id) return;
+  const learning = readNextActionLearning();
+  const entry = learning[id] && typeof learning[id] === "object" ? learning[id] : {};
+  const lastAt = Number(entry.lastAt) || 0;
+  const days = (Date.now() - lastAt) / 86400000;
+  const previous = Number(entry.skips) || 0;
+  const decayed = days > NEXT_ACTION_MEMORY_DAYS ? Math.max(0, previous - 1) : previous;
+  learning[id] = { skips: decayed + 1, lastAt: Date.now() };
+  writeNextActionLearning(learning);
+}
+
+/* Taking a suggestion is the strongest signal there is, and it clears the memory entirely: someone
+   who acted on "give it a day" and then acted on it again should never be asked to stop. */
+function noteNextActionAccepted(id) {
+  if (!id) return;
+  const learning = readNextActionLearning();
+  if (!(id in learning)) return;
+  delete learning[id];
+  writeNextActionLearning(learning);
+}
+
+function nextActionIsSuppressed(id) {
+  const entry = readNextActionLearning()[id];
+  if (!entry || typeof entry !== "object") return false;
+  const skips = Number(entry.skips) || 0;
+  if (skips < NEXT_ACTION_SKIP_LIMIT) return false;
+  const days = (Date.now() - (Number(entry.lastAt) || 0)) / 86400000;
+  // Stale turn-downs decay on their own, even if nothing else is written.
+  return days <= NEXT_ACTION_MEMORY_DAYS;
+}
+
+/* People you already track, mentioned by name in this item but not yet linked to it. Matching on
+   whole words keeps "Ann" from firing inside "Anna-Marie" or "planning". */
+function unlinkedPersonIn(item) {
+  if (!item || item.person) return "";
+  const haystack = `${item.title || ""} ${item.sub || ""}`.toLowerCase();
+  if (!haystack.trim()) return "";
+  const names = [];
+  for (const other of state.items || []) {
+    const name = String(other?.person || "").trim();
+    if (name) names.push(name);
+  }
+  for (const person of state.people || []) {
+    const name = String(person?.name || "").trim();
+    if (name) names.push(name);
+  }
+  // Longest first, so "Priya Sharma" wins over "Priya".
+  return [...new Set(names)].sort((a, b) => b.length - a.length)
+    .find((name) => {
+      const escaped = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(^|[^\\p{L}])${escaped}([^\\p{L}]|$)`, "iu").test(haystack);
+    }) || "";
+}
+
+/* A previous version of this same job, completed, and it used to repeat. Grounded in their own
+   history rather than in a guess about what "feels weekly". */
+function previousRecurrenceFor(item) {
+  const fingerprint = normaliseCaptureFingerprint(item?.title);
+  if (!fingerprint || CAPTURE_GENERIC_TITLES.has(fingerprint)) return "";
+  const match = (state.items || []).find(
+    (other) =>
+      other.id !== item.id &&
+      other.done &&
+      !isArchived(other) &&
+      other.recurrence &&
+      normaliseCaptureFingerprint(other.title) === fingerprint,
+  );
+  return match?.recurrence || "";
+}
+
+const NEXT_ACTION_RULES = [
+  {
+    id: "set-date",
+    applies: (item) =>
+      !isArchived(item) &&
+      !item.done &&
+      !item.dueDate &&
+      !item.recurrence &&
+      (item.kind === "task" || item.kind === "waiting"),
+    why: (item) =>
+      item.kind === "waiting"
+        ? item.person
+          ? `You are waiting on ${item.person}, with no day to check back.`
+          : "You are waiting on this, with no day to check back."
+        : "This has no day on it, so it cannot surface on its own.",
+    actions: () => [
+      { label: "Today", act: "date", when: "today" },
+      { label: "Tomorrow", act: "date", when: "day" },
+      { label: "Next week", act: "date", when: "week" },
+    ],
+  },
+  {
+    id: "link-person",
+    applies: (item) => !isArchived(item) && !item.done && !!unlinkedPersonIn(item),
+    why: (item) => `${unlinkedPersonIn(item)} is named here but not linked.`,
+    actions: (item) => [
+      { label: `Link to ${unlinkedPersonIn(item)}`, act: "person", value: unlinkedPersonIn(item) },
+    ],
+  },
+  {
+    id: "recur",
+    applies: (item) => !isArchived(item) && !item.done && !!previousRecurrenceFor(item),
+    why: () => "You have done this before, and last time it repeated.",
+    actions: (item) => [
+      { label: `Make it ${previousRecurrenceFor(item)}`, act: "recur", value: previousRecurrenceFor(item) },
+    ],
+  },
+];
+
+/* The first rule that both applies and has not been turned down. Rules are ordered by how often they
+   are right, so a single card is enough — a stack of suggestions is just noise. */
+function nextActionFor(item) {
+  for (const rule of NEXT_ACTION_RULES) {
+    if (!rule.applies(item)) continue;
+    if (nextActionIsSuppressed(rule.id)) continue;
+    return rule;
+  }
+  return null;
+}
+
+let currentNextAction = null;
+
+function renderNextAction(item) {
+  const host = document.getElementById("panelNextAction");
+  if (!host) return;
+  const rule = nextActionFor(item);
+  currentNextAction = rule ? { rule, item } : null;
+  if (!rule) {
+    host.hidden = true;
+    return;
+  }
+  document.getElementById("nextActionWhy").textContent = rule.why(item);
+  document.getElementById("nextActionActs").innerHTML = rule
+    .actions(item)
+    .map(
+      (a) =>
+        `<button class="btn" type="button" onclick="applyNextAction(${jsStr(
+          a.act,
+        )},${jsStr(a.when || a.value || "")})">${escapeHtml(a.label)}</button>`,
+    )
+    .join("");
+  host.hidden = false;
+}
+
+function dismissNextAction() {
+  if (!currentNextAction) return;
+  noteNextActionDismissed(currentNextAction.rule.id);
+  renderNextAction(currentNextAction.item);
+}
+
+async function applyNextAction(act, value) {
+  if (!currentNextAction) return;
+  const { rule, item } = currentNextAction;
+  const target = state.items.find((i) => i.id === item.id);
+  if (!target || isArchived(target)) return renderNextAction(item);
+
+  if (act === "date") {
+    if (value === "today") applyDueToItem(target, new Date());
+    else if (value === "week") applyDueToItem(target, new Date(Date.now() + 7 * 86400000));
+    else applyDueToItem(target, new Date(Date.now() + 86400000));
+  } else if (act === "person") {
+    target.person = value;
+  } else if (act === "recur") {
+    target.recurrence = value;
+  } else {
+    return;
+  }
+
+  noteNextActionAccepted(rule.id);
+  await dbSaveItem(target);
+  // Re-rendered from the saved item, so the card that follows is the real next one rather than a
+  // stale repeat of the one just acted on.
+  openPanel(target.id);
+}
+
 function closePanel() {
   document.getElementById("overlay").classList.remove("open");
   document.getElementById("panel").classList.remove("open");

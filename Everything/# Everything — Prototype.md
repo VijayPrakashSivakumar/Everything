@@ -732,6 +732,73 @@ with their controls at all — clicking a label did not focus the field, and a s
 name for it. Eighteen labels are now associated, which is an accessibility fix independent of the
 tooltips.
 
+## Next-step suggestions, and learning from being turned down
+
+Open an item and, when there is an obvious thing to do with it, the app offers it — *"This has no
+day on it, so it cannot surface on its own"* — with a tap to do it and a cross to refuse it.
+
+**Nothing is ever done for you.** Every suggestion is a button. That is the same rule the rest of the
+app already follows: *suggestions, not pressure*. The card is one line of reason plus one to three
+buttons, and it disappears the instant it no longer applies — never an empty bordered box.
+
+### The three rules
+
+Each was chosen because it is right far more often than not, **and** because it can be checked
+against facts already in the app rather than guessed at:
+
+| rule | fires when | offers |
+| --- | --- | --- |
+| `set-date` | an open **task** or **waiting** item with no day, and no recurrence | Today · Tomorrow · Next week |
+| `link-person` | someone you already track is named in the text but never linked | *Link to Ravi* |
+| `recur` | you completed this exact job before and it used to repeat | *Make it weekly* |
+
+Two deliberate quiet spots:
+
+- **A task that already repeats** is never asked for a one-off date. A weekly task has a rhythm
+  already; asking it for a date as well is nagging, not helping.
+- **Completed, archived, and generic titles** never fire `recur`. "Renew passport" recurring is a
+  real pattern; "Task" recurring is noise.
+
+Name matching is on **whole words**, so `Ann` does not fire inside *"Anna-Marie"*, and the longest
+matching name wins, so *Priya Sharma* beats *Priya*.
+
+### One card, not a stack
+
+When an undated task *also* names an unlinked person, the date wins. A task with no day is the more
+urgent gap. A pile of suggestions is just noise, so the rules are ordered by how often they are right
+and the first match takes the card.
+
+### Learning from what you dismiss
+
+| you | the app does |
+| --- | --- |
+| tap it | applies it, and **clears everything it remembered** about that rule |
+| dismiss once | shows it again — one refusal usually means *not right now* |
+| dismiss twice | **stops offering that rule** |
+| …then wait | the memory decays after **45 days** and the rule is allowed back |
+
+The limit is two, not one, because a single dismissal is almost always *"not right now"* — the same
+item tomorrow may well need a date. And suppression is **not permanent**: a bad month should not
+silence a useful suggestion for the rest of the year, so each turn-down loses its weight after 45
+days. Acting on a suggestion clears the record outright, so someone who took the advice and took it
+again is never asked to stop.
+
+It is stored in `localStorage` under `everything_next_action_learning_v1`, keyed by rule id. In
+private mode the suggestion still works — it just cannot remember.
+
+### Accessibility and touch
+
+- The dismiss control is a real `<button>` with a real label — *"Dismiss this suggestion and stop
+  showing it"* — because an unlabelled cross does not convey the promise the feature makes.
+- It grows from 30px to **44px** at 480px and below, so on a phone it is a tap and not a miss.
+- Styling is token-only, so it is legible across all ten themes with no per-theme rules.
+
+`next-action-probe.mjs` drives the real engine against real seeded items and reads the real DOM:
+that the card appears and hides correctly, that a tap actually applies and the card moves on, that
+one dismissal does not silence it and two do, that a 60-day-old turn-down is forgotten while a
+2-day-old one is respected, that taking a suggestion clears the memory, that `Ann` does not match
+`Anna-Marie`, that the more urgent rule wins, and that the dismiss target clears 44px at 390px.
+
 ## Voice and images are read, not just stored
 
 Dictation used to **record and stop**. The transcript was written into the box, the local rules and

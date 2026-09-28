@@ -3911,6 +3911,112 @@ h1.page-title {
   white-space: nowrap;
 }
 
+/* Item panel: the next-step suggestion.
+
+   Token-driven only, so it stays legible across all ten themes without a single per-theme rule —
+   the same approach the inline help took. The accent stripe is what marks this as the app talking,
+   not as part of the item's own data. */
+.next-action {
+  margin: 0 20px 14px;
+  padding: 12px 14px 13px;
+  border: var(--border-w) solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.next-action[hidden] {
+  display: none;
+}
+
+.next-action-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.next-action-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.next-action-label svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* The dismiss control is a real button, not a bare cross: it carries its own label, because
+   "stop suggesting this" is the whole promise and an unlabelled cross does not convey it. */
+.next-action-skip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+
+.next-action-skip:hover,
+.next-action-skip:focus-visible {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.next-action-skip svg {
+  width: 15px;
+  height: 15px;
+}
+
+.next-action-why {
+  margin: 6px 0 0;
+  font-size: var(--fs-body-s);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.next-action-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.next-action-acts:empty {
+  display: none;
+}
+
+.next-action-acts .btn {
+  padding: 7px 12px;
+  font-size: var(--fs-body-s);
+}
+
+@media (max-width: 480px) {
+  .next-action {
+    margin: 0 16px 12px;
+  }
+
+  /* A 30px cross is a miss on a phone, so the touch target grows while the glyph stays the same. */
+  .next-action-skip {
+    width: 44px;
+    height: 44px;
+    margin: -7px -7px -7px 0;
+  }
+}
+
 /* Item panel: quick reschedule */
 .panel-snooze {
   padding: 12px 20px;

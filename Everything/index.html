@@ -1547,6 +1547,28 @@
             style="display: flex; flex-wrap: wrap; gap: 8px"
           ></div>
         </div>
+
+        <!-- Next-step suggestion. Starts hidden so it never appears as an empty box, and it is
+             hidden again the moment it stops applying — a suggestion is a tap, never an action. -->
+        <div class="next-action" id="panelNextAction" hidden>
+          <div class="next-action-head">
+            <span class="next-action-label">
+              <i data-lucide="sparkles" aria-hidden="true"></i>
+              Next step
+            </span>
+            <button
+              class="next-action-skip"
+              type="button"
+              onclick="dismissNextAction()"
+              aria-label="Dismiss this suggestion and stop showing it"
+              title="Dismiss this suggestion and stop showing it"
+            >
+              <i data-lucide="x" aria-hidden="true"></i>
+            </button>
+          </div>
+          <p class="next-action-why" id="nextActionWhy"></p>
+          <div class="next-action-acts" id="nextActionActs"></div>
+        </div>
       </div>
       <div class="panel-snooze" id="panelSnooze">
         <span style="font-size: 12.5px; color: var(--muted); font-weight: 600"
