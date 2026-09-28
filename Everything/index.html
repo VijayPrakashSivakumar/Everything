@@ -624,7 +624,7 @@
                   </div>
                   <div id="todayList" class="today-agenda"></div>
                 </div>
-                <div class="nudge dashboard-movable" id="nudgeCard" data-dashboard-section="nudge" draggable="true">
+                <div class="nudge dashboard-movable" id="nudgeCard" data-dashboard-section="nudge">
                   <div class="nudge-text">
                     <b>One thing to consider</b>
                     <div class="nudge-sub">
@@ -652,7 +652,6 @@
                   class="hero-card"
                   id="heroQuoteCard"
                   data-dashboard-section="quote"
-                  draggable="true"
                   style="position: relative"
                 >
                   <div id="heroQuoteText"></div>
@@ -677,7 +676,7 @@
                     </button>
                   </div>
                 </div>
-                <div class="card dashboard-movable" id="quickCaptureCard" data-dashboard-section="quick" draggable="true">
+                <div class="card dashboard-movable" id="quickCaptureCard" data-dashboard-section="quick">
                   <div class="card-head">
                     <h3>What do you want to remember?</h3>
                   </div>
@@ -729,9 +728,77 @@
             <h1 class="page-title">Tasks</h1>
             <p class="page-sub">Everything on your plate.</p>
             <div class="tabs" id="taskTabs"></div>
+            <!-- Bulk actions live in their own bar so the list itself stays uncluttered until
+                 someone opts in. The toggle is a button rather than a long-press, because a
+                 long-press on a row is already the drag gesture. -->
+            <div
+              id="bulkBar"
+              hidden
+              style="
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                flex-wrap: wrap;
+                padding: 10px 12px;
+                margin-bottom: 12px;
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                background: var(--card);
+                position: sticky;
+                top: 0;
+                z-index: 5;
+              "
+            >
+              <span
+                id="bulkCount"
+                style="font-size: 13px; font-weight: 600; color: var(--text)"
+                >0 selected</span
+              >
+              <button
+                class="btn"
+                data-bulk-needs-selection
+                onclick="bulkComplete()"
+              >
+                <i data-lucide="check" aria-hidden="true"></i>
+                <span>Complete</span>
+              </button>
+              <button
+                class="btn"
+                data-bulk-needs-selection
+                onclick="bulkArchive()"
+              >
+                <i data-lucide="archive" aria-hidden="true"></i>
+                <span>Archive</span>
+              </button>
+              <button
+                class="btn danger"
+                data-bulk-needs-selection
+                onclick="bulkDelete()"
+              >
+                <i data-lucide="trash-2" aria-hidden="true"></i>
+                <span>Delete</span>
+              </button>
+              <button class="btn" onclick="selectAllVisible()">
+                <i data-lucide="list-checks" aria-hidden="true"></i>
+                <span>Select all</span>
+              </button>
+              <button class="btn" onclick="toggleSelectMode(false)">
+                <i data-lucide="x" aria-hidden="true"></i>
+                <span>Done</span>
+              </button>
+            </div>
             <div class="card">
               <div id="tasksList"></div>
             </div>
+            <button
+              class="btn"
+              id="bulkToggle"
+              style="margin-top: 12px"
+              onclick="toggleSelectMode()"
+            >
+              <i data-lucide="list-checks" aria-hidden="true"></i>
+              <span>Select multiple</span>
+            </button>
           </div>
 
           <!-- CALENDAR VIEW -->
@@ -799,6 +866,17 @@
                 + Add person
               </button>
             </div>
+            <!-- Inbox and Memory both had a filter box; People had none, so finding one contact
+                 meant scrolling. It matches the phone number and email too, which is how you
+                 actually look someone up when you already half-know them. -->
+            <input
+              class="capture-input"
+              id="peopleSearchInput"
+              placeholder="Search by name, phone or email…"
+              oninput="renderPeople()"
+              style="margin: 12px 0 14px"
+            />
+            <div id="peopleSearchNote"></div>
             <div class="card" id="peopleList"></div>
           </div>
           <div class="view" id="view-projects">
@@ -1686,6 +1764,37 @@
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Command palette. Ctrl+K / ⌘K opens Ask, so the palette lives on Ctrl+Shift+K and "/"
+         stays with Ask. Two different things behind one key is how a shortcut becomes a coin flip. -->
+    <div class="ask-overlay" id="commandPalette" role="dialog" aria-modal="true" aria-label="Command palette" onclick="if (event.target === this) closeCommandPalette();">
+      <div class="ask-panel" style="max-width: 560px">
+        <input
+          id="commandInput"
+          placeholder="Jump to a page, a task, a person…"
+          autocomplete="off"
+          spellcheck="false"
+          oninput="renderCommands()"
+          onkeydown="commandKeydown(event)"
+        />
+        <div id="commandList" style="max-height: 52vh; overflow-y: auto"></div>
+        <div
+          style="
+            display: flex;
+            gap: 14px;
+            padding: 10px 4px 0;
+            font-size: 12px;
+            color: var(--muted);
+            border-top: 1px solid var(--border);
+            margin-top: 8px;
+          "
+        >
+          <span><b>↑↓</b> move</span>
+          <span><b>Enter</b> open</span>
+          <span><b>Esc</b> close</span>
         </div>
       </div>
     </div>

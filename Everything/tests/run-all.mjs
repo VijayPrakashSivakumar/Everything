@@ -58,6 +58,10 @@ const SUITES = [
   // every account on the device. The next person to sign in inherited it — and the merge pushed
   // it into their account.
   { name: 'signout', file: 'signout-probe.mjs', timeoutMs: 120000 },
+  // Four features that each looked finished and were each one step short of working: a palette
+  // that could not be reached, contacts that could not be found, bulk actions that could not be
+  // selected, and a drag that a native HTML5 drag kept cancelling.
+  { name: 'gaps', file: 'ui-gaps-probe.mjs', timeoutMs: 180000 },
 ];
 
 const args = process.argv.slice(2);

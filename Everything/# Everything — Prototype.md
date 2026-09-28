@@ -623,6 +623,72 @@ it is a defensible trade, but it is not the same guarantee as items, and it shou
 as though it were. Nothing is lost either way: the losing version is kept and shown regardless of
 which clock decided the order.
 
+## Four gaps closed
+
+Four things the app plainly should have had and did not. Each looked finished once written and was
+a step short of working, which is the pattern worth recording.
+
+### Command palette — `Ctrl+Shift+K`
+
+Thirteen pages in the nav, an Ask overlay, and a search dropdown: three ways to find things, none
+of which could reach a *record*, and all of which needed the mouse. The palette lists actions,
+pages, and — once you type — matching people, projects, goals and items.
+
+Two decisions worth stating:
+
+- **`Ctrl+K` still opens Ask.** It is documented in three places and asserted by an audit. The
+  palette took `Ctrl+Shift+K` instead. Repurposing a shipped shortcut leaves people with muscle
+  memory that fights them.
+- **Items are matched through `searchMatches()`**, not a filter of its own. A second matcher would
+  let the palette and the header search disagree about the same typo, which is worse than either
+  being wrong alone. There is a test that asserts they return the same rows for the same typo.
+
+### People: searchable, and honest about who is a contact
+
+The People view was the only list with no filter box — Inbox and Memory both had one. It matches
+name, **phone and email**, because that is how you actually look someone up when you half-know
+them.
+
+The bigger problem was that the list mixed two different things and looked identical. Names
+inferred from a task that merely mentions someone sat next to saved contacts, with no label. So an
+inferred name looked editable, and typing a phone number into it went nowhere and looked like a
+bug. Inferred names are now labelled **"From a task"** and can be **promoted** into a real record,
+at which point the label disappears — a label that outlives its condition is a lie.
+
+### Bulk actions on the task list
+
+Select multiple, then complete / archive / delete. Hidden behind an explicit toggle rather than a
+long-press, because **long-press on a row is now the drag gesture** — the two would have fought.
+In select mode a tap anywhere on the row toggles it, because making someone aim at a small circle
+for a fifty-item selection is how bulk features get abandoned. Destructive actions are disabled
+with nothing selected; delete confirms and says how many.
+
+### Drag to reorder — and the bug that hid it
+
+Task lists reorder by press-and-hold, using the dashboard's existing approach. The dashboard's
+~55-line drag was **replaced** by a shared `enableListReordering()` rather than copied, so there is
+one implementation.
+
+Writing the test found that the original approach could not have worked, and had probably never
+worked:
+
+- **`pointermove` was bound to the row being dragged.** The instant a drag begins, the pointer
+  leaves that row — so it received exactly one move and then went silent. The move and release
+  listeners now live on the document.
+- **`draggable = true` cancelled the pointer stream entirely.** Setting it starts a native HTML5
+  drag, which suppresses `pointermove` for the rest of the gesture. The drag visibly started
+  (ghost outline, `reorder-active` on the container) and then did nothing, on every move.
+
+The dashboard survived both because its cards are large enough that the first move usually landed
+on a card it also handled. A 45px task row does not forgive it. `draggable` is now never set, and
+the native path is explicitly refused so a future change cannot quietly reintroduce it.
+
+Manual order is stored locally and applied as a **sort**, not a DOM shuffle — a shuffle is undone
+by the next render, which happens on every sync. It is deliberately *not* synced: a hand-picked
+order that synced would fight every other device's sort on every load. It is also only offered on
+"All" and "Today"; on Overdue or Completed the list is already ordered by a rule, and a manual
+order outranking "3 days late" would make the tab lie about what it is showing.
+
 ## Signing out was leaking the previous account's data
 
 Asked to improve the sign-out module, because it looked basic. It was worse than basic.

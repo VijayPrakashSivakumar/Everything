@@ -530,6 +530,85 @@ check('the sign-out page says what signing out actually does', () => {
   assert.doesNotMatch(view, /Log Out/, 'the button still says "Log Out" while the page says "Sign out"');
 });
 
+check('the command palette is reachable and does not steal the documented Ctrl+K', () => {
+  /* Ctrl+K opened Ask and is documented in three places, including an audit that asserts it. The
+     palette could have taken it, but silently repurposing a shipped shortcut is how people end up
+     with muscle memory that fights them. */
+  const shortcuts = between('function initShortcuts', '/* ---------- Backup');
+  assert.match(shortcuts, /if \(e\.shiftKey\) openCommandPalette\(\)/,
+    'the palette is not behind Ctrl+Shift+K');
+  assert.match(shortcuts, /else openAsk\(\)/, 'plain Ctrl+K no longer opens Ask');
+  assert.match(html, /id="commandPalette"/, 'the palette has no markup');
+  assert.match(js, /function openCommandPalette\(\)/, 'the palette is never opened');
+  // The palette reuses .ask-overlay for styling, which means Escape would otherwise close Ask.
+  const close = between('function closeTopmostOverlay', 'function shortcutsModifierLabel');
+  assert.ok(close.indexOf('commandPalette') < close.indexOf('closeAsk'),
+    'the palette must be checked before Ask in the Escape handler, or Escape closes Ask instead');
+});
+
+check('the palette searches records through the one shared matcher', () => {
+  /* A second matcher here would let the palette and the header search disagree about the same
+     word, which is worse than either one being wrong on its own. */
+  const rows = betweenBlock('function commandRecordRows', 'function enableListReordering');
+  assert.match(rows, /searchMatches\(/, 'the palette does not use the shared search matcher');
+  assert.doesNotMatch(rows, /state\.items\s*\n?\s*\.filter\([\s\S]{0,200}?\.toLowerCase\(\)[\s\S]{0,120}?\.includes\(/,
+    'the palette grew its own inline filter instead of calling the shared matcher');
+});
+
+check('the people view is searchable and tells a real contact from an inferred name', () => {
+  /* Inbox and Memory both had a filter box. People had none, so finding one contact meant
+     scrolling past everyone. */
+  assert.match(html, /id="peopleSearchInput"/, 'the People view still has no search box');
+  const render = between('function renderPeople', 'async function promotePerson');
+  assert.match(render, /peopleSearchInput/, 'the People view ignores its own search box');
+  assert.match(render, /personMatchesQuery\(/, 'the search is not applied to the rows');
+  // A contact is found by phone number as often as by name.
+  const match = between('function personMatchesQuery', 'function renderPeople');
+  assert.match(match, /person\.phone/, 'searching people cannot match a phone number');
+  assert.match(match, /person\.email/, 'searching people cannot match an email');
+  // The two kinds of person were visually identical, so the inferred ones looked editable when
+  // they had no record to edit.
+  assert.match(render, /From a task/, 'an inferred name is not distinguished from a saved contact');
+  assert.match(js, /async function promotePerson\(/, 'an inferred name cannot be turned into a contact');
+  // Names are free text and go into a query string, so jsStr is the only safe way to interpolate.
+  assert.doesNotMatch(render, /promotePerson\("\$\{/, 'a person name is interpolated without escaping');
+});
+
+check('bulk actions gate on a selection and never touch the unselected', () => {
+  assert.match(html, /id="bulkBar"/, 'there is no bulk action bar');
+  assert.match(html, /data-bulk-needs-selection/, 'the destructive actions are not gated on a selection');
+  assert.match(html, /id="bulkToggle"/, 'there is no way to enter select mode');
+  const bar = between('function renderBulkBar', '/* One place decides');
+  assert.match(bar, /btn\.disabled = count === 0/, 'an action is live with nothing selected');
+  // Delete is the only irreversible one here, so it has to ask and say how many.
+  const del = between('async function bulkDelete', 'function bulkSelectedItems');
+  assert.match(del, /confirm\(/, 'bulk delete does not ask for confirmation');
+  assert.match(del, /deleteItem|dbDeleteItem/, 'bulk delete does not actually delete');
+});
+
+check('reordering works by press-and-hold, and only one implementation exists', () => {
+  /* The subtle one: `draggable = true` starts a native HTML5 drag, and a native drag cancels the
+     pointer event stream the press-and-hold path depends on. The drag started and then went
+     silent — which a large dashboard card hides and a 45px task row does not. */
+  const engine = betweenBlock('function enableListReordering', 'function readStoredOrder');
+  assert.doesNotMatch(engine, /\.draggable\s*=\s*true/,
+    'setting draggable cancels the pointer events the reorder needs');
+  // The move listener has to be on the document: once a drag begins, the pointer has left the row
+  // it started on, so a listener bound to that row would receive one move and no more.
+  assert.match(engine, /document\.addEventListener\("pointermove"/,
+    'the reorder must track moves on the document, not on the row');
+  assert.match(engine, /setTimeout\(\(\) => startTracking\(el\), holdDelay\)/,
+    'there is no press-and-hold delay, so a tap would start a drag');
+  // A control inside a row must still be tappable.
+  assert.match(engine, /closest\("button, input, a, select, textarea"\)/,
+    'pressing a checkbox inside a row would start a drag instead');
+  // One engine, not one per list.
+  const dash = between('function enableDashboardDragging', 'function isTypingTarget');
+  assert.doesNotMatch(dash, /addEventListener\("dragstart"/,
+    'the dashboard still has its own copy of the drag implementation');
+  assert.match(dash, /enableListReordering\(/, 'the dashboard does not share the reorder engine');
+});
+
 check('both search entry points share one matcher', () => {
   assert.match(js, /function searchMatches\(q\)/, 'searchMatches helper missing');
   // Exactly one place may decide what matches. searchMatches and the two helpers it delegates
@@ -1367,8 +1446,14 @@ check('the person dialog holds the contact fields and a merge control that reads
   assert.match(html, /onclick="startMergePerson\(\)"/, 'the dialog needs the merge button');
   assert.match(betweenBlock('function startMergePerson', '/* ---------- Projects'),
     /getElementById\("personMergeTarget"\)/, 'the button must read the chosen target');
-  assert.match(js, /p\.contact \? " · has contact details"/,
+  // The detail line was rebuilt as an array of fragments when the People view gained its search
+  // box, so the " · " separators now come from join(" · ") rather than being written inline.
+  // Asserting the rendered phrase rather than the concatenation keeps this test about the
+  // behaviour — projects-probe.mjs already checks the visible text in a real browser.
+  assert.match(js, /p\.contact \? "has contact details"/,
     'the people list should show who has contact details');
+  assert.match(js, /\.filter\(Boolean\)\.join\(" · "\)/,
+    'the people detail line is no longer assembled from its parts');
 
   // Names are free text, so an option built by string concatenation would break on a quote and take
   // the whole control with it — the same defect class as the inline handlers.

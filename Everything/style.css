@@ -2385,10 +2385,40 @@ h1.page-title {
   cursor: grabbing;
 }
 
-.dashboard-dragging {
+/* The shared reorder engine's states, named generically rather than after the dashboard, because
+   the same class now marks a dragged task row and a dragged dashboard card. The old per-dashboard
+   drag state was removed along with the duplicated implementation it belonged to. */
+.reorderable {
+  cursor: grab;
+  touch-action: pan-y;
+}
+
+.reorderable:active {
+  cursor: grabbing;
+}
+
+/* Suppresses text selection and the iOS long-press callout for the duration of a drag. Without
+   these, a press-and-hold on a phone selects the row's text instead of picking it up. */
+.reorder-active,
+.reorder-active * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.reorder-dragging {
   opacity: 0.55;
   outline: 2px dashed var(--accent);
-  outline-offset: 4px;
+  outline-offset: 2px;
+}
+
+.task-row.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.command-row {
+  scroll-margin: 8px;
 }
 
 .nudge-actions {

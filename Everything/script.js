@@ -3216,20 +3216,157 @@ function taskStatusBadge(item) {
   return badge;
 }
 
-function taskRow(item) {
+/* ---------- Bulk actions and manual task order ----------
+
+   Both of these are per-device conveniences, and both were kept out of the sync layer on purpose.
+   A selection is meaningless on another device, and a hand-picked order that synced would fight
+   every other device's sort on every load. So neither is an item field: the selection is a Set
+   that lives until the tab closes, and the order is one localStorage key. */
+
+const TASK_ORDER_KEY = "everything_task_order_v1";
+let bulkSelection = new Set();
+let selectMode = false;
+
+/* Reorder is only offered on "All" and "Today". On Overdue or Completed the list is already
+   ordered by a rule, and a manual order that silently outranks "3 days late" would make the tab
+   lie about what it is showing. */
+function taskListReorderable(filter) {
+  return filter === "all" || filter === "today";
+}
+
+/* Applies a saved order to a freshly sorted list. Called after the list's own sort, so a manual
+   order wins on "All" and "Today" while Overdue and Completed keep their rule-based sort. */
+function sortTasksByStoredOrder(tasks) {
+  const stored = readStoredOrder(TASK_ORDER_KEY);
+  // Nothing saved, or nothing that still resolves: leave the list's own order alone rather than
+  // sorting every row to the same rank and letting the original sort survive by accident.
+  if (!stored.some((id) => tasks.some((t) => t.id === id))) return tasks;
+  const rank = (id) => {
+    const index = stored.indexOf(id);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  return [...tasks].sort((a, b) => rank(a.id) - rank(b.id));
+}
+
+function isSelected(id) {
+  return bulkSelection.has(id);
+}
+
+function toggleSelectMode(force) {
+  selectMode = force === undefined ? !selectMode : Boolean(force);
+  if (!selectMode) bulkSelection = new Set();
+  renderTasks(activeTaskFilter);
+}
+
+function toggleSelected(id) {
+  if (!selectMode) return;
+  if (bulkSelection.has(id)) bulkSelection.delete(id);
+  else bulkSelection.add(id);
+  renderTasks(activeTaskFilter);
+}
+
+function selectAllVisible() {
+  const ids = [...document.querySelectorAll("#tasksList .task-row")]
+    .map((row) => row.dataset.reorderId)
+    .filter(Boolean);
+  if (!ids.length) return;
+  const everySelected = ids.every((id) => bulkSelection.has(id));
+  ids.forEach((id) => (everySelected ? bulkSelection.delete(id) : bulkSelection.add(id)));
+  renderTasks(activeTaskFilter);
+}
+
+function renderBulkBar() {
+  const bar = document.getElementById("bulkBar");
+  if (!bar) return;
+  const count = bulkSelection.size;
+  bar.hidden = !selectMode;
+  if (!selectMode) return;
+  const label = document.getElementById("bulkCount");
+  if (label) label.textContent = count === 1 ? "1 selected" : `${count} selected`;
+  document.querySelectorAll("#bulkBar [data-bulk-needs-selection]")
+    .forEach((btn) => (btn.disabled = count === 0));
+}
+
+/* One place decides what a bulk action means, so Complete and Archive cannot disagree about
+   whether a recurring task spawns the next occurrence. */
+async function bulkComplete() {
+  const items = bulkSelectedItems();
+  if (!items.length) return;
+  for (const item of items) {
+    if (item.done) continue;
+    if (item.kind === "task") await completeTask(item);
+    else {
+      item.done = true;
+      item.completedAt = Date.now();
+      item.status = "completed";
+      await dbSaveItem(item);
+    }
+  }
+  bulkSelection = new Set();
+  renderAll();
+  renderTasks(activeTaskFilter);
+}
+
+async function bulkArchive() {
+  const items = bulkSelectedItems();
+  if (!items.length) return;
+  for (const item of items) {
+    if (isArchived(item)) continue;
+    item.archivedAt = Date.now();
+    cancelReminderFor(item.id);
+    await dbSaveItem(item);
+  }
+  bulkSelection = new Set();
+  renderAll();
+  renderTasks("archived");
+}
+
+/* Delete is the one action here that cannot be undone, so it asks first and says how many. */
+async function bulkDelete() {
+  const items = bulkSelectedItems();
+  if (!items.length) return;
+  if (!confirm(`Delete ${items.length} item${items.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+  for (const item of items) {
+    state.items = state.items.filter((i) => i.id !== item.id);
+    await dbDeleteItem(item.id, item);
+  }
+  bulkSelection = new Set();
+  renderAll();
+  renderTasks(activeTaskFilter);
+}
+
+function bulkSelectedItems() {
+  return [...bulkSelection]
+    .map((id) => state.items.find((i) => i.id === id))
+    .filter(Boolean);
+}
+
+function taskRow(item, options = {}) {
   const row = document.createElement("div");
   row.className = "task-row" + (item.done ? " done" : "") + (isArchived(item) ? " archived" : "");
+  // Carried as data, not as a closure lookup, because the bulk bar and select-all both read the
+  // ids back out of the DOM to find what is on screen.
+  row.dataset.reorderId = item.id;
+  if (isSelected(item.id)) row.classList.add("selected");
+  if (options.reorderable) row.classList.add("reorderable");
   row.setAttribute("role", "button");
   row.tabIndex = 0;
   row.onclick = (e) => {
     if (e.target.closest(".checkbox, button")) return;
+    // In select mode a tap anywhere on the row toggles it. Making people aim at a small circle
+    // for a fifty-item selection is how bulk features get abandoned.
+    if (selectMode) {
+      toggleSelected(item.id);
+      return;
+    }
     openPanel(item.id);
   };
   row.onkeydown = (e) => {
     if (e.target !== row) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      openPanel(item.id);
+      if (selectMode) toggleSelected(item.id);
+      else openPanel(item.id);
     }
   };
   const check = document.createElement("button");
@@ -3557,7 +3694,17 @@ function renderTasks(filter) {
     list.innerHTML = `<p class="empty">${emptyMsgs[filter] || "No tasks yet. Capture one!"}</p>`;
     return;
   }
-  tasks.forEach((t) => list.appendChild(taskRow(t)));
+  if (taskListReorderable(filter)) {
+    const ordered = sortTasksByStoredOrder(tasks);
+    if (ordered !== tasks) tasks = ordered;
+    tasks.forEach((t) => list.appendChild(taskRow(t, { reorderable: true })));
+    // The stored order is applied as the final sort rather than a DOM shuffle: a shuffle is undone
+    // by the next render, and two different filters would disagree about where a row belongs.
+    enableListReordering(list, { itemSelector: ".task-row.reorderable", orderKey: TASK_ORDER_KEY });
+  } else {
+    tasks.forEach((t) => list.appendChild(taskRow(t)));
+  }
+  renderBulkBar();
 }
 
 function renderMemory() {
@@ -3628,41 +3775,103 @@ const sameName = (a, b) => {
   return x !== "" && x === y;
 };
 
+/* Inbox and Memory both filter through searchMatches so all three search the same way. People
+   needs its own match because a contact is found by phone number or email as often as by name,
+   and searchMatches scores items — it has no notion of a person's number.
+
+   The list also mixes two different kinds of person: real records, and names inferred from tasks
+   that merely mention someone. They were visually identical, which made the inferred ones look
+   like contacts you could edit — but they have no record, so a phone number typed against one
+   went nowhere. They are now labelled, and the inferred ones can be promoted into a real record. */
+function personMatchesQuery(person, needle) {
+  return [person.name, person.phone, person.email, person.notes]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(needle);
+}
+
 function renderPeople() {
   const el = document.getElementById("peopleList");
   if (!el) return;
+  const searchInput = document.getElementById("peopleSearchInput");
+  const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
   const namesFromItems = [
     ...new Set(state.items.filter((i) => i.person && !isArchived(i)).map((i) => i.person)),
   ];
   const knownNames = state.people.map((p) => p.name);
   const inferredOnly = namesFromItems.filter((n) => !knownNames.some((k) => sameName(k, n)));
 
-  const rows = [
+  let rows = [
     ...state.people.map((p) => ({
       id: p.id,
       name: p.name,
       notes: p.notes || "",
       contact: [p.phone, p.email, p.birthday].some(Boolean),
       real: true,
+      phone: p.phone || "",
+      email: p.email || "",
     })),
-    ...inferredOnly.map((n) => ({ id: null, name: n, notes: "", contact: false, real: false })),
+    ...inferredOnly.map((n) => ({ id: null, name: n, notes: "", contact: false, real: false, phone: "", email: "" })),
   ];
 
+  if (query) {
+    const before = rows.length;
+    rows = rows.filter((p) => personMatchesQuery(p, query));
+    const note = document.getElementById("peopleSearchNote");
+    if (note) {
+      note.innerHTML = rows.length
+        ? `<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">${rows.length} of ${before} shown</p>`
+        : '<p class="empty" style="margin:0 0 10px">Nobody matches that.</p>';
+    }
+  } else {
+    const note = document.getElementById("peopleSearchNote");
+    if (note) note.innerHTML = "";
+  }
+
   if (!rows.length) {
-    el.innerHTML =
-      '<p class="empty">No people yet — add one below or tag someone on a task.</p>';
+    el.innerHTML = query
+      ? '<p class="empty">Nobody matches that.</p>'
+      : '<p class="empty">No people yet — add one above or tag someone on a task.</p>';
     return;
   }
 
   el.innerHTML = rows
     .map((p) => {
       const count = state.items.filter((i) => sameName(i.person, p.name) && !isArchived(i)).length;
+      const detail = [
+        `${count} linked item${count !== 1 ? "s" : ""}`,
+        p.notes ? "has notes" : "",
+        p.contact ? "has contact details" : "",
+      ].filter(Boolean).join(" · ");
       return `<div class="task-row" onclick="openPersonModal(${p.id ? jsStr(p.id) : "null"}, ${jsStr(p.name)})">
-      <div class="avatar" style="width:32px;height:32px;font-size:12px;">${p.name.charAt(0).toUpperCase()}</div>
-      <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${count} linked item${count !== 1 ? "s" : ""}${p.notes ? " · has notes" : ""}${p.contact ? " · has contact details" : ""}</div></div>
+      <div class="avatar" style="width:32px;height:32px;font-size:12px;">${escapeHtml(p.name.charAt(0).toUpperCase())}</div>
+      <div class="task-meta"><div class="task-title">${escapeHtml(p.name)}</div><div class="task-sub">${escapeHtml(detail)}</div></div>
+      ${p.real ? "" : `<span class="badge medium" style="white-space:nowrap">From a task</span>`}
+      <button
+        class="btn"
+        style="padding:4px 10px;font-size:12px;white-space:nowrap"
+        title="Save their number and notes"
+        onclick="event.stopPropagation();promotePerson(${jsStr(p.name)})"
+      >Save contact</button>
     </div>`;
     })
     .join("");
+}
+
+/* An inferred name becomes a real record, so the notes and phone number typed into the profile
+   have somewhere to live. Without this, "Priya" could be tagged on twenty tasks and still never
+   become a contact you could look up. */
+async function promotePerson(name) {
+  if (state.people.some((p) => sameName(p.name, name))) {
+    openPersonModal(null, name);
+    return;
+  }
+  const person = { id: cid(), name, notes: "", created: Date.now() };
+  state.people.unshift(person);
+  await dbSavePerson(person);
+  renderAll();
+  openPersonModal(person.id, person.name);
 }
 let currentPersonName = null;
 function openPersonModal(id, name) {
@@ -7011,9 +7220,351 @@ function restoreNudge() {
   if (card) card.style.display = "none";
 }
 
-let draggedDashboardSection = null;
-let dashboardHoldTimer = null;
-let dashboardPointerDragging = false;
+/* ---------- Reorderable lists ----------
+
+   One implementation, used by both the dashboard cards and the task lists.
+
+   The dashboard already had a working drag: HTML5 drag for a mouse, plus a 350ms press-and-hold
+   pointer path because HTML5 drag does not fire on touch. That second path is the reason this is
+   shared rather than copied — a "task list dragging" that only worked with a mouse would pass
+   every desktop test and be dead on the phone, which is where this app is actually used.
+
+   `orderKey` names where the order is kept. The order is stored rather than re-derived from the
+   view's own sort, because a manual order over a date-sorted list has to survive a re-sort: the
+   person put a thing where they wanted it, and tomorrow's list must not quietly undo that. */
+/* ---------- Command palette ----------
+
+   One key that reaches anything. With thirteen pages in the nav and a separate Ask overlay and a
+   search dropdown, the app had three ways to find things and no way to jump to a record — every
+   one of them needed the mouse.
+
+   The item matching deliberately goes through searchMatches() rather than a filter of its own, so
+   the palette and the header search cannot disagree about what "grocery" means. The existing test
+   that allows exactly one matcher is the reason this is a call and not a copy. */
+
+const COMMAND_LIMIT = 8;
+let commandRows = [];
+let commandIndex = 0;
+
+function commandGroups() {
+  const actions = [
+    { id: "capture", label: "Capture something new", hint: "C", icon: "plus", run: () => openCapture() },
+    { id: "ask", label: "Ask a question", hint: "Ctrl+K", icon: "sparkles", run: () => openAsk() },
+    { id: "select", label: "Select multiple tasks", hint: "Tasks", icon: "list-checks", run: () => { switchView("tasks"); toggleSelectMode(true); } },
+    { id: "review", label: "Review what is stuck", hint: "Weekly", icon: "clipboard-check", run: () => switchView("review") },
+    { id: "person", label: "Add a person", hint: "People", icon: "user-plus", run: () => { switchView("people"); document.getElementById("newPersonInput")?.focus(); } },
+    { id: "project", label: "Add a project", hint: "Projects", icon: "folder-plus", run: () => { switchView("projects"); document.getElementById("newProjectInput")?.focus(); } },
+    { id: "goal", label: "Add a goal", hint: "Goals", icon: "target", run: () => { switchView("goals"); document.getElementById("newGoalInput")?.focus(); } },
+  ];
+  const pages = NAV.filter((item) => item.id !== "logout").map((item) => ({
+    id: `view-${item.id}`,
+    label: item.label,
+    hint: "Page",
+    icon: item.icon,
+    run: () => switchView(item.id),
+  }));
+  // Actions come first: someone who types "new" wants a button, not a page called "new".
+  return [
+    { name: "Actions", rows: actions },
+    { name: "Pages", rows: pages },
+  ];
+}
+
+/* People, projects and goals are matched on their own text, not through searchMatches: that
+   matcher scores items, and it has no notion of a person's phone number. Both lists are small, so
+   a substring test is the right cost here. */
+function commandRecordRows(query) {
+  if (!query) return [];
+  const needle = query.toLowerCase();
+  const out = [];
+  const people = [
+    ...state.people.map((p) => ({ name: p.name, id: p.id, sub: p.phone || p.email || "" })),
+    ...[...new Set(state.items.map((i) => i.person).filter(Boolean))]
+      .filter((n) => !state.people.some((p) => sameName(p.name, n)))
+      .map((n) => ({ name: n, id: null, sub: "from a task" })),
+  ];
+  people
+    .filter((p) => `${p.name} ${p.sub}`.toLowerCase().includes(needle))
+    .slice(0, COMMAND_LIMIT)
+    .forEach((p) => out.push({
+      id: `person-${p.id || p.name}`,
+      label: p.name,
+      sub: p.sub,
+      icon: "user",
+      group: "People",
+      run: () => { switchView("people"); openPersonModal(p.id, p.name); },
+    }));
+
+  state.projects
+    .filter((p) => String(p.name || "").toLowerCase().includes(needle))
+    .slice(0, COMMAND_LIMIT)
+    .forEach((p) => out.push({
+      id: `project-${p.id}`,
+      label: p.name,
+      sub: "Project",
+      icon: "folder-kanban",
+      run: () => { switchView("projects"); startRenameProject(p.id, p.name); },
+    }));
+
+  state.goals
+    .filter((g) => String(g.title || "").toLowerCase().includes(needle))
+    .slice(0, COMMAND_LIMIT)
+    .forEach((g) => out.push({
+      id: `goal-${g.id}`,
+      label: g.title,
+      sub: "Goal",
+      icon: "target",
+      run: () => { switchView("goals"); startRenameGoal(g.id, g.title); },
+    }));
+
+  // The one shared matcher, so the palette and the header search can never disagree about a typo.
+  searchMatches(query)
+    .slice(0, COMMAND_LIMIT)
+    .forEach((item) => out.push({
+      id: `item-${item.id}`,
+      label: item.title,
+      sub: [item.kind, item.person, item.project].filter(Boolean).join(" · "),
+      icon: item.done ? "check-circle" : "circle",
+      group: "Tasks & notes",
+      run: () => openPanel(item.id),
+    }));
+
+  return out;
+}
+
+function enableListReordering(container, options = {}) {
+  const {
+    itemSelector = "[data-reorder-id]",
+    orderKey = null,
+    onReorder = null,
+    holdDelay = 350,
+  } = options;
+  if (!container) return null;
+
+  let dragged = null;
+  let holdTimer = null;
+  let pointerDragging = false;
+  // Set only once a drag is actually under way, so a stray pointerup after a plain tap does not
+  // commit an order the person never chose.
+  let tracking = null;
+
+  const items = () => [...container.querySelectorAll(itemSelector)];
+  const order = () => items().map((el) => el.dataset.reorderId);
+
+  /* `place` moves within the target's own parent rather than the shared container. The dashboard's
+     three cards live in different parents, so "insert into the container" would be wrong there and
+     correct for a task list — one rule, applied to whichever list the row actually sits in. */
+  const place = (el, target, clientY) => {
+    const box = target.getBoundingClientRect();
+    const before = clientY < box.top + box.height / 2;
+    target.parentElement.insertBefore(el, before ? target : target.nextElementSibling);
+  };
+
+  /* The move and release listeners live on the document, not on the row. This is the whole reason
+     press-and-hold can work at all: the instant the drag starts the pointer leaves the row it
+     started on, so a listener bound to that row would receive exactly one move and then nothing.
+     The dashboard's original drag had this same flaw and simply never showed it, because a
+     dashboard card is large enough that the first move usually landed on a card it also handled. */
+  const startTracking = (el) => {
+    pointerDragging = true;
+    dragged = el;
+    el.classList.add("reorder-dragging");
+    container.classList.add("reorder-active");
+
+    const onMove = (event) => {
+      event.preventDefault();
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(itemSelector);
+      if (!target || target === el || !container.contains(target)) return;
+      place(el, target, event.clientY);
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onCancel);
+      tracking = null;
+      commit();
+    };
+    const onCancel = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onCancel);
+      tracking = null;
+      abort();
+    };
+    tracking = { onMove, onUp, onCancel };
+    document.addEventListener("pointermove", onMove, { passive: false });
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onCancel);
+  };
+
+  const abort = () => {
+    clearTimeout(holdTimer);
+    if (dragged) dragged.classList.remove("reorder-dragging");
+    container.classList.remove("reorder-active");
+    dragged = null;
+    pointerDragging = false;
+  };
+
+  const commit = () => {
+    const wasDragging = Boolean(dragged);
+    const el = dragged;
+    abort();
+    if (!wasDragging) return;
+    const next = order();
+    if (orderKey) {
+      try {
+        localStorage.setItem(orderKey, JSON.stringify(next));
+      } catch (err) {
+        /* Private mode: the reorder still applies, it just will not be remembered. */
+      }
+    }
+    if (onReorder) onReorder(next, el);
+  };
+
+  items().forEach((el) => {
+    /* No `draggable = true` here, deliberately.
+
+       Setting it starts a native HTML5 drag as soon as the mouse moves, and that drag *cancels the
+       pointer event stream* — so the press-and-hold path below received exactly one move and then
+       went silent. It looked like a mouse drag and a touch drag were two features; they are one
+       drag, and the native one was getting in its own way. A dashboard card is large enough to
+       hide this, which is why it survived; a task row is not.
+
+       The pointer path covers mouse and touch identically, so there is nothing left to delegate. */
+    el.addEventListener("dragstart", (event) => {
+      // Still refused: if anything else in the page makes the row draggable, a native drag would
+      // break the reorder again, and swallowing it here fails loudly instead of silently.
+      event.preventDefault();
+    });
+    el.addEventListener("pointerdown", (event) => {
+      // A press that starts on a control belongs to the control. Without this, tapping a checkbox
+      // on a phone would begin a drag and the checkbox would never fire.
+      if (event.target.closest("button, input, a, select, textarea")) return;
+      if (tracking) return;
+      holdTimer = setTimeout(() => startTracking(el), holdDelay);
+    });
+    el.addEventListener("pointerup", () => {
+      // A press that ended before the hold elapsed was a tap, not a drag. Clearing the timer is
+      // what stops a tap from becoming a reorder a second later.
+      if (!pointerDragging) clearTimeout(holdTimer);
+    });
+  });
+
+  return { order, items };
+}
+
+function readStoredOrder(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function commandRowHtml(row, index) {
+  return `<div class="command-row" data-index="${index}" role="option" aria-selected="false"
+    onclick="runCommand(${index})" onmouseenter="highlightCommand(${index})"
+    style="display:flex;align-items:center;gap:10px;padding:9px 8px;border-radius:8px;cursor:pointer">
+    <span style="color:var(--accent);display:flex">${icon(row.icon || "circle")}</span>
+    <span style="flex:1;min-width:0">
+      <span style="display:block;color:var(--text);font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(row.label)}</span>
+      ${row.sub ? `<span style="display:block;font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(row.sub)}</span>` : ""}
+    </span>
+    ${row.hint ? `<span style="font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:2px 6px;white-space:nowrap">${escapeHtml(row.hint)}</span>` : ""}
+  </div>`;
+}
+
+function renderCommands() {
+  const input = document.getElementById("commandInput");
+  const list = document.getElementById("commandList");
+  if (!input || !list) return;
+  const query = input.value.trim();
+  const needle = query.toLowerCase();
+
+  const groups = [];
+  for (const group of commandGroups()) {
+    const matching = group.rows.filter(
+      (row) => !needle || row.label.toLowerCase().includes(needle) || (row.hint || "").toLowerCase().includes(needle),
+    );
+    if (matching.length) groups.push({ group: group.name, rows: matching.slice(0, COMMAND_LIMIT) });
+  }
+  if (query) {
+    const records = commandRecordRows(query);
+    if (records.length) groups.push({ group: "Your stuff", rows: records });
+  }
+
+  commandRows = groups.flatMap((group) => group.rows);
+  commandIndex = 0;
+
+  if (!commandRows.length) {
+    list.innerHTML = '<p class="empty" style="padding:14px 4px">Nothing matches that.</p>';
+    return;
+  }
+
+  list.innerHTML = groups
+    .map((group) => `
+      <div style="padding:10px 4px 4px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700">${escapeHtml(group.group)}</div>
+      ${group.rows.map((row) => commandRowHtml(row, commandRows.indexOf(row))).join("")}`)
+    .join("");
+  highlightCommand(0);
+  refreshIcons();
+}
+
+function highlightCommand(index) {
+  const rows = [...document.querySelectorAll("#commandList .command-row")];
+  if (!rows.length) return;
+  commandIndex = (index + rows.length) % rows.length;
+  rows.forEach((row, i) => {
+    const on = i === commandIndex;
+    row.setAttribute("aria-selected", String(on));
+    row.style.background = on ? "var(--sidebar-hover)" : "transparent";
+  });
+  rows[commandIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+function commandKeydown(event) {
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    highlightCommand(commandIndex + 1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    highlightCommand(commandIndex - 1);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    runCommand(commandIndex);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closeCommandPalette();
+  }
+}
+
+function runCommand(index) {
+  const row = commandRows[index];
+  closeCommandPalette();
+  // Deferred by a tick: every run() opens a panel, a modal or another view, and doing that
+  // synchronously from inside a keydown leaves the palette's input still holding focus.
+  if (row) setTimeout(() => row.run(), 0);
+}
+
+function openCommandPalette() {
+  const overlay = document.getElementById("commandPalette");
+  const input = document.getElementById("commandInput");
+  if (!overlay || !input) return;
+  overlay.classList.add("open");
+  input.value = "";
+  renderCommands();
+  lockPageScroll(true);
+  // Focus after the class lands, or the scroll lock and the caret fight each other.
+  setTimeout(() => input.focus(), 0);
+}
+
+function closeCommandPalette() {
+  const overlay = document.getElementById("commandPalette");
+  if (!overlay) return;
+  overlay.classList.remove("open");
+  if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open")) lockPageScroll(false);
+}
 
 function saveDashboardLayout() {
   const layout = [...document.querySelectorAll("[data-dashboard-section]")].map(
@@ -7045,62 +7596,17 @@ function restoreDashboardLayout() {
 }
 
 function enableDashboardDragging() {
-  document.querySelectorAll("[data-dashboard-section]").forEach((section) => {
-    section.addEventListener("dragstart", (event) => {
-      draggedDashboardSection = section;
-      section.classList.add("dashboard-dragging");
-      event.dataTransfer.effectAllowed = "move";
-    });
-    section.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      if (!draggedDashboardSection || draggedDashboardSection === section) return;
-      const before = event.clientY < section.getBoundingClientRect().top + section.offsetHeight / 2;
-      section.parentElement.insertBefore(
-        draggedDashboardSection,
-        before ? section : section.nextElementSibling,
-      );
-    });
-    section.addEventListener("dragend", () => {
-      section.classList.remove("dashboard-dragging");
-      draggedDashboardSection = null;
-      saveDashboardLayout();
-    });
+  /* Delegates to the shared reorder engine. This used to be its own ~55-line copy of the same
+     dragstart/dragover/press-and-hold logic, which is exactly how two implementations of one
+     behaviour end up disagreeing — the task lists got the pointer path, the dashboard would have
+     kept its own, and a fix to one would leave the other broken.
 
-    section.addEventListener("pointerdown", (event) => {
-      if (event.target.closest("button, input, a")) return;
-      dashboardHoldTimer = setTimeout(() => {
-        dashboardPointerDragging = true;
-        draggedDashboardSection = section;
-        section.classList.add("dashboard-dragging");
-      }, 350);
-    });
-    section.addEventListener("pointermove", (event) => {
-      if (!dashboardPointerDragging || draggedDashboardSection !== section) return;
-      event.preventDefault();
-      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(
-        "[data-dashboard-section]",
-      );
-      if (!target || target === section) return;
-      const before = event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
-      target.parentElement.insertBefore(
-        section,
-        before ? target : target.nextElementSibling,
-      );
-    });
-    section.addEventListener("pointerup", () => {
-      clearTimeout(dashboardHoldTimer);
-      if (!dashboardPointerDragging) return;
-      section.classList.remove("dashboard-dragging");
-      dashboardPointerDragging = false;
-      draggedDashboardSection = null;
-      saveDashboardLayout();
-    });
-    section.addEventListener("pointercancel", () => {
-      clearTimeout(dashboardHoldTimer);
-      dashboardPointerDragging = false;
-      draggedDashboardSection = null;
-      section.classList.remove("dashboard-dragging");
-    });
+     The container is a class selector rather than document.body: the engine binds a listener to
+     every element matching `itemSelector` inside it, and the body already holds the nav, the task
+     list and the whole app. */
+  return enableListReordering(document.querySelector(".view.active") || document.body, {
+    itemSelector: "[data-dashboard-section]",
+    onReorder: saveDashboardLayout,
   });
 }
 
@@ -8096,7 +8602,14 @@ function closeTopmostOverlay() {
     return true;
   }
 
-  if (document.getElementById("askOverlay").classList.contains("open")) {
+  // The palette reuses the .ask-overlay class so it inherits the styling, which means the generic
+  // "is an ask overlay open" check below would match it and Escape would close Ask instead. The
+  // palette is checked first so it always wins.
+  if (document.getElementById("commandPalette")?.classList.contains("open")) {
+    closeCommandPalette();
+    return true;
+  }
+  if (document.getElementById("askOverlay")?.classList.contains("open")) {
     closeAsk();
     return true;
   }
@@ -8143,7 +8656,10 @@ function initShortcuts() {
 
     if (modifier && (key === "k" || key === "K")) {
       e.preventDefault();
-      openAsk();
+      // Ctrl+Shift+K is the palette; plain Ctrl+K stays with Ask. One key, two behaviours, is how
+      // a shortcut becomes a coin flip — and Ask is the older, documented one.
+      if (e.shiftKey) openCommandPalette();
+      else openAsk();
       return;
     }
 
