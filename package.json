@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "verify": "node Everything/tests/verify.mjs",
     "test": "node Everything/tests/run-all.mjs",
     "test:plan": "node Everything/tests/plan-probe.mjs",
     "test:visual": "node Everything/tests/plan-visual.mjs",

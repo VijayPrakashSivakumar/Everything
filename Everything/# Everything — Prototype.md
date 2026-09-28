@@ -748,6 +748,63 @@ that click fell through to `openPanel()`, so swiping a row opened the very item 
 suppression is per-row and read once — a module-level flag on a timer swallowed the *next* real
 tap, including a deliberate press on a revealed button.
 
+# Working in this repo — read this before editing
+
+These are not style preferences. Each one is here because breaking it cost real time, and the
+cost is written down so it does not have to be paid again.
+
+## 1. Run `npm run verify` after every edit, not just before a test run
+
+```
+node Everything/tests/verify.mjs
+```
+
+It takes about a second and it catches the failure mode that actually happens here: an edit that
+lands in the **wrong place** rather than being wrong.
+
+- **A positional insert is blind.** Inserting "at line 241" does not know what is on line 241. The
+  number came from a read that had gone stale, so the insert landed inside a
+  `try { ... } finally { ... }` and produced a duplicate `} finally {` and a check body truncated
+  mid-function, with the next `await check(...)` swallowed inside it.
+- **Prefer a text-anchored edit.** `old_text` that does not match fails loudly and changes nothing.
+  A line number never fails — it just writes in the wrong place.
+- **Never trust a line number from a read that warned it was stale.** Re-read first, or edit by
+  anchor. The warning in the tool output was there precisely so this would not happen.
+- **Batch edits hide damage.** Three inserts in a row, each moving the target for the next, is how
+  one broken edit became three. One edit, then verify, then the next.
+
+## 2. A `node --check` pass is not enough on its own
+
+Parsing proves a file is valid JavaScript. It does not prove a check still *runs*. An edit that
+replaced a check instead of adding one next to it leaves a file that parses, runs, prints one
+fewer line, and reports success. `verify.mjs` checks the shape as well as the parse: a check
+nested inside another is the signature of a truncated body.
+
+## 3. A banner must never contradict the lines above it
+
+`run-all.mjs` scores a suite on `/ALL (\d+) [A-Z -]*PASSED/`. A banner counting *passes* prints
+"ALL 14 CHECKS PASSED" directly beneath two `FAIL` lines. The exit code is the only thing that
+disagrees, and a reader scanning output sees a pass. Always `results.length`, never a filter on
+`'PASS'`.
+
+## 4. Diagnostics get deleted before they get committed
+
+A `console.log` left in `script.js` and a throwaway probe file both shipped once. `verify.mjs`
+flags both — a `console.log` matching a diagnostic string, and any `_*` file in `tests/`.
+
+## 5. Check the shape of what already exists before asserting on it
+
+The first version of the banner check demanded one exact string and flagged **fifteen healthy
+files**, because every suite words its own label ("AUTO-SAVE CHECKS", "NEXT-ACTION CHECKS",
+"TESTS"). It was the same mistake the script exists to prevent. Read the existing convention, then
+match it.
+
+## 6. Instrument rather than reason when a runtime behaviour misbehaves
+
+Three separate bugs in the swipe gesture were each found by logging the live event stream, and my
+first three hypotheses were wrong every time. A wrong theory costs one more cycle; a logged
+event sequence costs none. Reach for the instrument early.
+
 ## Signing out was leaking the previous account's data
 
 Asked to improve the sign-out module, because it looked basic. It was worse than basic.

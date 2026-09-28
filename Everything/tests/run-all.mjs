@@ -17,7 +17,7 @@
 // So: every suite runs, each under its own hard timeout (a hung browser or a hung socket can no
 // longer block the terminal), and a missing dependency is reported as SKIPPED with the reason
 // rather than as a silent truncation.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -58,9 +58,12 @@ const SUITES = [
   // every account on the device. The next person to sign in inherited it — and the merge pushed
   // it into their account.
   { name: 'signout', file: 'signout-probe.mjs', timeoutMs: 120000 },
+  // Parses and shape-checks every file, and runs before the rest so a malformed file is reported
+  // as what it is — a broken edit — rather than as a logic failure in whichever suite died on it.
+  { name: 'verify', file: 'verify.mjs', timeoutMs: 60000 },
   // Four features that each looked finished and were each one step short of working: a palette
-  // that could not be reached, contacts that could not be found, bulk actions that could not be
-  // selected, and a drag that a native HTML5 drag kept cancelling.
+  // that could not be reached by touch, contacts that could not be found, bulk actions the Inbox
+  // did not have, and a drag that a native HTML5 drag kept cancelling.
   { name: 'gaps', file: 'ui-gaps-probe.mjs', timeoutMs: 180000 },
 ];
 
@@ -114,6 +117,60 @@ function runSuite(suite) {
 const summary = [];
 let failed = 0;
 let skipped = 0;
+
+/* ---------- Pre-flight: parse every file before running anything ----------
+
+   This exists because of how the probe files got corrupted twice. The cause was never the
+   content being written — it was *where* it was written. A positional insert lands at a line
+   number, blind to what is there, and the line number came from a read that had gone stale. So an
+   insert landed inside a `try { ... } finally { ... }`, producing a duplicate `} finally {` and a
+   truncated arrow function whose body had swallowed the next `await check(...)`.
+
+   Three things made that expensive rather than obvious:
+
+   - the inserts were batched, so each one moved the target line for the next and the damage
+     compounded before anything was looked at;
+   - the resulting syntax error was discovered by running a 20-second browser suite, so the first
+     symptom looked like a logic failure rather than a broken file;
+   - and the same batching hid the fact that a check had been *deleted* by a replacement that was
+     meant to insert before it.
+
+   Parsing everything first turns a ten-minute misdiagnosis into a two-second one. `node --check`
+   is the same parser Node will use, and it is synchronous and side-effect free, so it is safe to
+   run on every file in the repo that this suite can possibly execute. */
+function preflightParse() {
+  const targets = [
+    path.join(here, '..', '..', 'Everything', 'script.js'),
+    path.join(here, 'run-all.mjs'),
+    ...SUITES.map((suite) => path.join(here, suite.file)),
+  ];
+  const broken = [];
+  for (const file of targets) {
+    const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+    if (result.status !== 0) {
+      // The first lines of a Node parse error are a stack trace with no information in them. The
+      // useful part is the first line naming a file and a position, so keep that and drop the
+      // module-loader noise around it.
+      const line = (result.stderr || '')
+        .split('\n')
+        .map((entry) => entry.trim())
+        .find((entry) => /^\S+\.(mjs|js):\d+$/.test(entry));
+      const caret = (result.stderr || '').includes('^') ? ' (see the line above for the offending brace)' : '';
+      broken.push(`  ${path.relative(path.join(here, '..', '..'), file)}: ${line || 'parse failed'}${caret}`);
+    }
+  }
+  if (broken.length) {
+    // ASCII only. A Windows console renders an em dash as mojibake, and a message that is
+    // unreadable in the one place it is needed is worse than a plainer one.
+    console.log(`\nPARSE ERRORS - these files are malformed, so no result below means anything:\n`);
+    console.log(broken.join('\n'));
+    console.log('\nUsually an edit that landed in the wrong place. Look for a duplicated block, a');
+    console.log('missing closing brace, or a check that was replaced instead of added to.');
+    process.exit(1);
+  }
+}
+
+preflightParse();
 
 for (const suite of selected) {
   process.stdout.write(`${paint('dim', `→ ${suite.name} (${(suite.timeoutMs / 1000) | 0}s budget)`)}\n`);

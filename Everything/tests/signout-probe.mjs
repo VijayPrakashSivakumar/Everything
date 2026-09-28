@@ -162,5 +162,9 @@ try {
    /ALL (\d+) [A-Z -]*PASSED/ and marks it failed when that does not match — even when every check
    passed and the exit code is 0. It was "4 of 4 sign-out checks passed" here, which read as a
    failure in the summary while the output directly above it said otherwise. */
-const passed = results.filter((r) => r.startsWith('PASS')).length;
-console.log(`\nALL ${passed} SIGN-OUT CHECKS PASSED`);
+/* The banner wording is load-bearing, and so is the number in it. run-all.mjs scores a suite with
+   /ALL (\d+) [A-Z -]*PASSED/ and marks it failed when that does not match — but it also fails on a
+   non-zero exit code, so "ALL 2 SIGN-OUT CHECKS PASSED" beside four FAILs would be caught only by
+   the exit code, and the line directly above it would claim the opposite. Counting results.length
+   means the sentence can never contradict the lines above it. */
+console.log(`\nALL ${results.length} SIGN-OUT CHECKS PASSED`);
