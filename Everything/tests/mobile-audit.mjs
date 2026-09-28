@@ -153,6 +153,90 @@ async function main() {
   record(!search.missing && parseFloat(search.fontSize) >= 16,
     'the search input avoids iOS focus-zoom', `fontSize=${search.fontSize}`);
 
+  // Every topbar *control* a phone can reach has to actually be reachable.
+  //
+  // The theme toggle was hidden under 900px to keep the search field above its 120px floor, which
+  // left a user who had picked dark mode with no way back to light except digging through Settings.
+  // It was restored by reclaiming width from the topbar gap, the side padding and the capture mark
+  // instead, so the search floor and this can both hold. That trade is easy to undo by accident:
+  // hiding one button looks like it "fixes" the layout, and the only test that noticed was the
+  // search floor going quiet rather than anything failing loudly.
+  //
+  // So both halves are asserted together. Hiding a control to make room is a change that needs a
+  // deliberate trade, not a silent way to pass this audit.
+  //
+  // The list is controls only, and deliberately excludes `.theme-dot`. That is the unread badge
+  // inside the notification button, and it is `display: none` until something is unread — asserting
+  // it visible would fail on a correctly working app with an empty inbox. Checking the button that
+  // contains it is the thing that actually matters.
+  const reach = await evaluate(`(() => {
+    const wanted = ['#paletteBtn', '.theme-toggle', '.mobile-capture-btn', '.topbar-menu-wrap .icon-btn', '.avatar'];
+    return wanted.map((sel) => {
+      const el = document.querySelector(sel);
+      const r = el && el.getBoundingClientRect();
+      return {
+        sel,
+        present: !!el,
+        visible: !!el && getComputedStyle(el).display !== 'none' && r.width > 0,
+        w: r ? Math.round(r.width) : 0,
+      };
+    });
+  })()`);
+  const hidden = reach.filter((c) => c.present && !c.visible);
+  const absent = reach.filter((c) => !c.present);
+  record(hidden.length === 0 && absent.length === 0,
+    'no topbar control is missing or hidden at 390px to make room',
+    hidden.length || absent.length
+      ? [...hidden.map((c) => c.sel), ...absent.map((c) => c.sel + ' (absent)')].join(', ')
+      : reach.map((c) => `${c.sel}=${c.w}`).join(' '));
+
+  // And the space those controls take must still leave the search field usable, which is the
+  // constraint that removed the theme toggle in the first place. Asserted together with the search
+  // checks above, so the two cannot be satisfied by trading one against the other.
+  const bar = await evaluate(`(() => {
+    const t = document.querySelector('.topbar');
+    const rows = [...t.children].filter((el) => getComputedStyle(el).display !== 'none');
+    return {
+      overflow: t.scrollWidth > t.clientWidth + 1,
+      widest: Math.max(...rows.map((el) => Math.round(el.getBoundingClientRect().width))),
+    };
+  })()`);
+  record(!bar.overflow, 'the topbar itself does not overflow with every control shown',
+    `widest child=${bar.widgest}px`);
+
+  // A placeholder that does not fit is truncated by the browser mid-word, and "Search an" reads as
+  // a bug rather than as a hint. It is not a horizontal-overflow failure, so nothing above catches
+  // it: the field is the right width and the text is simply too long for it. Measured by comparing
+  // the placeholder against the space actually available inside the input.
+  //
+  // The probe must be in the document *before* it is measured, and must carry the input's font
+  // longhands rather than the `font` shorthand. Two versions of this check silently reported every
+  // string as fitting: one measured a detached node, which is always 0 wide, so it could not fail.
+  const placeholder = await evaluate(`(() => {
+    const i = document.getElementById('searchInput');
+    if (!i) return { missing: true };
+    const cs = getComputedStyle(i);
+    const probe = document.createElement('span');
+    probe.style.position = 'absolute';
+    probe.style.visibility = 'hidden';
+    probe.style.whiteSpace = 'pre';
+    probe.style.left = '-9999px';
+    probe.style.top = '0';
+    probe.style.display = 'inline-block';
+    probe.style.fontFamily = cs.fontFamily || 'sans-serif';
+    probe.style.fontSize = cs.fontSize || '16px';
+    probe.style.fontWeight = cs.fontWeight || '400';
+    probe.style.letterSpacing = cs.letterSpacing || 'normal';
+    probe.textContent = i.placeholder;
+    document.body.appendChild(probe);
+    const needed = probe.getBoundingClientRect().width;
+    probe.remove();
+    return { missing: false, text: i.placeholder, needed: Math.round(needed), avail: Math.round(i.clientWidth) };
+  })()`);
+  record(!placeholder.missing && placeholder.avail >= placeholder.needed,
+    'the search placeholder fits without being cut mid-word',
+    `"${placeholder.text}" needs ${placeholder.needed}px, has ${placeholder.avail}px`);
+
   // Tapping the field must open the dropdown anchored beneath it.
   await evaluate(`(() => {
     const i = document.getElementById('searchInput');

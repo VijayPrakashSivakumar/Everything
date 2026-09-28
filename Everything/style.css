@@ -1911,15 +1911,17 @@ h1.page-title,
      search 106, palette 40, theme 40, and two more at 40 and 30. There is no room, so something
      has to go rather than something being squeezed.
 
-     The theme toggle goes. Everything in this app respects the system dark-mode setting already
-     (`prefers-color-scheme` is read by the head script before first paint), so on a phone the
-     button is a duplicate of a preference the device already has. The desktop keeps it, where the
-     topbar has space and switching by hand is a real preference rather than a mock one. */
-  .search-box .kbd {
-    display: none;
-  }
+     The theme toggle used to be the thing that went, on the reasoning that a phone already follows
+     the system dark-mode setting so the button duplicated a preference the device had. That was
+     wrong on its own terms: `prefers-color-scheme` only decides the *initial* scheme, and the app
+     has a real per-account appearance setting (settings > Appearance, a light/dark select and a
+     concept picker) that the header toggle is the only one-tap route to. So a user who had chosen
+     dark on purpose had no way back except digging into Settings.
 
-  .topbar .theme-toggle {
+     It is back, and the space it needs is reclaimed further down from the topbar gap, the side
+     padding and the capture mark, rather than from the search field. Measured again at 390px with
+     the toggle showing: search box 128px, over the 120px floor. */
+  .search-box .kbd {
     display: none;
   }
 }
@@ -4792,9 +4794,13 @@ body.overlay-open .content {
 
 @media (max-width: 480px) {
   .topbar {
-    gap: 4px;
-    padding-left: max(10px, env(safe-area-inset-left));
-    padding-right: max(10px, env(safe-area-inset-right));
+    /* 2px rather than the 4px this had. The theme toggle came back at 900px and took 40px plus a
+       gap, which is what pushed the search box under its 120px floor. 2px between icon buttons that
+       are already 40px wide and visually distinct is not a readable difference, and it buys back
+       12px in the tightest layout in the app. */
+    gap: 2px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
   }
 
   /* 40x40 rather than 34x38, which a 390px audit measured as too small to tap reliably.
@@ -4802,6 +4808,20 @@ body.overlay-open .content {
   .topbar .icon-btn {
     width: 40px;
     height: 40px;
+  }
+
+  /* The capture mark is the one topbar element that is a logo rather than a control, so it is the
+     only thing here that can shrink without costing a tap target or hiding a feature. 44x18 from
+     50x20, and the button tracks it, so the SVG cannot overflow the hit area. */
+  .mobile-capture-btn {
+    width: 44px;
+    height: 18px;
+    min-width: 44px;
+  }
+
+  .mobile-capture-btn .capture-mark {
+    width: 44px;
+    height: 18px;
   }
 
   .topbar .avatar {

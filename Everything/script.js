@@ -2944,6 +2944,30 @@ const sidebarMedia = window.matchMedia("(max-width:900px)");
 if (typeof sidebarMedia.addEventListener === "function")
   sidebarMedia.addEventListener("change", syncSidebarMode);
 
+/* The search placeholder is prose, and prose is the first thing to break when the field is narrow.
+
+   Restoring the theme toggle cost the topbar 42px, which left the field at 128px and the
+   "Search anything or ask a question..." placeholder truncated to "Search an". A placeholder that
+   reads as a broken word is worse than a short one, so the text swaps at the same breakpoint the
+   layout uses. The accessible name does not change: aria-label keeps the full description, and the
+   field is a real input rather than a click target, so a short placeholder loses nothing.
+
+   The long and short forms are both written out here rather than truncated at runtime, so the
+   narrow string is chosen deliberately rather than cut off at whatever character index happens to
+   fit. "Search..." is 64px against 77px of usable input at 390px, measured; "Search or ask..." was
+   the first attempt and is 112px, so it truncated just as badly. */
+const searchPlaceholderMedia = window.matchMedia("(max-width:900px)");
+function syncSearchPlaceholder() {
+  const input = document.getElementById("searchInput");
+  if (!input) return;
+  input.placeholder = searchPlaceholderMedia.matches
+    ? "Search..."
+    : "Search anything or ask a question…";
+}
+if (typeof searchPlaceholderMedia.addEventListener === "function")
+  searchPlaceholderMedia.addEventListener("change", syncSearchPlaceholder);
+syncSearchPlaceholder();
+
 /* ---------- Rendering ---------- */
 function timeAgo(ts) {
   const diff = Date.now() - ts;

@@ -701,9 +701,37 @@ wins at equal specificity, and `.icon-btn`'s own `display: flex` left the button
 every screen until the order was fixed.
 
 Adding it also made the topbar overflow: seven controls at 390px, and the search box squeezed to
-106px against a 120px floor. The **theme toggle** is what went — the app already follows the
-system dark-mode setting, so on a phone the button duplicates a preference the device has. The
-desktop keeps it, where switching by hand is a real preference rather than a mock one.
+106px against a 120px floor. The **theme toggle** is what went, on the reasoning that the app already
+follows the system dark-mode setting so the button duplicated a preference the device had.
+
+That reasoning was wrong, and the symptom is the point. `prefers-color-scheme` only picks the
+*initial* scheme. The app has a real per-account appearance setting — a light/dark select and a
+concept picker in Settings — and once a user has deliberately chosen dark, the header toggle is the
+only **one-tap** route back. Hiding it left a phone user with no way out of a choice they did not
+make, short of digging through Settings on a phone. On a phone-first app that is a dead end, and it
+was introduced while adding a *mobile* feature.
+
+The fix was to find the space rather than to remove the control. Measured at 390px with the toggle
+back, the width came from the topbar gap (4px to 2px, 12px), the side padding (10px to 8px, 4px)
+and the capture mark (50x20 to 44x18, 6px) — 22px reclaimed without touching the search field,
+which then measured 128px against its 120px floor.
+
+The lesson generalises past this button: **hiding a control to make a layout fit is a real cost to
+the user, not a free simplification.** Reclaim space from padding, gaps and decoration first, and
+if something genuinely must go, it should be a duplicate of something else rather than the only
+route to a feature.
+
+Two checks in `mobile-audit.mjs` now hold both halves at once, because the trade is easy to undo by
+accident — hiding one button *looks* like it fixes the layout:
+
+- no topbar control may be missing or hidden at 390px, and
+- the search field must still clear its 120px floor with every control shown.
+
+Restoring the toggle also narrowed the search input enough to truncate the placeholder to
+"Search an", so the placeholder now swaps to a short form under 900px. That is checked too: a
+placeholder that does not fit is not a horizontal-overflow failure, so nothing else caught it.
+"Search..." measures 64px against 77px available; the first attempt, "Search or ask...", is 112px
+and truncated just as badly. Both numbers are measured, not estimated.
 
 ### Bulk actions reached the Tasks list and not the Inbox
 
