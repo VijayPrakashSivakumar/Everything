@@ -105,6 +105,42 @@ check('the view itself is in the history, so back walks the pages', () => {
   assert.doesNotMatch(js, /function switchView\(id\) \{/, 'switchView must not ignore a history mode');
 });
 
+check('multi-user mode subscribes to every collection it writes to', () => {
+  // People were written to the shared collection but never read back: dbSavePerson pushed a record
+  // that no snapshot ever delivered, and the state built for multi-user mode had no `people` key, so
+  // renderPeople() mapped over undefined and threw on the very first snapshot. Both halves are
+  // derived from the source instead of listed by hand, so the next collection added cannot skip the
+  // subscription the same way.
+  const start = js.indexOf('async function initMultiUser');
+  const end = js.indexOf('function itemCollectionFor');
+  assert.ok(start > 0 && end > start, 'initMultiUser must still be the multi-user entry point');
+  const body = js.slice(start, end);
+
+  const written = new Set([...js.matchAll(/\.collection\("([a-z]+)"\)/g)].map((m) => m[1]));
+  assert.ok(written.size >= 3, `expected the save helpers to name their collections, got ${[...written]}`);
+
+  for (const name of written) {
+    // The local holding each collection is not named uniformly — the existing code says `projCol`,
+    // not `projectsCol` — so bind whatever it is actually called and assert on that variable rather
+    // than on a naming convention nothing enforces.
+    const binding = new RegExp(`const (\\w+)\\s*=\\s*db\\s*\\.collection\\("${name}"\\)`).exec(body);
+    assert.ok(binding, `${name} is written by a dbSave helper but never opened as a shared collection`);
+    assert.match(body, new RegExp(`${binding[1]}\\.onSnapshot`),
+      `${name} is never subscribed to, so a save reaches the database and is never read back`);
+  }
+
+  // The state object built for multi-user mode has to carry the key each snapshot writes into, or
+  // the first render to touch it throws.
+  const literal = /state = \{([^}]*)\};/.exec(body);
+  assert.ok(literal, 'multi-user mode must build a state object of its own');
+  const keys = [...literal[1].matchAll(/([a-zA-Z]+):/g)].map((m) => m[1]);
+  for (const name of written) {
+    if (name === 'items') continue;   // items are merged by mergeItems(), not held on state
+    assert.ok(keys.includes(name),
+      `state built for multi-user mode has no "${name}" key, so the first render maps over undefined`);
+  }
+});
+
 check('theme concepts are token driven and default is untouched', () => {
   // Two axes on purpose: data-theme keeps its original light/dark meaning.
   assert.match(html, /setAttribute\("data-concept", stored\)/, 'the concept is never applied before paint');

@@ -699,6 +699,24 @@ functions for the API routes, and any of several model providers for AI. Opened 
 falls back to keyword matching. A local Ollama model removes the AI dependency entirely — see
 *Local model (Ollama)*.
 
+There are two sync paths, and they are not interchangeable. **Supabase** (`sbUser`) loads items,
+projects, goals and people and saves each of them back. The **`db` multi-user** path is separate,
+and it is easy to extend one collection without the others: a `dbSave*` helper writing to
+`db.collection("people")` is not the same as anyone *reading* people back.
+
+That is exactly how **People was half-wired for so long**: `dbSavePerson` and `dbDeletePerson` both
+wrote to the shared `people` collection, but `initMultiUser()` only subscribed to `items`,
+`projects` and `goals`. A person saved in multi-user mode reached the database and was never
+delivered back — not to the person who typed it, and not to anyone else. The state object built
+for that path did not even carry a `people` key, so `renderAll()` → `renderPeople()` mapped over
+`undefined` and threw on the very first snapshot, taking the item render down with it.
+
+A collection that is written to but never subscribed to is invisible in a way that no screenshot
+or happy-path test will show, so the invariant is now asserted rather than remembered:
+`ui-structure.test.mjs` **derives** the set of collections from the source, then requires each one
+to be opened as a shared collection, subscribed with `onSnapshot`, and present as a key in the state
+that path builds. Adding a fifth collection without wiring it up fails the suite.
+
 ## Pushing to GitHub
 
 ```bash

@@ -1989,6 +1989,9 @@ async function initMultiUser() {
   const itemsCol = db.collection("items");
   const projCol = db.collection("projects");
   const goalCol = db.collection("goals");
+  // People were saved to the shared collection but never subscribed to, so the record reached the
+  // database and never came back: not to the person who typed it, and not to anyone else.
+  const peopleCol = db.collection("people");
 
   const existing = await itemsCol.get();
   if (existing.empty) {
@@ -1996,9 +1999,13 @@ async function initMultiUser() {
     for (const it of seed.items) await itemsCol.doc(it.id).set(it);
     for (const p of seed.projects) await projCol.doc(p.id).set(p);
     for (const g of seed.goals) await goalCol.doc(g.id).set(g);
+    for (const p of seed.people) await peopleCol.doc(p.id).set(p);
   }
 
-  state = { items: [], projects: [], goals: [], theme: "light" };
+  // `people` has to be in this literal, not just in seedData(). renderAll() calls renderPeople(),
+  // which maps over state.people, so a state built without the key threw on the very first
+  // snapshot and took the whole item render down with it.
+  state = { items: [], projects: [], goals: [], people: [], theme: "light" };
 
   itemsCol.onSnapshot((snap) => {
     sharedItems = snap.docs.map((d) => ({ ...d.data(), scope: "shared" }));
@@ -2014,6 +2021,11 @@ async function initMultiUser() {
     state.goals = snap.docs.map((d) => d.data());
     renderGoals();
     renderReports();
+  });
+  peopleCol.onSnapshot((snap) => {
+    state.people = snap.docs.map((d) => d.data());
+    renderPeople();
+    renderNav();
   });
 
   // Per-person private items — only visible to the signed-in viewer who created them
