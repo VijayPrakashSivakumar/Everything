@@ -568,6 +568,7 @@ Run the SQL files in `supabase/migrations/` (Supabase dashboard → SQL editor, 
 | `005_idempotent_client_ids.sql` | Stable client IDs, authenticated API persistence, and structured-record RLS |
 | `006_task_workflow.sql` | Task workflow statuses, checklist steps, and stable recurrence keys on `items` and structured `tasks` |
 | `007_smart_capture.sql` | Smart-capture source text, extraction metadata, and duplicate fingerprints on `items` |
+| `008_morning_digest.sql` | `digest_preferences` — the opt-in that lets the **server** send the daily digest to a closed app. No row means off, so this is the only migration the Review and digest work needs. |
 
 `supabase/reminder-cron.sql` is **not** a migration — it is the optional minute-level trigger
 described under *Cron cadence*, and only needs running if the project stays on Vercel Hobby.
@@ -750,8 +751,9 @@ Four things the server leg has to get right that the client never had to:
   items are not yours to be nagged about, so the query filters on `owner_id` and pushes only to that
   person's subscriptions.
 - **Local hour, local day.** 8am UTC is 3pm in India. A digest at 3am is how a feature gets muted for
-  good, so both the hour and the once-a-day key are computed in the subscriber's own timezone, taken
-  from the `timezone` column `push_subscriptions` already stored.
+  good, so the once-a-day key is computed in the subscriber's own timezone, taken from the `timezone`
+  column `push_subscriptions` already stored. The hour is a **waking window (06:00–20:00 local), not
+  a target hour** — see below for why.
 - **A quiet day does not mark the day.** Same rule as the client, so something that becomes due later
   that day is still mentioned.
 - **A failed push does not mark the day**, so the next cron run retries instead of skipping the day.
@@ -760,6 +762,29 @@ Four things the server leg has to get right that the client never had to:
 table degrades to silence rather than erroring every hour. Its RLS policy lets a person read and write
 their own row and nobody else's; the cron uses the service role. The client syncs the preference on
 every toggle, best-effort — if migration 008 has not run, the client leg still works and logs a note.
+
+### The hour is a window, not a clock — and why
+
+The first version asked the server for *"8am, in the user's timezone."* That can never work on this
+deployment, and would have shipped as a feature that silently never fires.
+
+**Vercel Hobby allows one cron run a day**, and this project's runs at **01:00 UTC**. That is:
+
+| where you are | 01:00 UTC is | would a digest arrive? |
+| --- | --- | --- |
+| California | 17:00 the previous day | yes, but at 5pm |
+| London | 01:00 | **no — the middle of the night** |
+| India | 06:30 | borderline |
+
+So the server sends inside a **waking window of 06:00–20:00 local**, and stays silent outside it. For
+India that means 6:30am, which is reasonable; for London the single daily run falls at 1am and is
+correctly **declined** rather than delivered.
+
+Being declined is the right outcome, and the day is deliberately **not** marked as sent, so a later
+run can still deliver. If you run the minute-level schedule in `supabase/reminder-cron.sql` (the
+documented Hobby workaround), the window is hit reliably and the digest effectively lands at the hour
+you chose in Settings. Until then, treat the server leg as *best effort*, and the client leg — which
+does honour your exact hour — as the dependable one.
 
 ## Review — the missing half of the loop
 

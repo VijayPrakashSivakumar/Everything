@@ -182,7 +182,18 @@ function safeJson(text) {
 
 const DIGEST_WAITING_STALE_DAYS = 14;
 const DIGEST_MAX_NAMES = 3;
-const DIGEST_SEND_HOUR = 8;
+/* This is a *window*, not a target hour, and the distinction matters.
+
+   The Vercel Hobby plan only allows one cron run a day, and this project's runs at 01:00 UTC. So
+   asking the server for "8am exactly" is not a thing it can do: 01:00 UTC is 6:30 in India and 20:00
+   the previous evening in California, and a digest sent then is the 3am notification that gets a
+   feature muted for good.
+
+   So the server sends inside a waking window and stays silent outside it. With the daily cron that
+   is the best a Hobby deployment can honestly do; run the minute-level schedule in
+   supabase/reminder-cron.sql and the target hour is honoured properly instead. */
+const DIGEST_SEND_FROM_HOUR = 6;
+const DIGEST_SEND_UNTIL_HOUR = 20;
 
 function digestTimeZoneOffset(item) {
   const tz = String((item && item.timezone) || process.env.REMINDER_TIMEZONE || 'UTC');
@@ -326,7 +337,7 @@ async function deliverDailyDigests(now) {
   const preferences = await fetchDigestPreferences();
   if (!preferences.length) return { attempted: 0, delivered: 0, skipped: 0, quiet: 0, early: 0 };
 
-  const result = { attempted: 0, delivered: 0, skipped: 0, quiet: 0, early: 0 };
+  const result = { attempted: 0, delivered: 0, skipped: 0, quiet: 0, outsideWindow: 0 };
 
   for (const pref of preferences) {
     if (!pref.user_id) continue;
@@ -335,9 +346,10 @@ async function deliverDailyDigests(now) {
     const timeZone = pref.timezone || 'UTC';
     const local = localHourAndDay(new Date(now), timeZone);
 
-    // Before the hour the person chose. A digest at 3am is worse than no digest at all.
-    if (local.hour < DIGEST_SEND_HOUR) {
-      result.early += 1;
+    // Outside the waking window, it stays silent — and deliberately does NOT mark the day, so a
+    // later run (or the minute-level schedule) can still deliver it.
+    if (local.hour < DIGEST_SEND_FROM_HOUR || local.hour >= DIGEST_SEND_UNTIL_HOUR) {
+      result.outsideWindow += 1;
       continue;
     }
 
