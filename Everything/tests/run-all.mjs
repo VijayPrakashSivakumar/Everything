@@ -49,6 +49,8 @@ const SUITES = [
   { name: 'review', file: 'review-probe.mjs', timeoutMs: 120000 },
   // What makes a free tunnel usable from a phone: pasting the banner, and a stale address.
   { name: 'localmodel', file: 'local-model-url-probe.mjs', timeoutMs: 120000 },
+  // The one thing that can lose data: two devices offline at the same time.
+  { name: 'sync', file: 'sync-conflict-probe.mjs', timeoutMs: 120000 },
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },

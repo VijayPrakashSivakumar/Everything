@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-27.2" />
+    <meta name="everything-build" content="2026-09-28.1" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <script>
@@ -814,6 +814,15 @@
               What is stuck, and what you finished. Once a week is enough.
             </p>
             <div id="reviewStats"></div>
+            <div class="card" id="syncConflictCard" style="display: none">
+              <div class="card-head">
+                <h3>Edited on two devices</h3>
+                <span style="font-size: 12px; color: var(--muted)"
+                  >both versions kept — choose one</span
+                >
+              </div>
+              <div id="syncConflictList"></div>
+            </div>
             <div class="card">
               <div class="card-head">
                 <h3>Needs a decision</h3>

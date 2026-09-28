@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-27.2";
+const APP_BUILD = "2026-09-28.1";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -206,6 +206,8 @@ function itemSnapshot(item) {
     rawText: item.rawText || item.title || "",
     captureMetadata: normaliseCaptureMetadata(item.captureMetadata),
     captureFingerprint: item.captureFingerprint || null,
+    updatedAt: Number(item.updatedAt) || 0,
+    dirty: item.dirty === true,
   };
 }
 
@@ -424,6 +426,67 @@ async function processStructuredOperation(operation) {
   return { ok: true, status: 0, data: {} };
 }
 
+/* Parks a write that has exhausted its retries instead of discarding it. The operation stays in
+   the queue with a far-future attempt time, so it neither vanishes nor spins in a hot loop, and
+   `retryUnsyncedItems()` can revive it the moment the real cause is fixed. */
+const STRUCTURED_SYNC_PARKED_MS = 24 * 60 * 60 * 1000;
+
+function markStructuredSyncFailed(operation, result) {
+  const reason = result?.data?.error || result?.status || "unknown error";
+  const parked = {
+    ...operation,
+    attempts: (operation.attempts || 0) + 1,
+    nextAttemptAt: Date.now() + STRUCTURED_SYNC_PARKED_MS,
+    parkedAt: Date.now(),
+    lastError: String(reason),
+  };
+  updateStructuredSyncOperation(operation.id, parked);
+  return parked;
+}
+
+/* Everything that failed to reach the server, kept in one list the user can act on. */
+function recordUnsyncedItem(operation) {
+  if (!operation?.clientId) return;
+  if (!Array.isArray(state.unsyncedItems)) state.unsyncedItems = [];
+  const key = `${operation.kind}:${operation.clientId}`;
+  const existing = state.unsyncedItems.findIndex((entry) => entry.key === key);
+  const entry = {
+    key,
+    id: operation.clientId,
+    kind: operation.kind,
+    title: operation.item?.title || operation.item?.sub || operation.record?.title || "Untitled",
+    error: operation.lastError || "unknown error",
+    at: operation.parkedAt || Date.now(),
+  };
+  if (existing >= 0) state.unsyncedItems.splice(existing, 1, entry);
+  else state.unsyncedItems.push(entry);
+  save();
+}
+
+/* Retries every parked write and clears the list if they all land. A failure here is expected
+   and simply leaves the entry in place — the next attempt happens when the user tries again. */
+async function retryUnsyncedItems() {
+  const parked = readStructuredSyncQueue().filter((operation) => operation.parkedAt);
+  if (!parked.length) return false;
+  parked.forEach((operation) => {
+    updateStructuredSyncOperation(operation.id, { nextAttemptAt: 0, parkedAt: 0, attempts: 0 });
+  });
+  const queue = readStructuredSyncQueue();
+  const stillParked = queue.filter((operation) => operation.parkedAt);
+  state.unsyncedItems = stillParked.map((operation) => ({
+    key: `${operation.kind}:${operation.clientId}`,
+    id: operation.clientId,
+    kind: operation.kind,
+    title: operation.item?.title || operation.item?.sub || operation.record?.title || "Untitled",
+    error: operation.lastError || "unknown error",
+    at: operation.parkedAt || Date.now(),
+  }));
+  save();
+  await flushStructuredSyncQueue();
+  renderSyncConflictBanner();
+  return true;
+}
+
 function scheduleStructuredSyncRetry() {
   if (structuredSyncTimer) {
     clearTimeout(structuredSyncTimer);
@@ -462,8 +525,12 @@ async function flushStructuredSyncQueue() {
           });
           scheduleStructuredSyncRetry();
         } else {
-          console.warn("Structured sync permanently failed:", operation.kind, result.data?.error || result.status);
-          removeStructuredSyncOperation(operation.id);
+          /* Do not just drop it. This used to remove the operation outright, which left the item
+             in localStorage looking perfectly normal and never on the server — the one case that
+             turned "synced" into a lie. It is now parked and surfaced so the person can retry. */
+          const parked = markStructuredSyncFailed(operation, result);
+          recordUnsyncedItem(parked);
+          scheduleStructuredSyncRetry();
         }
       }
     } while (structuredSyncQueuedAgain);
@@ -693,6 +760,7 @@ let hasReminderColumns = false;
 let hasChecklistColumn = false;
 let hasRecurrenceKeyColumn = false;
 let hasArchivedAtColumn = false;
+let hasUpdatedAt = false;
 const smartCaptureColumns = {
   sourceType: false,
   rawText: false,
@@ -745,8 +813,193 @@ function itemToRow(item) {
       ? new Date(item.notifiedAt).toISOString()
       : null;
   }
+  // The edit time, not the sync time (supabase/migrations/009). Sent explicitly so conflict
+  // resolution can compare when two devices each made a change, and deliberately not
+  // triggered server-side — a trigger would overwrite this with the server's clock.
+  if (hasUpdatedAt) {
+    row.updated_at = new Date(Number(item.updatedAt) || Date.now()).toISOString();
+  }
   return row;
 }
+/* --- Conflict-safe merge ------------------------------------------------------
+   Two devices can be offline at the same moment, and each is right about its own edits.
+   The old sync did `state.items = data.map(rowToItem)`: a wholesale replace. An item
+   captured while the server was unreachable, or a queued write that had not landed yet,
+   simply vanished — silently, and with nothing in the console to explain it.
+
+   The rules, in order:
+     * an item the server has never seen is always kept, and queued to be pushed
+     * an item that is not dirty here takes the server's copy silently
+     * a genuinely divergent item takes the newer edit AND keeps the loser, so that even
+       when the timestamps cannot settle it, nothing a person typed is destroyed
+
+   Client clocks are not trustworthy across devices, so the timestamp picks a winner — but
+   it is deliberately never allowed to be the only thing standing between a person and
+   their data. Every conflict is retained and surfaced. */
+
+const SYNC_CONFLICT_LIMIT = 50;
+
+function itemContentKey(item) {
+  if (!item) return "";
+  const snapshot = itemSnapshot(item);
+  // Identity and sync bookkeeping are not content: two copies of the same note differ on
+  // these by definition, and counting that as a difference would report a conflict on
+  // every single sync.
+  delete snapshot.id;
+  delete snapshot.updatedAt;
+  delete snapshot.dirty;
+  return JSON.stringify(snapshot);
+}
+
+/* Resolves one id seen on both sides. Returns the copy to keep and, when the two genuinely
+   disagree, the conflict to show the user. */
+function mergeItemPair(localItem, remoteItem) {
+  const clean = { ...remoteItem, dirty: false };
+  if (localItem.dirty !== true) return { item: clean, conflict: null };
+  if (itemContentKey(localItem) === itemContentKey(remoteItem)) {
+    return { item: clean, conflict: null };
+  }
+
+  const localStamp = Number(localItem.updatedAt) || 0;
+  const remoteStamp = Number(remoteItem.updatedAt) || 0;
+  const localWins = localStamp > remoteStamp;
+  const chosen = localWins ? { ...localItem } : { ...remoteItem };
+  // The copy that lost is still an unsaved edit, so it still has to be pushed.
+  chosen.dirty = localWins;
+
+  return {
+    item: chosen,
+    conflict: {
+      id: localItem.id,
+      at: Date.now(),
+      kept: localWins ? "local" : "remote",
+      title: localItem.title || remoteItem.title || "Untitled",
+      local: itemSnapshot(localItem),
+      remote: itemSnapshot(remoteItem),
+    },
+  };
+}
+
+function mergeItemLists(localItems, remoteItems, { onPending } = {}) {
+  const local = Array.isArray(localItems) ? localItems : [];
+  const remote = Array.isArray(remoteItems) ? remoteItems : [];
+  const byId = new Map(local.map((item) => [item.id, item]));
+  const seen = new Set();
+  const merged = [];
+  const conflicts = [];
+
+  for (const remoteItem of remote) {
+    seen.add(remoteItem.id);
+    const localItem = byId.get(remoteItem.id);
+    if (!localItem) {
+      merged.push({ ...remoteItem, dirty: false });
+      continue;
+    }
+    const outcome = mergeItemPair(localItem, remoteItem);
+    merged.push(outcome.item);
+    if (outcome.conflict) conflicts.push(outcome.conflict);
+  }
+
+  // Anything the server never had is a local-only edit. It is still here, and this is the
+  // moment to hand it back rather than leave it waiting for a sync that will drop it.
+  for (const localItem of local) {
+    if (seen.has(localItem.id)) continue;
+    merged.push(localItem);
+    if (onPending) onPending(localItem);
+  }
+
+  merged.sort((a, b) => Number(b.created || 0) - Number(a.created || 0));
+  return { items: merged, conflicts };
+}
+
+/* Conflicts accumulate until the user deals with them, so nothing is thrown away the
+   moment a sync completes. The cap stops a repeatedly-diverging item from filling storage. */
+function recordSyncConflicts(conflicts) {
+  if (!Array.isArray(conflicts) || !conflicts.length) return;
+  if (!Array.isArray(state.syncConflicts)) state.syncConflicts = [];
+  const known = new Set(state.syncConflicts.map((entry) => entry.id));
+  for (const conflict of conflicts) {
+    if (known.has(conflict.id)) continue;
+    state.syncConflicts.push(conflict);
+  }
+  state.syncConflicts = state.syncConflicts.slice(-SYNC_CONFLICT_LIMIT);
+  save();
+}
+
+/* Lets the user settle a conflict by hand: keep whichever version they choose, mark it
+   dirty so it is pushed, and stop carrying the other copy. */
+function resolveSyncConflict(id, choice) {
+  const list = Array.isArray(state.syncConflicts) ? state.syncConflicts : [];
+  const index = list.findIndex((entry) => entry.id === id);
+  if (index < 0) return false;
+  const conflict = list[index];
+  const chosen = choice === "local" ? conflict.local : conflict.remote;
+  const target = state.items.find((item) => item.id === id);
+  if (target) Object.assign(target, chosen, { updatedAt: Date.now(), dirty: true });
+  list.splice(index, 1);
+  state.syncConflicts = list;
+  save();
+  if (target) void dbSaveItem(target);
+  renderAll();
+  renderSyncConflictBanner();
+  return true;
+}
+
+/* A conflict is never resolved automatically in a way that loses text: both versions are kept
+   and shown here, and the user picks. Silence would mean the losing edit existed nowhere. */
+function renderSyncConflictBanner() {
+  const card = document.getElementById("syncConflictCard");
+  const list = document.getElementById("syncConflictList");
+  if (!card || !list) return;
+  const conflicts = Array.isArray(state.syncConflicts) ? state.syncConflicts : [];
+  const unsynced = Array.isArray(state.unsyncedItems) ? state.unsyncedItems : [];
+  if (!conflicts.length && !unsynced.length) {
+    card.style.display = "none";
+    list.innerHTML = "";
+    return;
+  }
+  card.style.display = "";
+
+  const describe = (version) => {
+    const text = (version.sub || version.title || "Untitled").trim();
+    const status = version.done ? "done" : version.status || "open";
+    return `<b>${escapeHtml(text)}</b> <span style="color: var(--muted)">(${escapeHtml(status)})</span>`;
+  };
+
+  const conflictRows = conflicts
+    .map(
+      (conflict) => `<div class="field-row" style="padding:8px 0;align-items:flex-start;gap:10px;flex-wrap:wrap">
+        <div style="flex:1 1 220px;min-width:0">
+          <div style="font-size:13px">${describe(conflict.local)}</div>
+          <div style="font-size:12.5px;color:var(--muted)">vs ${describe(conflict.remote)}</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm" onclick="resolveSyncConflict(${jsStr(conflict.id)}, 'local')">Keep mine</button>
+          <button class="btn btn-sm" onclick="resolveSyncConflict(${jsStr(conflict.id)}, 'remote')">Keep theirs</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+
+  const unsyncedRows = unsynced.length
+    ? `<div style="padding:10px 0;border-top:1px solid var(--border)">
+        <div style="font-size:13px;margin-bottom:6px">
+          ${unsynced.length} ${unsynced.length === 1 ? "change is" : "changes are"} saved on this
+          device but did not reach the server. They are safe here.
+        </div>
+        ${unsynced
+          .map(
+            (entry) =>
+              `<div style="font-size:12.5px;color:var(--muted)">${escapeHtml(entry.title)} — ${escapeHtml(entry.error)}</div>`,
+          )
+          .join("")}
+        <button class="btn btn-sm" style="margin-top:8px" onclick="retryUnsyncedItems()">Retry now</button>
+      </div>`
+    : "";
+
+  list.innerHTML = conflictRows + unsyncedRows;
+}
+
 function rowToItem(row) {
   return {
     id: row.id,
@@ -776,6 +1029,9 @@ function rowToItem(row) {
     rawText: row.raw_text || row.title || "",
     captureMetadata: normaliseCaptureMetadata(row.capture_metadata),
     captureFingerprint: row.capture_fingerprint || null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : 0,
+    // Anything arriving from the server is by definition already stored there.
+    dirty: false,
   };
 }
 
@@ -815,6 +1071,18 @@ async function detectChecklistColumn() {
 async function detectRecurrenceKeyColumn() {
   try {
     const { error } = await sb.from("items").select("recurrence_key").limit(1);
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
+
+/* items.updated_at arrives with supabase/migrations/009. Until then conflict resolution
+   degrades to "the server's copy wins", which is the old behaviour but no worse — the local
+   items are still preserved by the merge, they simply cannot be ordered against the server. */
+async function detectUpdatedAtColumn() {
+  try {
+    const { error } = await sb.from("items").select("updated_at").limit(1);
     return !error;
   } catch (e) {
     return false;
@@ -904,6 +1172,7 @@ async function startSupabaseSync(userId) {
   hasChecklistColumn = await detectChecklistColumn();
   hasRecurrenceKeyColumn = await detectRecurrenceKeyColumn();
   hasArchivedAtColumn = await detectArchivedAtColumn();
+  hasUpdatedAt = await detectUpdatedAtColumn();
   await detectSmartCaptureColumns();
   const { data, error } = await sb
     .from("items")
@@ -911,13 +1180,25 @@ async function startSupabaseSync(userId) {
     .eq("household_id", currentHouseholdId)
     .order("created", { ascending: false });
   if (!error && data) {
-    state.items = data.map(rowToItem);
+    /* Merge, never replace. This line used to be `state.items = data.map(rowToItem)`, which
+       threw away anything captured or edited while the server was unreachable — the item was
+       in localStorage a moment earlier and gone the next, with no warning. */
+    const pending = [];
+    const { items, conflicts } = mergeItemLists(state.items, data.map(rowToItem), {
+      onPending: (item) => pending.push(item),
+    });
+    state.items = items;
     if (!state.projects) state.projects = [];
     if (!state.goals) state.goals = [];
     if (!state.people) state.people = [];
     state.items.forEach((item) => {
       if (item.notified) rememberNotified(item.id);
     });
+    recordSyncConflicts(conflicts);
+    // Local-only items are safe now and are worth pushing, otherwise they sit here waiting
+    // for the next sync to discard them.
+    pending.forEach((item) => queueStructuredItemSync(item));
+    renderSyncConflictBanner();
     renderAll();
     runReminderCheck("sync");
   }
@@ -949,13 +1230,24 @@ async function startSupabaseSync(userId) {
           state.items = state.items.filter((i) => i.id !== payload.old.id);
           cancelReminderFor(payload.old.id);
         } else {
-          const updated = rowToItem(payload.new);
-          const idx = state.items.findIndex((i) => i.id === updated.id);
-          if (idx >= 0) state.items[idx] = updated;
-          else state.items.unshift(updated);
+          /* Merge the single record rather than overwriting it. `state.items[idx] = updated`
+             was wholesale last-write-wins per item: another device's push landed while this
+             one had unsaved edits, and the unsaved edit was simply gone. */
+          const incoming = rowToItem(payload.new);
+          const existing = state.items.find((i) => i.id === incoming.id);
+          if (existing) {
+            const { item, conflict } = mergeItemPair(existing, incoming);
+            state.items[state.items.findIndex((i) => i.id === incoming.id)] = item;
+            if (conflict) recordSyncConflicts([conflict]);
+            // The local edit lost but is still unsaved, so it still has to be pushed.
+            if (item.dirty) queueStructuredItemSync(item);
+          } else {
+            state.items.unshift(incoming);
+          }
           // The cron (or another device) already delivered this one — stay quiet here.
-          if (updated.notified) rememberNotified(updated.id);
+          if (incoming.notified) rememberNotified(incoming.id);
         }
+        renderSyncConflictBanner();
         renderAll();
         refreshReminderSchedule();
       },
@@ -2170,6 +2462,13 @@ function buildTaskDraftFromItem(item, entryId) {
 async function dbSaveItem(item) {
   if (syncReadyPromise) await syncReadyPromise;
   if (!item.scope) item.scope = "shared";
+  /* Every mutation funnels through here — create, edit, complete, snooze, recurrence — so
+     this is the one place that can stamp the edit time and mark the item as an unsaved
+     edit. The merge treats `dirty` as the signal that a local copy is worth protecting;
+     without this stamp a good offline edit looks identical to a stale one. */
+  const previous = Number(item.updatedAt) || 0;
+  item.updatedAt = Math.max(Date.now(), previous + 1);
+  item.dirty = true;
   if (item.kind === "task" && item.recurrence && item.recurrence !== "none" && !item.recurrenceKey) {
     item.recurrenceKey = taskRecurrenceKey(item);
   } else if (item.kind === "task" && (!item.recurrence || item.recurrence === "none")) {

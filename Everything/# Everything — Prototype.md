@@ -512,6 +512,58 @@ option and the right one to start with.
 you cannot pre-list it, so on a machine you trust, `setx OLLAMA_ORIGINS "*"` is the practical answer
 — and it is only exposed while `cloudflared` is running, which you control.
 
+## Conflict-safe sync
+
+**This was the one thing that could lose data, and it did.** The old sync was:
+
+```js
+state.items = data.map(rowToItem);   // on every load
+state.items[idx] = updated;          // on every realtime push
+```
+
+Wholesale last-write-wins, with no timestamp to compare. Three separate ways to lose something,
+all silent:
+
+1. An item captured while the server was unreachable was in `localStorage` one moment and gone the
+   next, replaced by whatever the server had.
+2. A write that exhausted its retries was `removeStructuredSyncOperation`'d — a `console.warn` and
+   nothing else. The item stayed on the device looking perfectly normal and was never on the server,
+   where (1) then deleted it.
+3. Two people editing one task produced one of them, with no indication which, or that a second
+   version had ever existed.
+
+### What replaced it
+
+`mergeItemLists()` merges instead of replacing. The rules, in order:
+
+- an item the **server has never seen is always kept**, and queued to be pushed
+- an item **not dirty here** takes the server's copy silently (ordinary sync, stays quiet)
+- a **genuinely divergent** item takes the newer edit **and keeps the loser**
+
+`dirty` is set in `dbSaveItem`, which every mutation funnels through, so it means exactly "this
+device has an edit the server has not seen." `updatedAt` is stamped in the same place and sent with
+the write (`items.updated_at`, migration 009).
+
+### The deliberate limit
+
+**Client clocks are not trustworthy across devices.** `updatedAt` picks a winner, but it is never
+allowed to be the only thing standing between a person and their data:
+
+- **No trigger on `items.updated_at`**, unlike every other table. A trigger would stamp the server's
+  clock on every write and destroy the one thing conflict resolution needs — when the edit was
+  actually *made*. The client supplies its own time; server-side writers set it explicitly.
+- **Every conflict keeps both versions** and is shown in **Review → "Edited on two devices"**, with
+  *Keep mine* / *Keep theirs*. The losing text is never discarded automatically.
+- **A write that fails permanently is parked, not dropped**, and listed with a *Retry now* button.
+  An item that never reached the server now says so instead of pretending it synced.
+
+So the honest claim is: **a merge may reorder or choose, but it may not destroy.** You can lose the
+*ordering* between two versions; you cannot lose *either* version.
+
+What is deliberately **not** claimed: full CRDT-level convergence. That needs server-assigned
+sequence numbers and conditional updates (`where rev = <seen>`), which is a larger change to
+`api/`. Until then the conflict banner is the backstop, and it is the thing to watch for.
+
 ## Typo-tolerant search
 The exact matcher is substring-only, so a plural or a single typo found nothing. A fuzzy fallback now
 runs when — and only when — the exact pass returns nothing, so existing results keep their exact
