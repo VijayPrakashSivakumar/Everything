@@ -2337,6 +2337,24 @@ check('a missing value can be answered in words, not only in a form', () => {
   assert.match(js, /function applyCaptureSlot[\s\S]{0,1400}?parseLocalTimeOnly\(/, 'the answer bypasses the time parser');
 });
 
+check('the common answers are one tap, and the field is folded away', () => {
+  // A permanently open input made the sheet look like a form again, which is the exact thing this
+  // feature exists to remove. Both slots have to offer their common answers as chips.
+  const chips = js.match(/const CAPTURE_SLOT_QUESTIONS = \{[\s\S]*?\n\};/);
+  assert.ok(chips, 'the slot question definitions are missing');
+  assert.equal((chips[0].match(/chips:/g) || []).length, 2, 'both slots must offer chips');
+  assert.match(js, /class="capture-chip"/, 'a chip is not rendered');
+  assert.match(js, /function toggleCaptureAnswerField\(\)/, '"Other…" does not open anything');
+  // A chip and a typed answer must take the same road, or the two can drift apart in what is saved.
+  assert.match(js, /answerCaptureQuestion\([\s\S]{0,400}?answerSlot\(question, chip\[2\]\)/,
+    'a chip must go through the same answer path as a typed answer');
+  assert.match(js, /function answerSlot\(question, answer\)/, 'chip and typed answers do not share one handler');
+  assert.match(js, /function submitCaptureAnswer\(\)[\s\S]{0,400}?answerSlot\(question, answer\)/,
+    'a typed answer must go through the same handler');
+  // The field must not be in the markup by default — it is built only when it is opened.
+  assert.doesNotMatch(html, /id="captureQuestionInput"/, 'the field must not ship open in the markup');
+});
+
 check('the conversation never invents a value, and never blocks a save', () => {
   // An unreadable answer is refused and the same question stays. Guessing is the one failure this
   // whole path exists to prevent, so it is asserted rather than assumed.

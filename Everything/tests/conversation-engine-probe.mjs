@@ -46,6 +46,8 @@ try {
     question: (document.querySelector('.capture-question-text') || {}).textContent || '',
     hasInput: !!document.getElementById('captureQuestionInput'),
     hasMic: !!document.getElementById('captureQuestionMic'),
+    // The common answers, which is what makes the ordinary case one tap.
+    chips: [].slice.call(document.querySelectorAll('.capture-chip')).map(function (el) { return el.textContent.trim(); }),
     // A date picker would mean the form came back, which is the thing being removed.
     hasPicker: !!document.querySelector('.capture-question input[type=date], .capture-question input[type=datetime-local]'),
     due: (document.getElementById('captureDueDate') || {}).value || '',
@@ -67,6 +69,32 @@ try {
     return eval(a[1]);
   }, [text, CARD]);
 
+  // Say a sentence, then tap a chip — the ordinary path, one tap, no keyboard.
+  const chip = (text, label) => page.evaluate(async (a) => {
+    openCapture();
+    await new Promise((r) => setTimeout(r, 120));
+    document.getElementById('captureText').value = a[0];
+    onCaptureInput();
+    await new Promise((r) => setTimeout(r, 1100));
+    const wanted = a[2].trim().toLowerCase();
+    const button = [].slice.call(document.querySelectorAll('.capture-chip'))
+      .find((b) => b.textContent.trim().toLowerCase() === wanted);
+    if (!button) return { missing: true, ...eval(a[1]) };
+    button.click();
+    return eval(a[1]);
+  }, [text, CARD, label]);
+
+  // Open the folded field, then answer in free text.
+  const open = (text) => page.evaluate(async (a) => {
+    openCapture();
+    await new Promise((r) => setTimeout(r, 120));
+    document.getElementById('captureText').value = a[0];
+    onCaptureInput();
+    await new Promise((r) => setTimeout(r, 1100));
+    toggleCaptureAnswerField();
+    return eval(a[1]);
+  }, [text, CARD]);
+
   // Say a sentence, then answer whatever it is being asked, in free text.
   const answer = (text, words) => page.evaluate(async (a) => {
     openCapture();
@@ -75,8 +103,10 @@ try {
     onCaptureInput();
     await new Promise((r) => setTimeout(r, 1100));
     const input = document.getElementById('captureQuestionInput');
-    if (!input) return { missing: true, ...eval(a[2]) };
-    input.value = a[1];
+    if (!input) { toggleCaptureAnswerField(); }
+    const field = document.getElementById('captureQuestionInput');
+    if (!field) return { missing: true, ...eval(a[2]) };
+    field.value = a[1];
     submitCaptureAnswer();
     return eval(a[2]);
   }, [text, words, CARD]);
@@ -85,9 +115,51 @@ try {
     const s = await say('Remind me to call Arun');
     assert.equal(s.hidden, false, 'the assistant must ask something');
     assert.match(s.question, /what date/i, `expected a date question, got "${s.question}"`);
-    assert.equal(s.hasInput, true, 'there is nowhere to type an answer');
-    assert.equal(s.hasMic, true, 'the answer must be speakable as well as typeable');
+    assert.ok(s.chips.length, 'there is no way to answer with a single tap');
     assert.equal(s.hasPicker, false, 'a date picker is the form this replaces');
+  });
+
+  await check('the common answers are chips, and the field is not open by default', async () => {
+    // A permanently open input made the sheet look like a form again, which is the thing this
+    // whole feature exists to remove. One tap has to be enough for the ordinary case.
+    const s = await say('Remind me to call Arun');
+    assert.ok(s.chips.includes('Tomorrow'), `expected a Tomorrow chip, got ${JSON.stringify(s.chips)}`);
+    assert.ok(s.chips.length >= 4, `expected several chips, got ${JSON.stringify(s.chips)}`);
+    assert.equal(s.hasInput, false, 'the free-text field must be folded away until it is asked for');
+  });
+
+  await check('tapping "Tomorrow" fills the date and moves on to the time', async () => {
+    const s = await chip('Remind me to call Arun', 'Tomorrow');
+    assert.ok(s.due, 'the date field was left empty after tapping Tomorrow');
+    assert.equal(s.due.slice(0, 10), new Date(Date.now() + 864e5).toISOString().slice(0, 10),
+      `"Tomorrow" became ${s.due}`);
+    assert.match(s.question, /what time/i, `expected a time question, got "${s.question}"`);
+    assert.equal(s.required.length, 1, 'only the time should still be outstanding');
+  });
+
+  await check('the time is answered by tapping a chip too', async () => {
+    const s = await chip('Remind me to call Arun', 'Tomorrow');
+    const wanted = s.chips.includes('10 AM') ? '10 AM' : null;
+    assert.ok(wanted, `no 10 AM chip among ${JSON.stringify(s.chips)}`);
+    const t = await page.evaluate((label) => {
+      const button = [].slice.call(document.querySelectorAll('.capture-chip'))
+        .find((b) => b.textContent.trim() === label);
+      button.click();
+      return {
+        due: (document.getElementById('captureDueDate') || {}).value || '',
+        required: [].slice.call(captureDialogue.required),
+        answering: captureDialogue.answering,
+      };
+    }, wanted);
+    assert.match(t.due, /T10:00$/, `expected 10:00, got "${t.due}"`);
+    assert.deepEqual(t.required, [], 'nothing should still be outstanding');
+    assert.equal(t.answering, false, 'the conversation should be finished');
+  });
+
+  await check('"Other…" reveals the field for anything the chips do not cover', async () => {
+    const s = await open('Remind me to call Arun');
+    assert.equal(s.hasInput, true, '"Other…" did not reveal the field');
+    assert.equal(s.hasMic, true, 'the field must be speakable as well as typeable');
   });
 
   await check('"Tomorrow" fills the date and moves on to the time', async () => {
@@ -126,6 +198,12 @@ try {
     assert.ok(s.turns.length >= 2, `expected a transcript, got ${JSON.stringify(s.turns)}`);
     assert.ok(s.turns.some((t) => /Tomorrow/.test(t)), 'the answer given is missing from the transcript');
     assert.ok(s.turns.some((t) => /Everything/.test(t)), 'the assistant never spoke');
+  });
+
+  await check('a tapped chip is recorded in the transcript just as a typed one is', async () => {
+    // One code path for both, so the two can never drift apart in what gets saved.
+    const s = await chip('Remind me to call Arun', 'Tomorrow');
+    assert.ok(s.turns.some((t) => /Tomorrow/.test(t)), `the chip answer is missing: ${JSON.stringify(s.turns)}`);
   });
 
   await check('a sentence that is not a reminder is never asked anything', async () => {
@@ -167,6 +245,7 @@ try {
       input.value = 'Remind me to call Arun';
       onCaptureInput();
       await new Promise((r) => setTimeout(r, 1100));
+      if (!document.getElementById('captureQuestionInput')) toggleCaptureAnswerField();
       document.getElementById('captureQuestionInput').value = 'Tomorrow';
       submitCaptureAnswer();
       const afterFirst = Object.keys(captureDialogue.filled).length;

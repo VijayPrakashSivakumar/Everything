@@ -3051,6 +3051,51 @@ h1.page-title {
   gap: 7px;
 }
 
+/* The common answers. One tap for the ordinary case, which is why the field is folded away by
+   default rather than sitting open under the question. */
+.capture-question-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 100%;
+}
+
+.capture-chip {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-body-s);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.capture-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.capture-chip.other {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.capture-chip.other.open {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.capture-answer-open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 100%;
+}
+
 .capture-question-input {
   flex: 1 1 130px;
   min-width: 0;

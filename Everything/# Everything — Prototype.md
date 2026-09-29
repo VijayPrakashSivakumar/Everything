@@ -275,15 +275,22 @@ very form this is meant to remove.
 
 > **🎙️** "Remind me to call Arun."
 > **Everything:** Sure. What date?
-> **You:** Tomorrow.
+> **[ Tomorrow ] [ Tonight ] [ Tomorrow morning ] [ This weekend ] [ Next week ] [ Other… ]**
+> **You:** *(tap Tomorrow)*
 > **Everything:** What time?
-> **You:** 10 AM.
+> **[ 9 AM ] [ 10 AM ] [ 12 PM ] [ 5 PM ] [ 6 PM ] [ Other… ]**
+> **You:** *(tap 10 AM)*
 > **Everything:** *saves it, with an Undo bar*
 
+The common answers are **chips**, so the ordinary case is one tap and the sheet is not dominated by
+a text field. **Other…** folds the field open only when the chips do not cover what is wanted, and
+the mic sits beside it — so a spoken answer is still available. A chip and a typed phrase take the
+same code path, so the two can never disagree about what gets saved.
+
 A **slot** is a value the app refuses to invent — the same rule *"Maybe Friday" is not a date*
-already encodes, applied to the whole capture rather than to one phrase. The person supplies it in
-their own words, typed or spoken, and it is resolved against the parsers that already exist in
-`script.js` (`parseLocalDate`, and a small `parseLocalTimeOnly` for a bare clock time).
+already encodes, applied to the whole capture rather than to one phrase. Answers resolve
+through the parsers that already exist in `script.js` (`parseLocalDate`, and a small
+`parseLocalTimeOnly` for a bare clock time).
 
 | | |
 | --- | --- |
@@ -291,6 +298,7 @@ their own words, typed or spoken, and it is resolved against the parsers that al
 | `remind me to … tomorrow` | asks for the time as well, because the hour is still open |
 | `tomorrow at 4 pm` as an answer | settles both at once, and does **not** ask twice |
 | `banana` as an answer | refused, with an explanation — the same question stays |
+| a chip vs a typed phrase | identical code path, so they cannot save differently |
 | anything that is not a reminder | **never** asked anything, so silent auto-create is untouched |
 | Dismiss | ends the conversation; nothing here can block a save |
 | editing the sentence | resets the conversation, so an answer never lands on a different sentence |

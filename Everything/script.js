@@ -6102,6 +6102,9 @@ let captureLastText = "";
    this: silently filing a photographed appointment card as a task is the one outcome nobody asked
    for, and it is not cheap to notice afterwards. */
 let captureImageChoicePending = false;
+/* Whether the free-text answer field is showing. Closed by default: the chips cover the ordinary
+   case in one tap, and a permanently open field made the sheet look like a form again. */
+let captureAnswerOpen = false;
 let capturePlan = []; // Extra items from the same sentence. See setCapturePlan.
 let captureAgenda = []; // Agenda lines, saved as the main item's checklist steps.
 let captureMainAsk = ""; // A question the model raised about the main item.
@@ -6976,27 +6979,51 @@ function renderCaptureQuestion() {
           .join("")}
         <button type="button" class="capture-question-skip" onclick="dismissCaptureQuestion()">Dismiss</button>
       </div>`;
+  // A slot question leads with the common answers as chips, because the ordinary case is one tap.
+  // "Other…" is what reveals the free-text field, and the mic sits beside it — the sheet is not
+  // dominated by an input box that most captures never need.
   const reply = question.slot
     ? `<div class="capture-question-reply">
-        <input
-          id="captureQuestionInput"
-          class="capture-question-input"
-          type="text"
-          inputmode="text"
-          autocomplete="off"
-          placeholder="${escapeHtml(question.placeholder || "")}"
-          aria-label="${escapeHtml(question.question)}"
-          onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitCaptureAnswer(); }"
-        />
-        <button type="button" class="btn capture-question-send" onclick="submitCaptureAnswer()">Send</button>
-        <button
-          type="button"
-          id="captureQuestionMic"
-          class="capture-question-mic"
-          onclick="toggleCaptureAnswerDictation()"
-          aria-label="Say the answer"
-          title="Say the answer"
-        >${icon("mic")}</button>
+        <div class="capture-question-chips">
+          ${(question.chips || [])
+            .map(
+              (label) =>
+                `<button type="button" class="capture-chip" onclick="answerCaptureQuestion(${jsStr(
+                  question.slot + ":" + label,
+                )})">${escapeHtml(label)}</button>`,
+            )
+            .join("")}
+          <button
+            type="button"
+            class="capture-chip other ${captureAnswerOpen ? "open" : ""}"
+            onclick="toggleCaptureAnswerField()"
+          >Other…</button>
+        </div>
+        ${
+          captureAnswerOpen
+            ? `<div class="capture-answer-open">
+                <input
+                  id="captureQuestionInput"
+                  class="capture-question-input"
+                  type="text"
+                  inputmode="text"
+                  autocomplete="off"
+                  placeholder="${escapeHtml(question.placeholder || "")}"
+                  aria-label="${escapeHtml(question.question)}"
+                  onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitCaptureAnswer(); }"
+                />
+                <button type="button" class="btn capture-question-send" onclick="submitCaptureAnswer()">Send</button>
+                <button
+                  type="button"
+                  id="captureQuestionMic"
+                  class="capture-question-mic"
+                  onclick="toggleCaptureAnswerDictation()"
+                  aria-label="Say the answer"
+                  title="Say the answer"
+                >${icon("mic")}</button>
+              </div>`
+            : ""
+        }
         <button type="button" class="capture-question-skip" onclick="dismissCaptureQuestion()">Dismiss</button>
         <p class="capture-question-status" id="captureQuestionStatus" role="status"></p>
       </div>`
@@ -7034,6 +7061,14 @@ function dismissCaptureQuestion() {
 function answerCaptureQuestion(value) {
   const question = captureQuestions[0];
   if (!question) return;
+
+  // A chip carries "slot:phrase" and takes the same road as a typed answer, so "Tomorrow" tapped
+  // and "Tomorrow" typed are the same code path and cannot drift apart.
+  const chip = String(value).match(/^([a-zA-Z]+):(.+)$/);
+  if (chip && chip[1] === question.slot) {
+    captureAnswerOpen = false;
+    return answerSlot(question, chip[2]);
+  }
 
   // A picture that carried a date, and nothing is being asked about it any more. The auto-create
   // has to wait for this answer: a photographed appointment card is exactly the case where a
@@ -7103,8 +7138,18 @@ function answerCaptureQuestion(value) {
      - an answer that resolves to nothing is never guessed at; it is asked again
      - the original buttons stay, as the route for someone who would rather tap than type     */
 const CAPTURE_SLOT_QUESTIONS = {
-  dueDate: { question: "Sure. What date?", placeholder: "Tomorrow" },
-  dueTime: { question: "What time?", placeholder: "10 AM" },
+  dueDate: {
+    question: "Sure. What date?",
+    placeholder: "Tomorrow",
+    // The common answers, so the ordinary case is one tap. A chip carries a phrase that the
+    // existing parsers already read, so nothing here needs its own date reader.
+    chips: ["Tomorrow", "Tonight", "Tomorrow morning", "This weekend", "Next week"],
+  },
+  dueTime: {
+    question: "What time?",
+    placeholder: "10 AM",
+    chips: ["9 AM", "10 AM", "12 PM", "5 PM", "6 PM"],
+  },
 };
 
 /* A clock time on its own — "10 AM", "at 4:30". parseLocalDate() deliberately answers null
@@ -7258,6 +7303,7 @@ function resetCaptureDialogue() {
   captureLastPlan = [];
   captureLastText = "";
   captureImageChoicePending = false;
+  captureAnswerOpen = false;
 }
 
 function focusCaptureAnswer() {
@@ -7269,24 +7315,28 @@ function focusCaptureAnswer() {
 
 /* Takes one answer in the person's own words. Typed or dictated it goes through the same parser,
    so "tomorrow" and "tomorrow" spoken are the same answer. */
-function submitCaptureAnswer() {
-  const input = document.getElementById("captureQuestionInput");
-  const question = captureQuestions[0];
-  if (!input || !question?.slot) return;
-  const answer = input.value.trim();
-  if (!answer) return;
+/* Reveals the free-text field for a value the chips do not cover. Closed by default, because the
+   point of the chips is that most captures never open it. */
+function toggleCaptureAnswerField() {
+  captureAnswerOpen = !captureAnswerOpen;
+  renderCaptureQuestion();
+  if (captureAnswerOpen) focusCaptureAnswer();
+}
 
+/* One answer, however it was given. Resolves it, records it, and moves the conversation on — or,
+   if the words carried nothing, says so plainly and stays put. Guessing is the single failure this
+   whole path exists to prevent. */
+function answerSlot(question, answer) {
   const resolved = applyCaptureSlot(question.slot, answer);
   if (!resolved) {
-    // Say plainly what went wrong and stay on the same question. Guessing here is the single
-    // failure this whole path exists to prevent.
     captureDialogue.turns.push({
       role: "app",
       text: `I could not read "${answer}" as ${
         question.slot === "dueTime" ? "a time" : "a day"
       }. Try something like "${question.placeholder}".`,
     });
-    input.value = "";
+    // The field has to be open for this to have come from one at all, but a chip can land here too.
+    captureAnswerOpen = true;
     renderCaptureQuestion();
     focusCaptureAnswer();
     return;
@@ -7307,9 +7357,18 @@ function submitCaptureAnswer() {
   ) {
     captureDialogue.required.push("dueTime");
   }
-  input.value = "";
   clearResolvedAmbiguity();
   advanceCaptureDialogue();
+}
+
+function submitCaptureAnswer() {
+  const input = document.getElementById("captureQuestionInput");
+  const question = captureQuestions[0];
+  if (!input || !question?.slot) return;
+  const answer = input.value.trim();
+  if (!answer) return;
+  input.value = "";
+  answerSlot(question, answer);
 }
 
 /* The short transcript, so the exchange reads as a conversation and not as a field being filled.
