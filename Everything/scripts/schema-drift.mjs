@@ -222,16 +222,23 @@ const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!url || !key) {
-  // A missing key must not look like a clean database. Say the check did not run.
+  // A check that did not run must not print a pass banner. The message above says nothing was
+  // read, and a line underneath saying "PASSED" contradicts it — the failure mode verify.mjs
+  // exists to prevent, and a skip reported as a pass is worse than no check at all, because it
+  // looks like the database was verified. So: no banner, and a non-zero exit, which is what a
+  // caller in CI would expect from a check that produced no result.
   console.log('SKIPPED  no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in the environment.');
   console.log('');
   console.log('Nothing was read and nothing was changed. To run the check:');
-  console.log('  $env:SUPABASE_URL="https://<ref>.supabase.co"');
+  console.log(`  $env:SUPABASE_URL="${url || 'https://<ref>.supabase.co'}"`);
   console.log('  $env:SUPABASE_SERVICE_ROLE_KEY="<service-role key>"');
   console.log('  node Everything/scripts/schema-drift.mjs');
   console.log('');
-  console.log(`ALL ${results.length + 1} SCHEMA DRIFT CHECKS PASSED`);
-  process.exit(0);
+  console.log('The service-role key is the SECRET key, not the publishable one. With the publishable');
+  console.log('key RLS hides every row, and this would report every table as missing.');
+  console.log('');
+  console.log('SCHEMA DRIFT CHECKS DID NOT RUN');
+  process.exit(2);
 }
 
 let liveSchema;
