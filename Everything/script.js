@@ -7005,6 +7005,12 @@ function renderCaptureQuestion() {
     <p class="capture-question-text">${question.question}</p>
     ${reply}
     ${actions}`;
+  // Once a question is on screen it has taken over from the progress line, and "Reading more
+  // carefully…" sitting under it reads as though something is still happening.
+  if (question.slot) {
+    const hint = document.getElementById("captureHint");
+    if (hint) hint.textContent = "";
+  }
   refreshIcons();
 }
 
