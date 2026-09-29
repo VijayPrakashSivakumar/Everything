@@ -5417,3 +5417,85 @@ body.overlay-open .content {
     padding: 9px 8px;
   }
 }
+
+/* ---------- Tablet: the width that had no owner ----------
+
+   The breakpoints were 1180 / 900 / 480 / 381 / 335, and every one of them was either a phone or a
+   laptop. That left 640px-900px with nothing: 768px — an iPad in portrait, a Surface, a Galaxy Tab —
+   got the entire phone layout. Measured before this section existed:
+
+       768px  stat-row=2 cols   grid-2=1 col   settings=1 col   content padding 18px/14px
+       900px  stat-row=2 cols   grid-2=1 col   settings=1 col   content padding 18px/14px
+      1024px  stat-row=4 cols   grid-2=2 cols  settings=2 cols  content padding 24px
+
+   So the whole tier was phone-dense, and 1024px was the first width to breathe. It is not that the
+   layout broke — nothing overflowed at any width, which is why no test had caught it. It is that a
+   tablet was being served a phone's worth of information density on a screen twice the size: four
+   stat cards stacked two-by-two, and a two-column dashboard collapsed to a single column.
+
+   Settings is deliberately left alone. It already carries an '!important' single column at 900px,
+   beating the inline grid on `#view-settings>div`, and undoing that would mean a second `!important`
+   to cancel the first. At 640px+ its tab strip scrolls horizontally and the panel is already two
+   columns, so it reads fine. The density that actually hurt was the stat row and the dashboard.
+
+   The fix is a range rather than a new breakpoint, because the phone tier at 900px and the laptop tier
+   above it are both already correct at their own widths. 640px is where a two-column split starts to
+   earn its keep; below that a phone is right, and above 900px the desktop rules already apply.
+
+   Deliberately still off-canonvas: the sidebar stays a drawer. 640px leaves ~410px of content beside a
+   230px rail, and a rail that narrow is worse than a drawer, so tablets get the same menu a phone gets
+   and a much wider canvas once it is open. Reusing the existing `.sidebar` and `.stat-row` rules is
+   the whole point — nothing here is a second implementation, it is the same components told to use
+   more of the room they have. */
+@media (min-width: 640px) and (max-width: 900px) {
+  /* Enough padding to read as a tablet without the desktop's 24px, which at 640px would eat a
+     fifth of the width. */
+  .content {
+    padding: 22px 20px calc(32px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  }
+
+  .topbar {
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
+  }
+
+  .card {
+    padding: 18px;
+  }
+
+  /* Four across, not two. 640px / 4 = 160px per card, which holds a stat number and its label
+     without truncating either. */
+  .stat-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  /* The dashboard's 2fr/1fr split back. The aside column lands at ~230px, enough for its chips. */
+  .grid-2 {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  }
+
+
+  /* A calendar cell is a touch target. 60px was a phone's worth of room for a finger that is
+     driving a 768px screen with a stylus or a mouse. */
+  .cal-cell {
+    min-height: 78px;
+  }
+
+  /* Type scales with the canvas rather than staying at phone size on a tablet. The existing
+     `--type-scale` token is the lever, so this moves every step of the ramp together and the
+     concept overrides keep working. */
+  :root {
+    --type-scale: 1.06;
+  }
+}
+
+/* Above 1180px the content grows without limit, and a 2560px monitor leaves text lines far too long
+   to read comfortably. Capping the measure is the one place a max-width belongs; the sidebar stays
+   pinned to the left edge so the window still reads as a workspace rather than a centred page. */
+@media (min-width: 1600px) {
+  .content > .view {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+}

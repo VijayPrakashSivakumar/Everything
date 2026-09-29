@@ -14,6 +14,7 @@
     "test:search": "node Everything/tests/search-probe.mjs",
     "serve": "node serve.mjs",
     "audit": "node audit.mjs",
+    "test:responsive": "node Everything/tests/responsive-audit.mjs",
     "probe:projects": "node projects-probe.mjs"
   },
   "repository": {

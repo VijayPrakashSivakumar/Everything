@@ -61,6 +61,10 @@ const SUITES = [
   // Parses and shape-checks every file, and runs before the rest so a malformed file is reported
   // as what it is — a broken edit — rather than as a logic failure in whichever suite died on it.
   { name: 'verify', file: 'verify.mjs', timeoutMs: 60000 },
+  // Nothing overflowed at any width, so the gap was never a broken layout: the app had breakpoints
+  // at 1180/900/480/381/335 and nothing at all for 640px-900px, so a tablet was served the phone
+  // layout. Only a measurement across seven widths would have shown it, and nothing measured one.
+  { name: 'responsive', file: 'responsive-audit.mjs', timeoutMs: 180000 },
   // Four features that each looked finished and were each one step short of working: a palette
   // that could not be reached by touch, contacts that could not be found, bulk actions the Inbox
   // did not have, and a drag that a native HTML5 drag kept cancelling.
