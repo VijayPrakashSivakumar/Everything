@@ -24,6 +24,17 @@ inbox, calendar, projects, goals, and AI-assisted search.
   `/api/ask` (any supported model provider) and falls back to keyword matching offline.
 - **Quick reschedule** — open any item and use *Reschedule* (Tomorrow 9 AM, +1 day,
   +1 week, clear) instead of editing the date by hand.
+- **A calendar you can move things in** — Day, Week and Month views over one shared
+  grid, and any event can be **dragged to another day or hour** to reschedule it. The
+  drop re-arms the reminder, because an event moved from Monday to Wednesday has a new
+  time to remind at and the old notification flag would have suppressed it. See *Drag
+  to reschedule*.
+- **Recurring items that come back on their own** — a repeating task advances when you
+  complete it *and* when its date simply passes, so a series that expired while the app
+  was closed is still there next time you open it. See *Recurring series*.
+- **Birthdays and important dates** — a person's birthday was stored from the start and
+  never shown. It is on the Dashboard now, within 30 days, and clicking it opens the
+  person. A person's own year of birth shows an age; a family member's never does.
 - **Repair the name-based links** — items link to a person, project or goal by *name*, so a typo used
   to strand them with no way back. People, projects and goals can be **renamed** (every linked item
   follows), a person can be **removed** (their tag is cleared and the items are kept), and a goal
@@ -52,6 +63,104 @@ inbox, calendar, projects, goals, and AI-assisted search.
   *Mobile back navigation*.
 - **Themes** — four looks over one set of design tokens; see *Themes*.
 - **Inline help** — an "i" beside the fields that are not self-explanatory; see *Inline help*.
+
+## Recurring series
+
+A **series** is the set of items sharing one `recurrenceKey`: the original plus every occurrence
+spawned from it.
+
+Recurrence only ever advanced on *completion*. A series whose date simply passed — the appointment
+that came and went, the bill that was never ticked off that morning — stopped existing, and nothing
+brought it back. That is the common case, because most occurrences are not consciously completed,
+they just expire. A weekly chore would vanish the first week you forgot it.
+
+A series now advances two ways, and both build the row through one `createOccurrenceRow`, so an
+occurrence looks the same however it came to exist:
+
+- `createRecurringOccurrence(item)` — you completed it.
+- `rollForwardRecurringSeries()` — its date passed.
+
+The sweep rides the existing reminder check, which is the only beat guaranteed to run on load, every
+30 seconds, and when the tab wakes. It is debounced to once an hour, because after the first pass
+there is nothing left to write, and it is deliberately **not awaited** — a reminder must not wait on
+a database write.
+
+### The three guards
+
+The sweep runs on a timer against a list two devices can both be writing, so it is built to be safe
+to call constantly:
+
+1. It only considers **overdue, un-done, un-archived** series. Everything else is skipped outright.
+2. Occurrence ids are **deterministic** (`occ_<series>_<due millis>`), so a retry, a double tap or a
+   second device converges on the same row instead of creating a copy.
+3. It refuses to write when the series **already holds an occurrence on or after** the target date.
+   This is what stops two devices rolling the same series twice. The row being rolled *from* is
+   excluded, so its own stale due date cannot count as forward progress.
+
+### It skips missed days rather than replaying them
+
+Rolling to the *next* occurrence would leave the series in the past if it had been ignored for a
+week, so the target is the next **future** occurrence — the sweep advances until it passes today. A
+daily series left alone for a year produces one new row, not 365. The missed days genuinely did not
+happen, and replaying them would hand the person a backlog to clear by hand.
+
+`RECURRENCE_ROLLFORWARD_MAX_STEPS` bounds the walk at 400 iterations. That is a backstop against a
+rule that never advances, not a real limit — 400 daily steps is more than a year.
+
+## Drag to reschedule
+
+Any event in the Day, Week or Month grid can be dragged to another day or hour.
+
+**Pointer events, not the native HTML5 drag-and-drop**, for the same reason the list reordering
+engine uses them: a native drag cancels the pointer event stream, swallows the click that opens the
+panel, and behaves differently on every platform. One engine (`attachCalendarDrag`) serves all three
+views, so an event dragged in the day grid and the same event dragged in the week grid do the same
+thing.
+
+A press that never moved is a **click**, and the click is what opens the panel. Treating it as a
+no-op drop would make an event impossible to open by tapping it.
+
+### Two details that are not obvious
+
+- **The hour is read from the row under the pointer, not from the target.** The drop target is the
+  day body, which is what gets highlighted; the hour row is nested inside it. Resolving the hour from
+  the target always came back empty, so the pointer sat visibly on the 4pm line and the event stayed
+  at 10am.
+- **A month cell has no hour, and that is fine.** It keeps the event's existing time of day.
+  Flattening a 9am appointment to midnight because the month view has no hour rows would be a silent
+  data change, and a wrong one.
+
+The drop goes through `rescheduleItemTo`, which reuses `applyDueToItem` — so it clears the
+notification flag and re-arms the reminder — and re-renders every list the change touches. If the
+save fails, the item is put back rather than leaving the calendar showing a date the database
+rejected.
+
+## Birthdays and important dates
+
+A birthday was stored on every person from the first migration and then never shown again. The data
+was already there; only the surface was missing.
+
+The Dashboard now carries a **Coming up** card listing anyone with an annual date inside 30 days,
+soonest first, and clicking a row opens that person. The card is **hidden** when there is nothing to
+show rather than rendered empty — a permanent "nothing coming up" box teaches nothing and takes the
+space a real one would need.
+
+### Three things it deliberately does not do
+
+- **It shows an age only for the record that is yours.** A person's own year of birth is displayed;
+  a family member's never is. `ownBirthday` is the person saying "this is me", and without it the
+  year of birth is not ours to display.
+- **A date already past this year means next year**, which is the whole point of an annual date. A
+  1 January birthday is "today" every 1 January, not 364 days away forever.
+- **29 February is celebrated on 28 February in a common year.** `new Date("02-29")` lands on
+  1 March in a non-leap year, which would quietly move that birthday to the wrong day three years
+  out of four.
+
+One detail is worth stating because it made the whole feature silently dead: the stored form is
+`YYYY-MM-DD`, and the anniversary maths takes **only the month and day**. Splitting naively gave
+`month = 2026` and `day = 10`, so every birthday resolved to the year 2026, came back tens of
+thousands of days away, and was then dropped by the 30-day window. No error, no empty state — just a
+feature that never appeared.
 
 ## Mobile back navigation
 
@@ -1071,12 +1180,19 @@ node Everything/tests/autosave-probe.mjs      # auto-create, the doubt path, und
 node Everything/tests/theme-probe.mjs         # theme contrast, in a real browser
 node Everything/tests/back-nav-probe.mjs       # history stack, layers, the menu
 node Everything/tests/search-probe.mjs        # exact-first ranking, plurals, typos, speed
+node Everything/tests/calendar-probe.mjs      # day view, drag to reschedule, recurring, birthdays
 ```
 
-`npm test` runs all nine through `Everything/tests/run-all.mjs`. The two plan checks need Playwright
-(already a dev dependency) and start their own static server (ports 4399 and 4402); they mock
-`/api/ask`, so they need no API key and make no model call. `plan-visual.mjs` writes
+`npm test` runs all of them through `Everything/tests/run-all.mjs`. The browser suites need
+Playwright (already a dev dependency) and start their own static server; they mock `/api/ask`, so
+they need no API key and make no model call. `plan-visual.mjs` writes
 `tmp/plan-desktop.png` and `tmp/plan-mobile.png` so the layout can be looked at rather than inferred.
+
+**A probe's banner is how it is scored.** The runner reads `ALL <n> <WORDS> PASSED`, and the words
+are matched by `[A-Z -]*` — letters, spaces and hyphens only. A banner reading
+`CALENDAR & RECURRENCE CHECKS PASSED` therefore reports a suite as **FAILED** while printing a pass,
+because `&` is outside that character class. The failure line is printed *before* the verdict so the
+last line is always the one that counts.
 
 ```bash
 npm install && npx playwright install chromium   # once, before the browser suites

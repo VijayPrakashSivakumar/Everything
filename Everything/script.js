@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-28.1";
+const APP_BUILD = "2026-09-29.1";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -3311,6 +3311,8 @@ function renderToday() {
         `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div></div></div>`,
     )
     .join("");
+
+  renderUpcomingDates();
 }
 
 /* Renders the Insights view. This was the tail of renderToday(), so Insights was only ever populated
@@ -3874,43 +3876,176 @@ function taskRow(item, options = {}) {
 
 const taskMutationInFlight = new Set();
 
-async function createRecurringOccurrence(item) {
-  if (!item.done || item.kind !== "task" || !item.recurrence || item.recurrence === "none" || !item.dueDate) return;
-  const nextDue = nextOccurrence(item.dueDate, item.recurrence);
-  if (!nextDue) return;
-  const seriesKey = taskRecurrenceKey(item);
-  const nextId = recurringOccurrenceId(seriesKey, nextDue);
-  // Occurrence ids are deterministic, so a retry or a second device converges
-  // on the same row instead of creating another copy.
-  const alreadyQueued = state.items.some(
-    (candidate) => candidate.id === nextId || (
-      candidate.kind === "task" &&
-      candidate.recurrenceKey === seriesKey &&
-      candidate.dueDate === nextDue
-    ),
+/* ---------- Recurring series ----------
+   A series is the set of items sharing one recurrenceKey: the original plus every occurrence
+   spawned from it. Recurrence used to advance only when a task was *completed*, so a series whose
+   date simply passed — the appointment that came and went, the bill never ticked off that morning —
+   stopped existing and nothing brought it back. That is the common case, because most occurrences
+   are not consciously completed, they just expire.
+
+   So a series advances two ways now: completing one advances it (createRecurringOccurrence) and
+   time passing advances it (rollForwardRecurringSeries). Both build the row through
+   createOccurrenceRow, so an occurrence looks the same however it came to exist. */
+
+/* A series ignored for a year would otherwise write 365 rows on one sync. Chasing to the next
+   future occurrence and leaving the gap behind is both cheaper and truer: the missed days did not
+   happen. The guard is a backstop against a rule that never advances, not a real limit. */
+const RECURRENCE_ROLLFORWARD_MAX_STEPS = 400;
+
+function isRecurring(item) {
+  return Boolean(
+    item && item.recurrence && item.recurrence !== "none" && item.dueDate && !isArchived(item),
   );
-  if (alreadyQueued) return;
-  const next = {
+}
+
+/* The date this series should next occupy, or "" when there is nothing to do. Advancing from the
+   item's own due date is what skips the missed days rather than replaying them. */
+function nextFutureOccurrence(item, now) {
+  if (!isRecurring(item)) return "";
+  let due = item.dueDate;
+  let steps = 0;
+  while (new Date(due).getTime() <= now && steps < RECURRENCE_ROLLFORWARD_MAX_STEPS) {
+    const step = nextOccurrence(due, item.recurrence);
+    if (!step) return "";
+    due = step;
+    steps += 1;
+  }
+  return new Date(due).getTime() > now ? due : "";
+}
+
+/* True when this series already holds an occurrence on or after `iso`. The roll-forward stops as
+   soon as it finds one, which is what stops two devices rolling the same series twice. The row being
+   rolled *from* is excluded, so its own stale due date cannot count as forward progress. */
+function seriesHasOccurrenceOnOrAfter(seriesKey, iso, exceptId) {
+  const target = new Date(iso).getTime();
+  if (!Number.isFinite(target)) return false;
+  return state.items.some(
+    (candidate) =>
+      candidate &&
+      candidate.id !== exceptId &&
+      taskRecurrenceKey(candidate) === seriesKey &&
+      candidate.dueDate &&
+      new Date(candidate.dueDate).getTime() >= target,
+  );
+}
+
+/* One row of a series. Every field the series does not redefine is inherited from the row it came
+   from, so a recurring task keeps its project, person, priority and notes for ever. */
+function createOccurrenceRow(item, seriesKey, due) {
+  const isTask = item.kind === "task";
+  return {
     ...item,
-    id: nextId,
+    id: recurringOccurrenceId(seriesKey, due),
     recurrenceKey: seriesKey,
     ownerId: sbUser || currentUserId || item.ownerId || null,
     backendEntryId: null,
     backendTaskId: null,
     done: false,
     completedAt: "",
+    // Steps belong to one run of the task. Carrying them over as "done" would show a fresh week's
+    // chores as already finished, so every step resets.
     checklist: normaliseChecklist(item.checklist).map((step) => ({ ...step, done: false })),
     notified: false,
     notifiedAt: "",
     snoozedUntil: "",
     archivedAt: 0,
-    dueDate: nextDue,
-    due: formatDueDisplay(nextDue),
+    dueDate: due,
+    due: formatDueDisplay(due),
     created: Date.now(),
-    status: isToday(nextDue) ? "today" : "planned",
+    // Only a task moves between Planned and Today. For an event the status is whatever the capture
+    // chose, and forcing it to "planned" would rewrite the person's own filing.
+    status: isTask ? (isToday(due) ? "today" : "planned") : item.status,
   };
+}
+
+async function createRecurringOccurrence(item) {
+  if (!item.done || !isRecurring(item)) return;
+  const nextDue = nextOccurrence(item.dueDate, item.recurrence);
+  if (!nextDue) return;
+  const seriesKey = taskRecurrenceKey(item);
+  // Occurrence ids are deterministic, so a retry or a second device converges
+  // on the same row instead of creating another copy.
+  const alreadyQueued = state.items.some(
+    (candidate) =>
+      candidate.id === recurringOccurrenceId(seriesKey, nextDue) ||
+      (taskRecurrenceKey(candidate) === seriesKey && candidate.dueDate === nextDue),
+  );
+  if (alreadyQueued) return;
+  const next = createOccurrenceRow(item, seriesKey, nextDue);
   state.items.unshift(next);
   await dbSaveItem(next);
+}
+
+/* Moves a series whose date has passed on to its next future occurrence, and reports whether it
+   wrote anything. The three guards are what make this safe to call on a timer: the sweep only
+   considers overdue series, the deterministic id absorbs a retry, and the forward-looking check
+   stops a series another device already advanced. */
+async function rollForwardRecurring(item) {
+  if (item.done || !isRecurring(item)) return false;
+  if (new Date(item.dueDate).getTime() > Date.now()) return false;
+
+  const seriesKey = taskRecurrenceKey(item);
+  const target = nextFutureOccurrence(item, Date.now());
+  if (!target) return false;
+  if (seriesHasOccurrenceOnOrAfter(seriesKey, target, item.id)) return false;
+
+  const next = createOccurrenceRow(item, seriesKey, target);
+  state.items.unshift(next);
+  await dbSaveItem(next);
+  return true;
+}
+
+let recurringSweepInFlight = false;
+
+/* The sweep, run from the same beats as the reminder check. Debounced to once an hour because
+   after the first pass there is nothing left to write, and this rides a check that fires every 30
+   seconds. The stamp is per device and survives a reload, so reopening the app does not re-arm it. */
+async function rollForwardRecurringSeries() {
+  if (recurringSweepInFlight || !state) return;
+  const stamp = Date.now();
+  let last = 0;
+  try {
+    last = Number(localStorage.getItem("everything_recurring_sweep_v1") || 0);
+  } catch (e) {
+    last = 0;
+  }
+  if (Number.isFinite(last) && stamp - last < 3600000) return;
+
+  const overdue = state.items.filter(
+    (item) =>
+      item &&
+      !item.done &&
+      isRecurring(item) &&
+      new Date(item.dueDate).getTime() <= Date.now(),
+  );
+  if (!overdue.length) {
+    try {
+      localStorage.setItem("everything_recurring_sweep_v1", String(stamp));
+    } catch (e) {}
+    return;
+  }
+
+  recurringSweepInFlight = true;
+  let wrote = false;
+  try {
+    // Sequential on purpose: each roll-forward reads state.items, and the row the previous one just
+    // added is what stops the next from rolling the same series again in this same pass.
+    for (const item of overdue) {
+      if (await rollForwardRecurring(item)) wrote = true;
+    }
+    if (wrote) {
+      save();
+      refreshReminderSchedule();
+      renderToday();
+      renderTasks(activeTaskFilter);
+      renderInbox(activeInboxFilter);
+    }
+  } finally {
+    recurringSweepInFlight = false;
+    try {
+      localStorage.setItem("everything_recurring_sweep_v1", String(stamp));
+    } catch (e) {}
+  }
 }
 
 async function completeTask(item) {
@@ -4247,6 +4382,9 @@ function personMatchesQuery(person, needle) {
 function renderPeople() {
   const el = document.getElementById("peopleList");
   if (!el) return;
+  // The Coming up card is derived from people, so a birthday typed here has to be able to appear
+  // there without a reload. Cheap: it re-reads a handful of records.
+  renderUpcomingDates();
   const searchInput = document.getElementById("peopleSearchInput");
   const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
   const namesFromItems = [
@@ -5047,6 +5185,112 @@ function renderActivityChart(days) {
     .join("");
 }
 
+/* ---------- Birthdays and important dates ----------
+   A birthday was stored on every person from the start and then never shown again. The data was
+   already there; only the surface was missing, which made this the cheapest thing on the list.
+
+   The person who owns a birth year sees an age; nobody else does, and a family member's year of
+   birth is not ours to display. Leap-day birthdays are handled explicitly because
+   new Date("02-29") lands on 1 March in a non-leap year, which would quietly move that birthday to
+   the wrong day three years out of four. */
+
+const IMPORTANT_DATE_LEAD_DAYS = 30;
+
+/* Days from today until this date's next anniversary, or null when there is no date to celebrate. A
+   date already past this year means next year — that is the whole point of an annual date, and a
+   birthday on 1 January is "today" every 1 January rather than 364 days away. */
+function daysUntilAnnual(monthDay, from) {
+  if (!monthDay) return null;
+  // Only the MONTH and DAY matter — the year is what makes an annual date recur. The stored form is
+  // YYYY-MM-DD, so a naive split gave month = 2026 and day = 10, and the anniversary resolved to
+  // the year 2026 instead of this one. Every birthday came back tens of thousands of days away and
+  // was then dropped by the lead window, so the feature was silently dead.
+  const parts = String(monthDay).trim().split("-");
+  const month = Number(parts.length >= 3 ? parts[1] : parts[0]);
+  const day = Number(parts.length >= 3 ? parts[2] : parts[1]);
+  if (!Number.isFinite(month) || !Number.isFinite(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const today = new Date(from);
+  today.setHours(0, 0, 0, 0);
+
+  // 29 February does not exist in a common year, so it is celebrated on 28 February. Drifting to
+  // 1 March would be a different date, and a wrong one.
+  const leapDay = month === 2 && day === 29;
+  const anniversary = (year) => {
+    const candidate = new Date(year, month - 1, day);
+    if (leapDay && !(candidate.getMonth() === 1 && candidate.getDate() === 29)) {
+      return new Date(year, 1, 28);
+    }
+    return candidate;
+  };
+
+  let next = anniversary(today.getFullYear());
+  if (next < today) next = anniversary(today.getFullYear() + 1);
+  return Math.round((next - today) / 86400000);
+}
+
+function yearsSinceBirth(birthday) {
+  const year = Number(String(birthday).split("-")[0]);
+  if (!Number.isFinite(year) || year < 1900) return null;
+  return new Date().getFullYear() - year;
+}
+
+/* Everyone with an important date coming up, soonest first. Sorted by days away rather than by name
+   so the next one is always first, which is the only order this list is useful in. */
+function upcomingImportantDates(from) {
+  const out = [];
+  (state.people || []).forEach((p) => {
+    if (!p.birthday) return;
+    const days = daysUntilAnnual(p.birthday, from || Date.now());
+    if (days === null || days > IMPORTANT_DATE_LEAD_DAYS) return;
+    out.push({
+      personId: p.id,
+      name: p.name,
+      date: p.birthday,
+      days,
+      // ownBirthday is the person saying "this is me". Without it the year of birth is not ours to
+      // show, so no age is rendered and only the date itself appears.
+      own: Boolean(p.ownBirthday),
+      years: p.ownBirthday ? yearsSinceBirth(p.birthday) : null,
+    });
+  });
+  return out.sort((a, b) => a.days - b.days || String(a.name).localeCompare(String(b.name)));
+}
+
+/* "in 3 days" / "tomorrow" / "today", with "turns 30" only on the person's own record. */
+function importantDateLabel(entry) {
+  const when = entry.days === 0 ? "today" : entry.days === 1 ? "tomorrow" : `in ${entry.days} days`;
+  if (entry.years) return `birthday ${when} · turns ${entry.years}`;
+  return `birthday ${when}`;
+}
+
+function renderUpcomingDates() {
+  const host = document.getElementById("upcomingDates");
+  if (!host) return;
+  const entries = upcomingImportantDates();
+  if (!entries.length) {
+    // Hidden rather than an empty card: a permanent "nothing coming up" box teaches nothing and
+    // takes the space a real one would need.
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML =
+    `<div class="card-head"><h3>Coming up</h3><button class="link-btn" onclick="switchView('people')">All people →</button></div>` +
+    entries
+      .map(
+        (entry) =>
+          `<div class="upcoming-date-row" onclick="openPersonModal(${jsStr(entry.personId)}, ${jsStr(entry.name)})">
+            <span class="upcoming-date-icon">${icon("cake")}</span>
+            <div><div class="upcoming-date-name">${escapeHtml(entry.name)}</div>
+            <div class="upcoming-date-when">${escapeHtml(importantDateLabel(entry))}</div></div>
+          </div>`,
+      )
+      .join("");
+}
+
 /* ---------- Calendar ---------- */
 let calViewDate = new Date();
 let calMode = "week";
@@ -5069,22 +5313,135 @@ function calGoToday() {
   renderCalendar();
 }
 function calNav(dir) {
-  if (calMode === "week") calViewDate.setDate(calViewDate.getDate() + dir * 7);
+  // The day view moves one day, the week a week, the month a month. Sharing the "week" branch
+  // for the day view jumped a whole week per tap, which made a single day unreachable.
+  if (calMode === "day") calViewDate.setDate(calViewDate.getDate() + dir);
+  else if (calMode === "week") calViewDate.setDate(calViewDate.getDate() + dir * 7);
   else calViewDate.setMonth(calViewDate.getMonth() + dir);
   renderCalendar();
 }
 
 function renderCalendar() {
-  const wTab = document.getElementById("calTabWeek"),
-    mTab = document.getElementById("calTabMonth");
+  const dayTab = document.getElementById("calTabDay");
+  const wTab = document.getElementById("calTabWeek");
+  const mTab = document.getElementById("calTabMonth");
+  if (dayTab) dayTab.classList.toggle("active", calMode === "day");
   if (wTab) wTab.classList.toggle("active", calMode === "week");
   if (mTab) mTab.classList.toggle("active", calMode === "month");
+  // Every container is toggled from the one place that knows which mode is on. Setting only the two
+  // that the original week/month pair knew about left the day container on screen underneath the
+  // month grid, so both views were readable at once.
+  document.getElementById("calDayView").style.display = calMode === "day" ? "block" : "none";
   document.getElementById("calWeekView").style.display =
     calMode === "week" ? "block" : "none";
   document.getElementById("calGrid").style.display =
     calMode === "month" ? "grid" : "none";
-  if (calMode === "week") renderWeekView();
+  if (calMode === "day") renderDayView();
+  else if (calMode === "week") renderWeekView();
   else renderMonthView();
+}
+
+/* The hours a calendar shows, and the pixels each one is tall. Both the day and the week grid are
+   built from these, so an event dropped at 3pm lands on the 3pm row in either view instead of
+   needing its own arithmetic per view. */
+const CAL_START_HOUR = 7;
+const CAL_END_HOUR = 20;
+const CAL_ROW_HEIGHT = 50;
+function calHours() {
+  const hours = [];
+  for (let h = CAL_START_HOUR; h <= CAL_END_HOUR; h++) hours.push(h);
+  return hours;
+}
+function calHourLabel(h) {
+  return h === 12 ? "12 PM" : h < 12 ? h + " AM" : h - 12 + " PM";
+}
+
+/* Lays a day's items into lanes so simultaneous ones sit side by side instead of stacking on top of
+   each other. The week view had this inline; the day view needs the same answer, and two copies of
+   the packing algorithm drift, so it is one function. */
+function packCalendarLanes(entries) {
+  const laneEnds = [];
+  entries.forEach((e) => {
+    let lane = laneEnds.findIndex((end) => end <= e.start);
+    if (lane === -1) {
+      laneEnds.push(e.start + 1);
+      lane = laneEnds.length - 1;
+    } else {
+      laneEnds[lane] = e.start + 1;
+    }
+    e.lane = lane;
+  });
+  return Math.max(laneEnds.length, 1);
+}
+
+/* The scheduled items on one day, as positioned entries. Items outside the visible hours are left
+   out rather than clamped, because a 6am reminder dropped into the 7am row would be a lie about
+   when it is. */
+function calendarEntriesFor(day) {
+  return getScheduledItems()
+    .map((item) => {
+      const d = new Date(item.dueDate);
+      return { item, d, start: d.getHours() + d.getMinutes() / 60 };
+    })
+    .filter((e) => e.start >= CAL_START_HOUR && e.start < CAL_END_HOUR + 1)
+    .filter((e) => e.d.toDateString() === day.toDateString())
+    .sort((a, b) => a.start - b.start);
+}
+
+/* One positioned event block. Shared by the day and the week grid so a block looks and behaves the
+   same in both, and so the drag handle markup exists in exactly one place. */
+function calendarEventHtml(item, start, lane, laneWidth, bodyHeight) {
+  const top = Math.max(0, (start - CAL_START_HOUR) * CAL_ROW_HEIGHT);
+  const height = Math.min(CAL_ROW_HEIGHT - 4, bodyHeight - top);
+  if (height < 14) return "";
+  const [bg, fg] = kindColor(item.kind);
+  const time = fmtTime(item.dueDate);
+  // NOT jsStr. jsStr produces a JavaScript string literal, which is right for a handler argument
+  // and wrong for a DOM attribute: it left data-cal-id holding `"e1"` with the quote characters, so
+  // the drag engine compared it against the real id `e1`, never matched, and every drag was a
+  // silent no-op. A data attribute is HTML text, and escapeHtml is the function for that.
+  const id = escapeHtml(item.id);
+  return `<div class="cal-week-event cal-drag-event${item.done ? " done" : ""}" data-cal-id="${id}" title="${escapeHtml(time + " " + item.title)}" style="top:${top}px;height:${height}px;left:calc(${(lane * laneWidth).toFixed(4)}% + 4px);width:calc(${laneWidth.toFixed(4)}% - 8px);background:${bg};color:${fg};" onclick="openPanel(${jsStr(item.id)})"><b>${time}</b> ${escapeHtml(item.title)}</div>`;
+}
+
+/* The one day. It is the week view's grid with a single column, which is why an event dragged here
+   behaves identically to one dragged across the week. */
+function renderDayView() {
+  const container = document.getElementById("calDayView");
+  const day = new Date(calViewDate);
+  day.setHours(0, 0, 0, 0);
+  document.getElementById("calRangeLabel").textContent =
+    day.toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    }) + (day.toDateString() === new Date().toDateString() ? " · Today" : "");
+
+  const hours = calHours();
+  const bodyHeight = hours.length * CAL_ROW_HEIGHT;
+  const isToday = day.toDateString() === new Date().toDateString();
+  const dayItems = calendarEntriesFor(day);
+  const laneCount = packCalendarLanes(dayItems);
+  const laneWidth = 100 / laneCount;
+
+  let html = `<div class="cal-week-wrap cal-day-wrap"><div class="cal-time-col"><div class="cal-week-head-spacer"></div>`;
+  hours.forEach((h) => {
+    html += `<div class="cal-hour-label">${calHourLabel(h)}</div>`;
+  });
+  html += `</div><div class="cal-week-days cal-day-days"><div class="cal-week-day-col">`;
+  html += `<div class="cal-week-day-head ${isToday ? "today" : ""}"><span>${day.toLocaleDateString(undefined, { weekday: "short" })}</span><span class="num">${day.getDate()}</span></div>`;
+  html += `<div class="cal-week-day-body cal-drop-day" data-cal-date="${day.toISOString()}" style="height:${bodyHeight}px;">`;
+  hours.forEach((h) => {
+    // The drop target carries the hour, so dropping resolves to a real time of day rather than
+    // flattening the event to midnight.
+    html += `<div class="cal-hour-row" data-cal-hour="${h}"></div>`;
+  });
+  dayItems.forEach((e) => {
+    html += calendarEventHtml(e.item, e.start, e.lane, laneWidth, bodyHeight);
+  });
+  html += `</div></div></div></div>`;
+  container.innerHTML = html;
+  attachCalendarDrag(container);
 }
 
 function renderWeekView() {
@@ -5098,16 +5455,12 @@ function renderWeekView() {
   document.getElementById("calRangeLabel").textContent =
     `${days[0].toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${days[6].toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
 
-  const startHour = 7,
-    endHour = 20,
-    rowHeight = 50;
-  const hours = [];
-  for (let h = startHour; h <= endHour; h++) hours.push(h);
-  const scheduled = getScheduledItems();
+  const hours = calHours();
+  const bodyHeight = hours.length * CAL_ROW_HEIGHT;
 
   let html = `<div class="cal-week-wrap"><div class="cal-time-col"><div class="cal-week-head-spacer"></div>`;
   hours.forEach((h) => {
-    html += `<div class="cal-hour-label">${h === 12 ? "12 PM" : h < 12 ? h + " AM" : h - 12 + " PM"}</div>`;
+    html += `<div class="cal-hour-label">${calHourLabel(h)}</div>`;
   });
   html += `</div><div class="cal-week-days">`;
 
@@ -5115,51 +5468,28 @@ function renderWeekView() {
     const isToday = day.toDateString() === new Date().toDateString();
     html += `<div class="cal-week-day-col">
       <div class="cal-week-day-head ${isToday ? "today" : ""}"><span>${day.toLocaleDateString(undefined, { weekday: "short" })}</span><span class="num">${day.getDate()}</span></div>
-      <div class="cal-week-day-body" style="height:${hours.length * rowHeight}px;">`;
-    hours.forEach(() => {
-      html += `<div class="cal-hour-row"></div>`;
+      <div class="cal-week-day-body cal-drop-day" data-cal-date="${day.toISOString()}" style="height:${bodyHeight}px;">`;
+    hours.forEach((h) => {
+      // The drop target carries the hour, so dropping resolves to a real time of day rather than
+      // flattening the event to midnight.
+      html += `<div class="cal-hour-row" data-cal-hour="${h}"></div>`;
     });
 
     // Events are placed in lanes so simultaneous items sit side by side
     // instead of stacking on top of each other, and are clamped to the body
     // so nothing spills past the 8 PM row.
-    const bodyHeight = hours.length * rowHeight;
-    const dayItems = scheduled
-      .filter((i) => new Date(i.dueDate).toDateString() === day.toDateString())
-      .map((item) => {
-        const d = new Date(item.dueDate);
-        const start = d.getHours() + d.getMinutes() / 60;
-        return { item, d, start };
-      })
-      .filter((e) => e.start >= startHour && e.start < endHour + 1)
-      .sort((a, b) => a.start - b.start);
-
-    const laneEnds = [];
-    dayItems.forEach((e) => {
-      let lane = laneEnds.findIndex((end) => end <= e.start);
-      if (lane === -1) {
-        laneEnds.push(e.start + 1);
-        lane = laneEnds.length - 1;
-      } else {
-        laneEnds[lane] = e.start + 1;
-      }
-      e.lane = lane;
-    });
-    const laneCount = Math.max(laneEnds.length, 1);
+    const dayItems = calendarEntriesFor(day);
+    const laneCount = packCalendarLanes(dayItems);
     const laneWidth = 100 / laneCount;
 
     dayItems.forEach((e) => {
-      const top = Math.max(0, (e.start - startHour) * rowHeight);
-      const height = Math.min(rowHeight - 4, bodyHeight - top);
-      if (height < 14) return;
-      const [bg, fg] = kindColor(e.item.kind);
-      const time = fmtTime(e.d);
-      html += `<div class="cal-week-event" title="${escapeHtml(time + " " + e.item.title)}" style="top:${top}px;height:${height}px;left:calc(${(e.lane * laneWidth).toFixed(4)}% + 4px);width:calc(${laneWidth.toFixed(4)}% - 8px);background:${bg};color:${fg};" onclick="openPanel(${jsStr(e.item.id)})"><b>${time}</b> ${escapeHtml(e.item.title)}</div>`;
+      html += calendarEventHtml(e.item, e.start, e.lane, laneWidth, bodyHeight);
     });
     html += `</div></div>`;
   });
   html += `</div></div>`;
   container.innerHTML = html;
+  attachCalendarDrag(container);
 }
 
 function renderMonthView() {
@@ -5195,6 +5525,10 @@ function renderMonthView() {
     c.className =
       "cal-cell" +
       (cellDate.toDateString() === new Date().toDateString() ? " today" : "");
+    // A month cell is a day with no hour rows in it, so it carries only a date. The drop handler
+    // reads data-cal-date and data-cal-hour separately, and a cell with no hour keeps the time of
+    // day the event already had rather than snapping to midnight.
+    c.dataset.calDate = cellDate.toISOString();
     const num = document.createElement("div");
     num.className = "num";
     num.textContent = d;
@@ -5205,13 +5539,199 @@ function renderMonthView() {
       )
       .forEach((item) => {
         const ev = document.createElement("div");
-        ev.className = "cal-event";
+        ev.className = "cal-event cal-drag-event";
+        ev.dataset.calId = item.id;
         ev.onclick = () => openPanel(item.id);
         ev.textContent = fmtTime(item.dueDate) + " " + item.title;
         c.appendChild(ev);
       });
     grid.appendChild(c);
   }
+  attachCalendarDrag(grid);
+}
+
+/* ---------- Drag to reschedule ----------
+   Pointer events rather than the native HTML5 drag-and-drop, for the same reason the list reordering
+   engine uses them: a native drag cancels the pointer stream, swallows the click that opens the
+   panel, and behaves differently on every platform. One engine here, shared by all three calendar
+   views, so an event dragged in the day grid and the same event dragged in the week grid do the
+   same thing. */
+
+const calDrag = { id: null, ghost: null, moved: false, source: null, x: 0, y: 0 };
+
+function calDragStart(event) {
+  // A press on a text selection is a selection, not a drag. Starting one there destroyed the
+  // person's selection every time they tried to copy an event title.
+  if (event.target.closest("input, textarea, select")) return;
+  const handle = event.target.closest(".cal-drag-event");
+  if (!handle) return;
+  const item = state.items.find((i) => i.id === handle.dataset.calId);
+  if (!item || isArchived(item) || item.done) return;
+
+  calDrag.id = item.id;
+  calDrag.moved = false;
+  calDrag.x = event.clientX;
+  calDrag.y = event.clientY;
+  calDrag.source = handle;
+  handle.classList.add("cal-dragging");
+
+  calDrag.ghost = handle.cloneNode(true);
+  calDrag.ghost.classList.add("cal-drag-ghost");
+  calDrag.ghost.style.width = `${handle.offsetWidth}px`;
+  document.body.appendChild(calDrag.ghost);
+  moveCalGhost(calDrag.x, calDrag.y);
+
+  document.addEventListener("pointermove", calDragMove, { passive: false });
+  document.addEventListener("pointerup", calDragEnd);
+  document.addEventListener("pointercancel", calDragEnd);
+  showCalDropHint(true);
+  // Suppress the click that follows the release, or the panel opens on top of the new date.
+  event.preventDefault();
+}
+
+function moveCalGhost(x, y) {
+  if (!calDrag.ghost) return;
+  calDrag.ghost.style.left = `${x + 12}px`;
+  calDrag.ghost.style.top = `${y + 12}px`;
+}
+
+function calDragMove(event) {
+  if (!calDrag.id) return;
+  if (event.cancelable) event.preventDefault();
+  calDrag.moved = true;
+  // The release point is remembered as it moves, because pointerup carries no coordinates on every
+  // browser and a drop resolved from a stale position lands on the wrong day.
+  calDrag.x = event.clientX;
+  calDrag.y = event.clientY;
+  moveCalGhost(calDrag.x, calDrag.y);
+  highlightCalDropTarget(calDrag.x, calDrag.y);
+}
+
+/* Paints the row or cell under the pointer. The target is resolved by the same function the drop
+   uses, so the highlight and the write can never disagree about where the pointer is.
+
+   The hour row is read before the day body, because the row is nested inside the body: resolving the
+   body first found the parent every time, and the drop then had no hour and kept the event's old
+   one. The pointer sat visibly on the 4pm line and the event stayed at 10am. */
+function calendarDropTargetAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  // The hour row is nested inside the day body, so closest("[data-cal-date]") finds the body whether
+  // the pointer is on a row or on the body itself. The body is both the highlight and the drop zone.
+  return el.closest("[data-cal-date]") || null;
+}
+
+/* The hour the pointer is over, read from the row under it. Separate from the target because the
+   target is the day body that gets highlighted, while the hour is only one input to the new date.
+
+   It has to be read here rather than off the target: the day body is the element carrying
+   data-cal-date, and it has no hour of its own, so resolving the hour from it always came back
+   empty and every drop kept the event's original time. */
+function calendarDropHourAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const row = el.closest("[data-cal-hour]");
+  if (!row) return null;
+  const hour = Number(row.dataset.calHour);
+  return Number.isFinite(hour) ? hour : null;
+}
+
+function highlightCalDropTarget(x, y) {
+  const target = calendarDropTargetAt(x, y);
+  document
+    .querySelectorAll(".cal-drop-active")
+    .forEach((el) => el.classList.remove("cal-drop-active"));
+  if (target) target.classList.add("cal-drop-active");
+}
+
+/* Where a drop lands. A target with no hour under the pointer — a month cell, or the flat area of a
+   day column — keeps the event's existing time of day; flattening a 9am appointment to midnight
+   because the month view has no hour rows would be a silent data change, and a wrong one. */
+function calendarDropDate(target, item, hour) {
+  if (!target) return null;
+  const dayIso = target.dataset.calDate;
+  if (!dayIso) return null;
+  const day = new Date(dayIso);
+  if (Number.isNaN(day.getTime())) return null;
+
+  if (!Number.isFinite(hour)) {
+    const from = item && item.dueDate ? new Date(item.dueDate) : null;
+    hour = from && !Number.isNaN(from.getTime()) ? from.getHours() : 9;
+  }
+  day.setHours(hour, 0, 0, 0);
+  return day;
+}
+
+async function calDragEnd() {
+  const id = calDrag.id;
+  const moved = calDrag.moved;
+  const x = calDrag.x;
+  const y = calDrag.y;
+
+  document.removeEventListener("pointermove", calDragMove);
+  document.removeEventListener("pointerup", calDragEnd);
+  document.removeEventListener("pointercancel", calDragEnd);
+  if (calDrag.ghost) calDrag.ghost.remove();
+  if (calDrag.source) calDrag.source.classList.remove("cal-dragging");
+  document
+    .querySelectorAll(".cal-drop-active")
+    .forEach((el) => el.classList.remove("cal-drop-active"));
+  showCalDropHint(false);
+
+  calDrag.id = null;
+  calDrag.ghost = null;
+  calDrag.source = null;
+  calDrag.moved = false;
+
+  // A press that never moved is a click, and the click is what opens the panel. Dropping that here
+  // would make it impossible to open an event by tapping it.
+  if (!id || !moved) return;
+  const target = calendarDropTargetAt(x, y);
+  const item = state.items.find((i) => i.id === id);
+  if (!item || !target) return;
+  const next = calendarDropDate(target, item, calendarDropHourAt(x, y));
+  if (!next || next.getTime() === new Date(item.dueDate).getTime()) return;
+  await rescheduleItemTo(item, next);
+}
+
+function showCalDropHint(visible) {
+  const hint = document.getElementById("calDropHint");
+  if (hint) hint.hidden = !visible;
+}
+
+/* The one place a calendar drop writes. It re-arms the reminder rather than only moving the date:
+   an event moved from Monday to Wednesday has a new time to remind at, and the old notification
+   flag would suppress it. */
+async function rescheduleItemTo(item, date) {
+  if (taskMutationInFlight.has(item.id)) return;
+  const previous = item.dueDate;
+  applyDueToItem(item, date);
+  taskMutationInFlight.add(item.id);
+  try {
+    await dbSaveItem(item);
+  } catch (err) {
+    // Put it back rather than leaving the calendar showing a date the database rejected.
+    applyDueToItem(item, previous ? new Date(previous) : null);
+    taskMutationInFlight.delete(item.id);
+    renderCalendar();
+    return;
+  }
+  taskMutationInFlight.delete(item.id);
+  save();
+  refreshReminderSchedule();
+  renderCalendar();
+  renderToday();
+  renderTasks(activeTaskFilter);
+  renderInbox(activeInboxFilter);
+  if (currentItemId === item.id && document.getElementById("panel")?.classList.contains("open"))
+    openPanel(item.id);
+}
+
+/* Binds the engine to a freshly rendered grid. Called by each renderer rather than once at boot,
+   because the grids are replaced wholesale on every render. */
+function attachCalendarDrag(container) {
+  if (!container) return;
+  container.addEventListener("pointerdown", calDragStart);
 }
 
 /* ---------- Task detail panel ---------- */
@@ -11222,6 +11742,13 @@ function runReminderCheck(reason) {
     if (now - time > REMINDER_GRACE_MS) return;
     deliverItemReminder(item, { missed: now - time > 60000, reason });
   });
+
+  // A recurring series whose date passed has to roll forward, or it never comes back. This is the
+  // only beat that is guaranteed to run on load, on every 30s tick, and when the tab wakes, so it
+  // is where a series gets a chance to advance even if the app was closed through the whole date.
+  // The sweep is debounced and does no work once the series is current, so riding along here is
+  // free. Not awaited: a reminder must not wait on a database write.
+  rollForwardRecurringSeries();
 }
 /* ---------- reminder actions ---------- */
 

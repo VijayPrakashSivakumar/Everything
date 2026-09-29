@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-28.1" />
+    <meta name="everything-build" content="2026-09-29.1" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <script>
@@ -647,6 +647,10 @@
                   </div>
                   <div id="todayList" class="today-agenda"></div>
                 </div>
+                <!-- Birthdays and other annual dates, which were stored on every person from the
+                     start and never shown anywhere. Hidden when there is nothing within the lead
+                     window, rather than rendered as a permanently empty card. -->
+                <div class="card" id="upcomingDates" hidden></div>
                 <div class="nudge dashboard-movable" id="nudgeCard" data-dashboard-section="nudge">
                   <div class="nudge-text">
                     <b>One thing to consider</b>
@@ -842,6 +846,13 @@
                 <div class="tabs" style="margin: 0">
                   <div
                     class="tab active"
+                    id="calTabDay"
+                    onclick="setCalView('day')"
+                  >
+                    Day
+                  </div>
+                  <div
+                    class="tab"
                     id="calTabWeek"
                     onclick="setCalView('week')"
                   >
@@ -857,6 +868,10 @@
                 </div>
               </div>
             </div>
+            <div class="cal-drop-hint" id="calDropHint" hidden>
+              Drop on a day or an hour to reschedule
+            </div>
+            <div id="calDayView" style="display: none"></div>
             <div id="calWeekView"></div>
             <div class="calendar-month-scroll">
               <div class="cal-grid" id="calGrid" style="display: none"></div>

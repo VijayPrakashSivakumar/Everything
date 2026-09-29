@@ -60,6 +60,10 @@ const SUITES = [
   { name: 'localmodel', file: 'local-model-url-probe.mjs', timeoutMs: 120000 },
   // The one thing that can lose data: two devices offline at the same time.
   { name: 'sync', file: 'sync-conflict-probe.mjs', timeoutMs: 120000 },
+// The Schedule view's day grid, the drag-to-reschedule engine, and the recurring series that rolls
+// itself forward. They share one probe because they share one file — a drag writes through the same
+// occurrence rules a completion does, and splitting them would let the two halves disagree.
+{ name: 'calendar', file: 'calendar-probe.mjs', timeoutMs: 180000 },
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },
