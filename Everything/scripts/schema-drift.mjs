@@ -130,6 +130,55 @@ function parseMigrations() {
    uses. A service-role key is required because RLS hides the very rows this needs
    to inspect — with the anon key every table would look empty, which would read as
    a clean result rather than as a failed check. */
+/* Reads a table's real column list, without depending on it containing a row.
+
+   PostgREST serves the OpenAPI description at its root, and every exposed table appears
+   there with its columns — independent of whether the table holds anything. That is the
+   only source that works for an empty table, and on a fresh install most tables are empty.
+
+   Falls back to a row's keys if the root is unavailable, because a table that is empty and
+   also absent from the description would otherwise be indistinguishable from one that does
+   not exist. That fallback is marked in the result so the caller can say which it used. */
+async function columnsOf(table, headers, endpoint) {
+  try {
+    const res = await fetch(endpoint, { headers });
+    if (res.ok) {
+      const spec = await res.json();
+      const def = spec && spec.definitions && spec.definitions[table];
+      if (def) {
+        /* PostgREST describes a table as { type: 'object', properties: { <column>: {...} } }. The
+           nested form is the reliable one, so prefer it.
+
+           The flattened fallback below was filtering out the OpenAPI keywords `type`,
+           `description`, `required`, `enum` and `format` — and one of those words is `description`,
+           which is also a real column in four of these tables. So the filter deleted a column
+           that exists, and the check reported `entries.description`, `tasks.description`,
+           `projects.description` and `goals.description` as missing. A keyword is only a keyword
+           by position: `type` at the top level of a definition is the schema type, but a column
+           called `type` is a column. So decide by shape, not by name. */
+        if (def.properties && typeof def.properties === 'object' && Object.keys(def.properties).length) {
+          return new Set(Object.keys(def.properties));
+        }
+
+        // A flattened definition: every key whose value is an object is a column, because the
+        // keywords that can appear at this level (`type`, `required`, `enum`) are strings or
+        // arrays. A column named `type` is still an object, so it survives.
+        const objects = Object.entries(def).filter(([, v]) => v && typeof v === 'object' && !Array.isArray(v));
+        if (objects.length) return new Set(objects.map(([k]) => k));
+      }
+    }
+  } catch (err) {
+    /* Fall through to the row probe below. */
+  }
+
+  const res = await fetch(`${endpoint}${table}?select=*&limit=1`, { headers });
+  if (!res.ok) throw new Error(`${table}: HTTP ${res.status} ${await res.text()}`);
+  const rows = await res.json();
+  // Still no column list, and the table is genuinely empty. Report that honestly rather than
+  // treating it as an absence: the caller can then say "could not read" instead of "missing".
+  return new Set(rows.length ? Object.keys(rows[0]) : []);
+}
+
 async function readLiveSchema(url, key) {
   const endpoint = `${url.replace(/\/+$/, '')}/rest/v1/`;
   const headers = { apikey: key, Authorization: `Bearer ${key}`, Accept: 'application/json' };
@@ -152,7 +201,18 @@ async function readLiveSchema(url, key) {
   for (const table of tables) {
     try {
       const rows = await get(table);
-      live.set(table, new Set(rows.length ? Object.keys(rows[0]) : []));
+      /* The column list has to come from the table, not from a row in it. Reading the keys of
+         the first row means an EMPTY table reports zero columns, and every column the
+         migrations promise then looks absent — which is how `goals`, `people`, `projects` and
+         six others were reported as missing 36 columns that are present and correct.
+
+         PostgREST answers an explicit column list with an empty array and a 200, so asking for
+         the columns by name distinguishes "this table has no such column" (400) from "this
+         table is empty" (200, no rows). A brand-new install is mostly empty tables, so the
+         empty case is the common one and cannot be the one that guesses. */
+      const names = await columnsOf(table, headers, endpoint);
+      live.set(table, names);
+      void rows;
     } catch (err) {
       // PostgREST answers 404 for a table it does not expose; that is drift, not a
       // connection failure, so it is recorded and the rest of the check continues.
@@ -200,15 +260,21 @@ async function readSecurity(url, key) {
 function compare(claimed, live) {
   const absentTables = [];
   const absentColumns = [];
+  const unreadable = [];
 
   for (const [table, columns] of claimed.tables) {
     if (!live.has(table)) { absentTables.push(table); continue; }
     const present = live.get(table);
+    // An empty set means the table is there but its columns could not be read — an empty table
+    // with no schema description. That is not evidence of a missing column, so it is reported
+    // separately; treating "cannot tell" as "absent" is how 36 healthy columns were once listed
+    // as missing.
+    if (present.size === 0) { unreadable.push(table); continue; }
     for (const column of columns) {
       if (!present.has(column)) absentColumns.push(`${table}.${column}`);
     }
   }
-  return { absentTables, absentColumns };
+  return { absentTables, absentColumns, unreadable };
 }
 
 /* ---------- 4. Report ---------- */
@@ -253,12 +319,20 @@ try {
 /* readLiveSchema returns { live, missing } — a wrapper, not the map itself. Passing the
    wrapper here made `live.has` undefined and crashed the check on its first table, which
    is why the count line printed and then the run died: the parse had already succeeded. */
-const { absentTables, absentColumns } = compare(claimed, liveSchema.live);
+const { absentTables, absentColumns, unreadable } = compare(claimed, liveSchema.live);
 
 note(absentTables.length === 0, 'every table the migrations create exists',
   absentTables.length ? `missing: ${absentTables.join(', ')}` : '');
 note(absentColumns.length === 0, 'every column the migrations add exists',
   absentColumns.length ? `missing: ${absentColumns.join(', ')}` : '');
+
+// Not a failure: the table exists, but it is empty and PostgREST exposed no column list for
+// it, so nothing can be said about its columns either way. Saying so is the point — an
+// earlier version reported these as missing columns, which was a false alarm on every one.
+if (unreadable.length) {
+  console.log(`NOTE  ${unreadable.length} empty table(s) exposed no column list, so their columns ` +
+              `were not checked: ${unreadable.join(', ')}`);
+}
 
 const security = await readSecurity(url, key);
 if (security.method === 'rpc') {
@@ -272,14 +346,40 @@ if (security.method === 'rpc') {
   console.log('            where relnamespace = \'public\'::regnamespace and relkind = \'r\';');
 }
 
-// A table the migrations never mention is the finding that matters most: nothing
-// describes it, so nothing owns its access control.
+/* A table the migrations never describe is the finding that matters most — but "never
+   created" and "never mentioned" are different, and the difference is the whole answer.
+
+   `items` is created by no migration and yet is altered, indexed, given RLS and given a
+   policy by seven of them. It predates the foundation migration: the app still reads and
+   writes it, and the migrations treat it as already existing. Flagging that as unowned
+   would be a false alarm, because it is protected — a policy is written for it.
+
+   So the two cases are reported separately. Referenced-but-never-created is a real gap: the
+   schema cannot be rebuilt from these migrations alone, because nothing in them produces
+   the table the other seven assume. Nothing is told to be deleted. */
 const unknown = [...liveSchema.live.keys()].filter((t) => !claimed.tables.has(t));
-note(unknown.length === 0, 'no table exists that no migration accounts for',
-  unknown.length ? `unmanaged: ${unknown.join(', ')}` : '');
+const trulyUnknown = unknown.filter((t) => !claimed.referenced.has(t));
+const assumed = unknown.filter((t) => claimed.referenced.has(t));
+
+note(trulyUnknown.length === 0, 'no table exists that no migration accounts for',
+  trulyUnknown.length ? `unmanaged: ${trulyUnknown.join(', ')}` : '');
+
+if (assumed.length) {
+  note(false, 'every table in the database is created by some migration',
+    `${assumed.join(', ')}: used and policied by the migrations, but created by none.\n` +
+    '        A fresh database built from these migrations alone would not have it.');
+}
 
 for (const r of results) {
   if (r.ok && !process.env.DRIFT_VERBOSE) continue;
   console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? `\n        ${r.detail}` : ''}`);
 }
-console.log(`\nALL ${results.length} SCHEMA DRIFT CHECKS PASSED`);
+
+/* The banner has to be the *outcome*, not the shape. A real run reached here once with two
+   FAILs above it and still printed "ALL 3 SCHEMA DRIFT CHECKS PASSED" — because the count
+   was right and the verdict was missing. That is the contradiction verify.mjs exists to
+   catch, and a drift check that claims PASSED beside its own failures is worse than one
+   that stays silent, because the failures scroll past and the last line is what gets read. */
+console.log(process.exitCode
+  ? '\nSCHEMA DRIFT CHECKS FOUND PROBLEMS'
+  : `\nALL ${results.length} SCHEMA DRIFT CHECKS PASSED`);
