@@ -446,14 +446,9 @@ try {
       };
     });
     assert.ok(open.open, 'a horizontal drag did not open the row');
-    /* The resting state is neutral, and that is the contract now.
-
-       The reveal is the buttons appearing *over* the row. The row's own content does not travel, so
-       there is no committed transform to match, and asserting one forced a design in which opening a
-       row pushed its own checkbox, title and badges 168px to the left — out of the row's clipping
-       window entirely, so the item you were about to mark done vanished. What is checked instead is
-       that the *class* is set (the row is open), and that neither the content nor the row itself is
-       left translated. The mid-gesture tracking is asserted further down, where it belongs. */
+    /* The resting state is neutral: the buttons are revealed over the row, so nothing travels.
+       Asserting a committed transform used to force a design that pushed the row's own content out
+       of view. Mid-gesture tracking is checked further down, where it belongs. */
     assert.equal(open.transform, '',
       'the row content is left translated after the gesture — it should be pinned and revealed over');
     assert.equal(open.rowTransform, '',
@@ -583,16 +578,12 @@ try {
         inset: Math.round(list.right - a.right),
         // The buttons have to be exactly as wide as the slide, or the gap shows as bare row.
         width: Math.round(a.width),
-        /* The travel distance, from the constant the handler uses, not from the committed
-           transform. The row's own content no longer moves once the gesture ends: the buttons are
-           revealed *over* the row rather than exposed by sliding it away, so a resting transform is
-           empty and reading it here threw on `.match(null)`. The constant is the real contract —
-           the width below is compared against it precisely so a drift in either is caught. */
+        /* Travel comes from the constant, not the committed transform: the row's content no longer
+           travels once the gesture ends, so a resting transform is empty and reading it threw on
+           `.match(null)`. The width is compared against this so a drift in either is caught. */
         travel: typeof SWIPE_MAX_WIDTH === 'number' ? SWIPE_MAX_WIDTH : null,
-        /* And the content has to still be on screen. This is the check that the reveal does not
-           cost you the thing you are acting on: when the row slid its own children aside by 168px,
-           the checkbox, title and badges all left the visible window and the opened row showed
-           nothing but buttons. */
+        /* The content must stay on screen: when the row slid its own children aside, the title and
+           badges left the visible window and the opened row showed only buttons. */
         contentVisible: (() => {
           const rb = row.getBoundingClientRect();
           return [...row.querySelectorAll('.swipe-row-body > *')].every((el) => {

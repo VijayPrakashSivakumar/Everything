@@ -192,22 +192,9 @@ async function main() {
   record(!search.missing && parseFloat(search.fontSize) >= 16,
     'the search input avoids iOS focus-zoom', `fontSize=${search.fontSize}`);
 
-  // Every topbar *control* a phone can reach has to actually be reachable.
-  //
-  // The theme toggle was hidden under 900px to keep the search field above its 120px floor, which
-  // left a user who had picked dark mode with no way back to light except digging through Settings.
-  // It was restored by reclaiming width from the topbar gap, the side padding and the capture mark
-  // instead, so the search floor and this can both hold. That trade is easy to undo by accident:
-  // hiding one button looks like it "fixes" the layout, and the only test that noticed was the
-  // search floor going quiet rather than anything failing loudly.
-  //
-  // So both halves are asserted together. Hiding a control to make room is a change that needs a
-  // deliberate trade, not a silent way to pass this audit.
-  //
-  // The list is controls only, and deliberately excludes `.theme-dot`. That is the unread badge
-  // inside the notification button, and it is `display: none` until something is unread — asserting
-  // it visible would fail on a correctly working app with an empty inbox. Checking the button that
-  // contains it is the thing that actually matters.
+  // No topbar control may be hidden to make room: the theme toggle once was, and it is the only
+  // one-tap route back from a dark choice. Asserted with the search floor above so neither can be
+  // traded for the other. Controls only — `.theme-dot` is an unread badge, hidden on a clean inbox.
   const reach = await evaluate(`(() => {
     const wanted = ['#paletteBtn', '.theme-toggle', '.mobile-capture-btn', '.topbar-menu-wrap .icon-btn', '.avatar'];
     return wanted.map((sel) => {
@@ -229,14 +216,8 @@ async function main() {
       ? [...hidden.map((c) => c.sel), ...absent.map((c) => c.sel + ' (absent)')].join(', ')
       : reach.map((c) => `${c.sel}=${c.w}`).join(' '));
 
-  // And the space those controls take must still leave the search field usable, which is the
-  // constraint that removed the theme toggle in the first place. Asserted together with the search
-  // checks above, so the two cannot be satisfied by trading one against the other.
-  //
-  // `widest` has to come from the same `rows` the filter builds, not from a fresh query. A previous
-  // version of this line lost the local when it was refactored and read `rows` from nowhere, so the
-  // message printed "widest child=undefinedpx" on every run — a check whose only output was a lie,
-  // which is worse than no check because it looks like evidence.
+  // `widest` must come from the same `rows` the filter builds: losing that local once made this
+  // print "undefinedpx" every run, which looks like evidence and is not.
   const bar = await evaluate(`(() => {
     const t = document.querySelector('.topbar');
     const rows = [...t.children].filter((el) => getComputedStyle(el).display !== 'none');
