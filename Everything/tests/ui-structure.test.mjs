@@ -2449,6 +2449,35 @@ check('the reset path always ends in something the person can read', () => {
   assert.match(forgot[0], /spam folder/i, 'the mail lands in spam more often than not');
 });
 
+check('a sync that never ran is never mistaken for an empty account', () => {
+  // Every view is filtered by household_id, so a query with no household reads `household_id = null`
+  // and returns zero rows *with no error*. The app then looks exactly like a brand-new account,
+  // which is the worst possible reading when the person's data is still in the database.
+  assert.match(html, /id="syncProblemCard"/, 'there is nowhere to say the sync did not run');
+  const content = html.slice(html.indexOf('class="content"'), html.indexOf('id="view-today"'));
+  assert.match(content, /id="syncProblemCard"/, 'the banner must be above every view, not inside one');
+  // And the sync must actually stop and say so rather than carrying on into an empty workspace.
+  // Taken from the household call forward: the lazy form matched an empty span, so the assertions
+  // below were reading a slice of zero characters and could never be true.
+  const after = js.indexOf('await ensureHousehold(userId);');
+  assert.ok(after > -1, 'the sync no longer resolves a household at all');
+  const sync = js.slice(after, after + 2000);
+  assert.match(sync, /if \(!currentHouseholdId\)/, 'a missing household is not checked for');
+  assert.match(sync, /renderSyncProblem\(/, 'a missing household is not reported');
+  // The guard has to end the sync, not merely warn and carry on into the empty workspace.
+  const guarded = sync.slice(
+    sync.indexOf('if (!currentHouseholdId)'),
+    sync.indexOf('clearSyncProblem();'),
+  );
+  assert.match(guarded, /return;/, 'the sync carries on into an empty workspace anyway');
+  // It must say what it is not, because "my account was deleted" is the wrong conclusion.
+  assert.match(js, /This is not your data being deleted/,
+    'the banner does not rule out the one wrong conclusion a person will reach');
+  assert.match(js, /function retrySyncSetup\(\)/, 'there is no way to try again');
+  assert.match(js, /function clearSyncProblem\(\)/, 'the banner is never cleared on a good load');
+  assert.match(css, /\.sync-problem\s*\{/, 'the banner is unstyled and will not read as a warning');
+});
+
 check('a re-read of the same sentence cannot wipe an answer being typed', () => {
   // The model is consulted a moment after the local rules, and a second render of the card is what
   // silently threw away whatever the person had already typed into it.

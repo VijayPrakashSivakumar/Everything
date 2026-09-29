@@ -1279,6 +1279,58 @@ function renderSyncConflictBanner() {
   list.innerHTML = conflictRows + unsyncedRows;
 }
 
+/* A sync that did not run, said plainly.
+
+   The dangerous state is not an error message — it is an app that looks like a brand-new account
+   while the person's data is sitting in the database. A banner naming what happened, and what it
+   is not, is the difference between "my account is gone" and "try again". */
+let syncProblemRetry = null;
+
+function renderSyncProblem(title, body, actionLabel, action) {
+  const host = document.getElementById("syncProblemCard");
+  if (!host) return;
+  syncProblemRetry = action || null;
+  host.style.display = "";
+  host.innerHTML = `
+    <p class="sync-problem-title">${icon("triangle-alert")} ${escapeHtml(title)}</p>
+    <p class="sync-problem-body">${escapeHtml(body)}</p>
+    ${
+      action
+        ? `<button type="button" class="btn" onclick="retrySyncSetup()">${escapeHtml(actionLabel || "Try again")}</button>`
+        : ""
+    }`;
+  refreshIcons();
+}
+
+function clearSyncProblem() {
+  syncProblemRetry = null;
+  const host = document.getElementById("syncProblemCard");
+  if (host) {
+    host.style.display = "none";
+    host.innerHTML = "";
+  }
+}
+
+/* Re-runs the whole sync setup. Deliberately blunt: the state it depends on (the signed-in user,
+   the household) is exactly what failed, so patching around it would hide the real problem. */
+function retrySyncSetup() {
+  const user = sbUser || currentUserId;
+  if (!user) {
+    location.reload();
+    return;
+  }
+  clearSyncProblem();
+  // A household resolved on the previous attempt is stale if the attempt failed to get one.
+  if (!currentHouseholdId) currentHouseholdId = null;
+  if (structuredChannels.length) {
+    structuredChannels.forEach((channel) => sb.removeChannel(channel));
+    structuredChannels = [];
+  }
+  if (sbChannel) sb.removeChannel(sbChannel);
+  sbChannel = null;
+  void startSupabaseSync(user);
+}
+
 function rowToItem(row) {
   return {
     id: row.id,
@@ -1456,6 +1508,27 @@ async function startSupabaseSync(userId) {
   if (!state.goals) state.goals = [];
   if (!state.people) state.people = [];
   await ensureHousehold(userId);
+
+  /* Every view is filtered by household_id, so with no household the query below reads
+     `household_id = null` and returns zero rows *without an error*. The app then shows a clean,
+     genuinely empty workspace and a person concludes their account was wiped, when in fact the
+     sync never ran. That is a silent failure of the worst kind, and it is exactly what a deleted
+     account followed by a fresh sign-in produces: a new user id, no membership, a new household,
+     and every existing row left behind under the old one.
+
+     So it is said out loud here rather than being left to look like "no data". */
+  if (!currentHouseholdId) {
+    renderSyncProblem(
+      "Your account could not be opened",
+      "Everything is filtered by your household, and that could not be found, so nothing can be loaded. " +
+        "This is not your data being deleted. Try again in a moment, and if it keeps happening your household " +
+        "needs to be re-linked.",
+      "Try again",
+      "retrySyncSetup",
+    );
+    return;
+  }
+  clearSyncProblem();
   hasCompletedAt = await detectCompletedAtColumn();
   hasReminderColumns = await detectReminderColumns();
   hasChecklistColumn = await detectChecklistColumn();

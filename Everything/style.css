@@ -3015,6 +3015,41 @@ h1.page-title {
   color: var(--text);
 }
 
+/* A sync that did not run. Sits above every view rather than inside one, and stays plain: the
+   point is that it is unmissable, not that it is alarming. */
+.sync-problem {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm, 8px);
+  background: var(--bg);
+}
+
+.sync-problem-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sync-problem-title svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.sync-problem-body {
+  margin: 0 0 10px;
+  font-size: var(--fs-body-s);
+  line-height: var(--lh-base);
+  color: var(--muted);
+}
+
 /* ---------- Conversation engine ----------
    A slot question is not a panel of its own. The answer goes back into the capture box as words —
    "remind me" becomes "remind me tomorrow" — and the next question drops in right underneath, so

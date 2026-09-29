@@ -1,0 +1,11 @@
+﻿Never let a sync that never ran look like a deleted account
+
+Every view is filtered by household_id. When the household cannot be resolved the
+query reads household_id = null and returns zero rows *with no error*, so the app
+shows a clean, genuinely empty workspace and the person concludes their data was
+deleted -- while it is sitting in the database under a different household.
+ensureHousehold() makes this very likely: a user with no membership gets a brand new
+household, which is exactly what a deleted account followed by a fresh sign-in produces.
+The sync now stops and says so, above every view, and states plainly that this is not
+their data being deleted. There is a Try again, and the banner clears on a good load.
+Verified: ui 144, verify 53, dead-code 0.
