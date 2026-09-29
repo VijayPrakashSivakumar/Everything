@@ -7809,8 +7809,14 @@ function startSwipe(el, event) {
        the row a moment too early, and the click then found nothing to match and opened the item —
        so tapping a swiped-open row did the one thing it is not supposed to do. */
     if (decided === "swipe") {
-      // Snap fully open, or closed. Half-open looks broken and the row stays unusable.
-      body.style.transform = committed ? `translateX(-${SWIPE_MAX_WIDTH}px)` : "";
+      /* Snap fully open, or closed. Half-open looks broken and the row stays unusable.
+
+         Both outcomes land the body back at 0. The body only moves *during* the gesture, so it can
+         track the finger; the resting state is always neutral. Parking it at -SWIPE_MAX_WIDTH when
+         committed slid the whole row's content off the left edge and left the opened row showing
+         nothing but buttons — the item you were about to mark done disappeared at the moment you
+         needed to see it. The reveal is the buttons appearing over the row, not the row leaving. */
+      body.style.transform = "";
       el.classList.toggle("swiped-open", committed);
       // Same guard: on a tap the row is untouched, so the slot has to keep pointing at it too.
       // Nulling it here meant the click that closes the row found nothing to close.

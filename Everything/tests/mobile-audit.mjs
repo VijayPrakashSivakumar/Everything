@@ -232,16 +232,28 @@ async function main() {
   // And the space those controls take must still leave the search field usable, which is the
   // constraint that removed the theme toggle in the first place. Asserted together with the search
   // checks above, so the two cannot be satisfied by trading one against the other.
+  //
+  // `widest` has to come from the same `rows` the filter builds, not from a fresh query. A previous
+  // version of this line lost the local when it was refactored and read `rows` from nowhere, so the
+  // message printed "widest child=undefinedpx" on every run — a check whose only output was a lie,
+  // which is worse than no check because it looks like evidence.
   const bar = await evaluate(`(() => {
     const t = document.querySelector('.topbar');
     const rows = [...t.children].filter((el) => getComputedStyle(el).display !== 'none');
+    const widths = rows.map((el) => Math.round(el.getBoundingClientRect().width));
+    const widestName = rows[widths.indexOf(Math.max(...widths))];
     return {
       overflow: t.scrollWidth > t.clientWidth + 1,
-      widest: Math.max(...rows.map((el) => Math.round(el.getBoundingClientRect().width))),
+      widest: widths.length ? Math.max(...widths) : null,
+      widestChild: widestName ? (widestName.className || widestName.tagName).toString().slice(0, 24) : null,
+      count: rows.length,
     };
   })()`);
-  record(!bar.overflow, 'the topbar itself does not overflow with every control shown',
-    `widest child=${bar.widgest}px`);
+  record(Number.isFinite(bar.widest) && !bar.overflow,
+    'the topbar itself does not overflow with every control shown',
+    bar.widest === null
+      ? 'the topbar has no visible children to measure'
+      : `${bar.count} children, widest ${bar.widestChild}=${bar.widest}px, overflow=${bar.overflow}`);
 
   // A placeholder that does not fit is truncated by the browser mid-word, and "Search an" reads as
   // a bug rather than as a hint. It is not a horizontal-overflow failure, so nothing above catches

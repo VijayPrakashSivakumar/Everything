@@ -446,7 +446,16 @@ try {
       };
     });
     assert.ok(open.open, 'a horizontal drag did not open the row');
-    assert.match(open.transform, /translateX\(-/, 'the row content is not actually slid aside');
+    /* The resting state is neutral, and that is the contract now.
+
+       The reveal is the buttons appearing *over* the row. The row's own content does not travel, so
+       there is no committed transform to match, and asserting one forced a design in which opening a
+       row pushed its own checkbox, title and badges 168px to the left — out of the row's clipping
+       window entirely, so the item you were about to mark done vanished. What is checked instead is
+       that the *class* is set (the row is open), and that neither the content nor the row itself is
+       left translated. The mid-gesture tracking is asserted further down, where it belongs. */
+    assert.equal(open.transform, '',
+      'the row content is left translated after the gesture — it should be pinned and revealed over');
     assert.equal(open.rowTransform, '',
       'the row itself was translated, which drags the revealed buttons off the edge with it');
     // The two gestures must not both fire: a swipe that also started a drag would have moved the
@@ -498,12 +507,18 @@ try {
     await dragRow(1);
     const out = await page.evaluate(() => ({
       open: [...document.querySelectorAll('#inboxList .task-row.swiped-open')].length,
-      // A row still carrying a transform without the class would never be closed by a tap either.
-      transformed: [...document.querySelectorAll('#inboxList .swipe-row-body')]
-        .filter((b) => b.style.transform).length,
+      /* A row left carrying the class but not pointed at by `swipeOpenRow` would never be closed by a
+         tap either. The leftover *transform* that used to be the tell is gone from the resting state
+         by design, so the check is the class instead: one open row, and it is the second one. */
+      whichOpen: [...document.querySelectorAll('#inboxList .task-row')].findIndex((r) => r.classList.contains('swiped-open')),
+      actionsRevealed: [...document.querySelectorAll('#inboxList .task-row')]
+        .filter((r) => getComputedStyle(r.querySelector('.swipe-actions')).opacity === '1').length,
     }));
     assert.equal(out.open, 1, `swiping a second row left ${out.open} rows open at once`);
-    assert.equal(out.transformed, 1, 'a row is still slid aside with nothing able to close it');
+    assert.equal(out.whichOpen, 1,
+      `the wrong row is open: index ${out.whichOpen} is open, the second row (1) should be`);
+    assert.equal(out.actionsRevealed, 1,
+      `only one row should have its buttons revealed, ${out.actionsRevealed} do`);
     // Left open deliberately would bleed into the next check: its drag starts on this row, and the
     // tap that follows would close this one and open the item instead.
     await page.evaluate(() => closeOpenSwipe());
@@ -568,14 +583,34 @@ try {
         inset: Math.round(list.right - a.right),
         // The buttons have to be exactly as wide as the slide, or the gap shows as bare row.
         width: Math.round(a.width),
-        travel: Math.abs(parseFloat(
-          row.querySelector('.swipe-row-body').style.transform.match(/-?[\d.]+/)[0])),
+        /* The travel distance, from the constant the handler uses, not from the committed
+           transform. The row's own content no longer moves once the gesture ends: the buttons are
+           revealed *over* the row rather than exposed by sliding it away, so a resting transform is
+           empty and reading it here threw on `.match(null)`. The constant is the real contract —
+           the width below is compared against it precisely so a drift in either is caught. */
+        travel: typeof SWIPE_MAX_WIDTH === 'number' ? SWIPE_MAX_WIDTH : null,
+        /* And the content has to still be on screen. This is the check that the reveal does not
+           cost you the thing you are acting on: when the row slid its own children aside by 168px,
+           the checkbox, title and badges all left the visible window and the opened row showed
+           nothing but buttons. */
+        contentVisible: (() => {
+          const rb = row.getBoundingClientRect();
+          return [...row.querySelectorAll('.swipe-row-body > *')].every((el) => {
+            const b = el.getBoundingClientRect();
+            return b.width > 0 && b.right > rb.left && b.left < rb.right;
+          });
+        })(),
+        childCount: row.querySelectorAll('.swipe-row-body > *').length,
       };
     });
     assert.ok(out.open, 'precondition: the row should be open');
+    assert.ok(out.travel > 0, 'the swipe travel distance is not readable, so the reveal cannot be verified');
     // The list's own right edge is the edge the finger pulled from, give or take the row's border.
     assert.ok(out.inset <= 4,
       `the revealed buttons sit ${out.inset}px inside the right edge instead of on it`);
+    assert.ok(out.childCount > 0, 'the opened row has no content of its own to show');
+    assert.ok(out.contentVisible,
+      'opening the row slid its own content out of view — the item being acted on disappeared');
     assert.ok(Math.abs(out.width - out.travel) <= 2,
       `the buttons are ${out.width}px wide but the row slides ${out.travel}px, `
       + 'so the gap between the text and the first button shows bare row');

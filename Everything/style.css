@@ -2474,10 +2474,28 @@ h1.page-title {
      and only translating the strip was the arrangement that broke it. */
   display: block;
   padding: 0;
+  /* The row's own border has to go with its padding. The strip carries an identical 1px transparent
+     border, so a swipeable row keeps the same 1px inset — but the two borders stacked on the same
+     edges and the strip's box was 2px narrower than the clip window it slides behind. Revealing 168px
+     therefore exposed 166px of buttons and left a 2px seam of bare row down the right edge, plus a
+     doubled border once the row was hovered or selected and the strip painted over it. */
+  border: 0;
   /* The row is the surface the revealed strip is cut out of, so it carries the card colour. Left
      transparent, a swiped row showed a grey hole the width of the buttons where its own text used
      to be. The strip above it does the rounding, via this row's `overflow: hidden`. */
   background: var(--card);
+}
+
+/* Only the *frame* is a block. Height still comes from the strip, so a row that wraps to three
+   lines on a phone is as tall as its own content and the revealed buttons stretch to match. */
+.task-row.swipeable > .swipe-row-body {
+  /* Sized to the row rather than to its own text: as a block in a `position: relative` parent the
+     strip is already full width, and the explicit width is what makes the travel distance and the
+     reveal agree exactly at every density. Without it, `min-height: 100%` resolved against a
+     content-height parent, which is a no-op, and the buttons were the only thing setting the
+     row's height — so a row with a long title revealed buttons taller than the strip that covered
+     them. */
+  width: 100%;
 }
 
 .task-row.swipeable:hover {
@@ -2514,6 +2532,18 @@ h1.page-title {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* The revealed actions. Sits on top of the row's own content, which does not move.
+
+   This is the one thing that has to be true: the buttons are revealed *over* the row, they are not
+   exposed by sliding the row away. The earlier arrangement transformed the row's content strip, so
+   a 168px slide pushed the checkbox, the title and the badges off the left edge and left the opened
+   row blank with nothing but buttons in it — the item being acted on disappeared at exactly the
+   moment you needed to see which item you were about to mark done. Measured at 390px: the strip went
+   to left -141 while the row window stayed at 27, so nothing inside it was visible at all.
+
+   So the content is pinned and the actions are revealed behind it, clipped by the row's
+   `overflow: hidden`. The transform stays on the body only so the mid-gesture rubber-banding tracks
+   the finger, and the committed state leaves it at 0. */
 .task-row .swipe-actions {
   position: absolute;
   top: 0;
@@ -2521,7 +2551,9 @@ h1.page-title {
   bottom: 0;
   display: flex;
   align-items: stretch;
-  z-index: 0;
+  /* Above the strip, not below it. The strip is opaque and full width, so at z-index 0 it painted
+     over the buttons the moment the row was open. */
+  z-index: 2;
   /* Exactly as wide as the distance the strip travels, so the two cannot disagree. The reveal
      distance is a JS constant (SWIPE_MAX_WIDTH) because it has to be known mid-gesture, before
      anything is measured; the buttons are sized to that, and an earlier version left the block at
@@ -2536,6 +2568,26 @@ h1.page-title {
 
 .task-row.swiped-open .swipe-actions {
   pointer-events: auto;
+}
+
+/* The buttons ease in rather than appearing, because the row's content no longer moves. The reveal
+   used to be the content sliding away, which carried the motion by itself; with the content pinned
+   there is nothing else animating, so without this the buttons pop into existence under the finger
+   and the gesture stops reading as a gesture. The body has the matching 180ms transform, so the two
+   still move together. */
+.task-row .swipe-actions {
+  opacity: 0;
+  transform: translateX(16px);
+  transition: opacity 180ms var(--ease, ease), transform 180ms var(--ease, ease);
+}
+
+.task-row.swiping .swipe-actions {
+  transition: none;
+}
+
+.task-row.swiped-open .swipe-actions {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .swipe-action {
@@ -4521,7 +4573,12 @@ body.overlay-open .content {
      rule below is restated for the strip's children. Without this, a swipeable row on a phone had
      no grid at all: the checkbox, title and badges collapsed into one flex line and the revealed
      buttons were painted straight over them. */
-  .swipe-row-body {
+  /* Matched with the same two-class specificity as the base rule, `.task-row .swipe-row-body`
+     (line ~2505). A bare `.swipe-row-body` here loses on specificity no matter how late it appears,
+     because the base rule is a descendant pair and this is a single class — so the phone grid below
+     never reached the strip, and a swipeable row kept the desktop flex layout at 390px. That is why
+     the badges sat underneath the revealed buttons instead of wrapping below the title. */
+  .task-row .swipe-row-body {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: start;

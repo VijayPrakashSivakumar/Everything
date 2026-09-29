@@ -853,6 +853,43 @@ second row used to overwrite the pointer to the first — which stayed slid asid
 to close it, its buttons sitting on top of the row below. There is no timer and no cleanup list
 because there is only ever one value to keep correct.
 
+### The swipe revealed the buttons by hiding the item
+
+A fifth bug, and the one that made the feature pointless. Swiping slid the row's **own content**
+168px to the left, out of the row's clipping window — so the checkbox, title and badges all left
+the visible area and the opened row showed nothing but buttons. The item you were about to mark done
+disappeared at exactly the moment you needed to see which item you were about to mark done.
+
+The geometry was already right: the buttons were pinned to the edge and 168px wide against a 168px
+travel. What was wrong was *what moved*. The transform belonged to the content strip, so the reveal
+was the row leaving rather than the buttons arriving.
+
+Two things have to be true together, and neither is obvious:
+
+- **The body only moves during the gesture.** It tracks the finger so the rubber-banding feels
+  attached, then lands back at 0 on release — committed or not. Parking it at `-SWIPE_MAX_WIDTH`
+  when committed is precisely what pushed the content out of view.
+- **The actions sit above the strip** (`z-index: 2` against the strip's `1`), clipped by the row's
+  `overflow: hidden`. At `0` they were underneath an opaque, full-width strip and never appeared.
+
+Since nothing else animates once the content is pinned, the buttons now carry the motion themselves
+— a 180ms opacity fade from a 16px offset — so the reveal still reads as a gesture rather than a
+pop.
+
+Two CSS traps in the same area, both of them silent:
+
+- **`.task-row.swipeable` kept its 1px border while setting `padding: 0`.** The strip carries an
+  identical border, so the two stacked and the strip ended up 2px narrower than the window it slides
+  behind: a 2px seam of bare row down the right edge, doubled on hover and selection. The row's
+  border goes with its padding.
+- **The phone grid never reached the strip.** `.task-row .swipe-row-body` (two classes) beats a bare
+  `.swipe-row-body` (one class) *regardless of order*, so the restated mobile rules silently did
+  nothing and a swiped row kept the desktop flex layout at 390px, with the badges collapsing under
+  the revealed buttons. Restating a rule is not enough — it has to match the specificity of the rule
+  it replaces. When a responsive override "does not apply", suspect specificity before order.
+
+The lesson generalises past this feature: **a reveal must not cost you the thing being revealed.**
+
 What all four have in common: each was invisible to a test that asked the feature-level question.
 The checks that catch them are geometry checks — *is the panel opaque*, *is the strip as wide as the
 row*, *is the button block as wide as the slide* — and those only exist because the failure was
