@@ -3015,6 +3015,101 @@ h1.page-title {
   color: var(--text);
 }
 
+/* ---------- Conversation engine ----------
+   The question card gains a free-text reply row, because answering "Tomorrow" in your own words is
+   the entire point — a date picker is the form this replaces. The transcript above it makes the
+   exchange read as a conversation rather than as a field being filled in. */
+.capture-dialogue-log {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 9px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.capture-dialogue-turn {
+  margin: 0;
+  font-size: var(--fs-body-s);
+  line-height: var(--lh-base);
+  color: var(--muted);
+}
+
+.capture-dialogue-turn span {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.capture-dialogue-turn.you {
+  color: var(--text);
+}
+
+.capture-question-reply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.capture-question-input {
+  flex: 1 1 130px;
+  min-width: 0;
+  padding: 8px 10px;
+  /* 16px is the floor that stops iOS zooming the page the moment the field takes focus. */
+  font-size: 16px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg-input, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm, 8px);
+}
+
+.capture-question-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.capture-question-send {
+  padding: 8px 13px;
+  font-size: var(--fs-body-s);
+}
+
+.capture-question-mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* A 40px target, matching the other icon controls in the sheet, so it is reachable one-handed. */
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm, 8px);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.capture-question-mic svg {
+  width: 17px;
+  height: 17px;
+}
+
+.capture-question-mic:hover {
+  color: var(--text);
+}
+
+.capture-question-mic.listening {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.capture-question-status {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: var(--fs-body-s);
+  color: var(--muted);
+}
+
 /* One sentence, several things. Reads as a short list of what else will be saved, not as a
    second form to complete: each row is editable, and every row can be removed. */
 .capture-plan {

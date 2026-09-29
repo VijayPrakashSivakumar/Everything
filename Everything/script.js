@@ -5801,6 +5801,14 @@ function toggleVoiceDictation() {
     return;
   }
 
+  // Mid-conversation the recogniser belongs to the answer, not to the sentence. Writing the
+  // transcript into the main box would overwrite the very sentence being asked about and restart
+  // the reading, so the same words are taken as an answer instead.
+  if (captureDialogue.answering) {
+    toggleCaptureAnswerDictation();
+    return;
+  }
+
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
     setVoiceDictationStatus("Dictation is not supported in this browser. You can still record audio or type the note.");
@@ -6076,6 +6084,20 @@ let captureExtraction = null;
 let captureSuggestionFields = {};
 let captureDuplicate = null;
 let captureQuestions = [];
+/* The conversation itself: what has been asked, what the person has answered, and which value is
+   being asked for right now. See the "Conversation engine" block above applyCaptureSlot(). */
+let captureDialogue = {
+  turns: [],
+  filled: {},
+  required: [],
+  answering: false,
+  shownSlot: "",
+};
+/* What the last reading produced, and the sentence it came from. A finished conversation hands
+   these to the auto-create it just unblocked, so the same items are created without re-reading
+   the sentence and without the model being asked a second time. */
+let captureLastPlan = [];
+let captureLastText = "";
 let capturePlan = []; // Extra items from the same sentence. See setCapturePlan.
 let captureAgenda = []; // Agenda lines, saved as the main item's checklist steps.
 let captureMainAsk = ""; // A question the model raised about the main item.
@@ -6217,6 +6239,9 @@ function scheduleAutoSave(items, text) {
   // same way a typed sentence is, and a clear one should save itself exactly as a typed one does.
   if (captureChannel === "file" || captureChannel === "link") return;
   if (!captureSmartEnabled) return;
+  // A value is still being asked for, so the sentence is not finished with. Deciding now would
+  // create it without the date the person is one word away from giving.
+  if (captureDialogue.answering || captureDialogue.required.length) return;
   if (!capturePlanIsClear(items)) return;
   captureAutoSaveTimer = setTimeout(() => {
     captureAutoSaveTimer = null;
@@ -6267,6 +6292,9 @@ function openCapture() {
   document.getElementById("captureText").placeholder = "What's on your mind?";
   document.getElementById("captureHint").textContent = "";
   captureQuestions = [];
+  // A half-finished conversation must never leak into the next capture, or the sheet would open
+  // still asking about the last sentence.
+  resetCaptureDialogue();
   const questionCard = document.getElementById("captureQuestion");
   if (questionCard) {
     questionCard.hidden = true;
@@ -6518,6 +6546,12 @@ function onCaptureInput() {
   captureAgenda = [];
   captureMainAsk = "";
   capturePlanTouched = false;
+  // Every answer given so far was an answer about the *previous* sentence. Carrying a date across
+  // from words that no longer say it is how a capture ends up on the wrong day, silently.
+  if (captureDialogue.answering || captureDialogue.turns.length) {
+    stopCaptureAnswerDictation();
+    resetCaptureDialogue();
+  }
   cancelAutoSave();
   renderCapturePlan();
   updateCaptureDuplicate(captureType, text);
@@ -6564,6 +6598,14 @@ async function extractWithAI(text) {
   if (ai) applyExtraction(mergeExtractions(local, ai), text);
   // After the form settles, so the plan and the fields cannot disagree on the main item.
   if (ai) setCapturePlan(ai.items, ai.ambiguous);
+  /* What this reading produced, kept so a conversation that finishes later can create exactly these
+     items without the model being asked a second time. The local rules only ever describe the one
+     entry the form is editing, so they stand in as a single-entry plan — the same shape the server
+     returns, so finishCaptureDialogue() does not have to know which path ran. */
+  captureLastPlan = (ai?.items?.length ? ai.items : [local])
+    .map((entry) => (entry && typeof entry === "object" ? { ...entry, title: entry.title || text } : null))
+    .filter((entry) => entry && String(entry.title || "").trim());
+  captureLastText = text;
   // "Done." A sentence that read cleanly creates itself; an unclear one still asks.
   if (ai?.items?.length) scheduleAutoSave(ai.items, text);
 }
@@ -6797,6 +6839,31 @@ function renderCaptureQuestions(text, data) {
   const card = document.getElementById("captureQuestion");
   if (!card) return;
   const questions = buildCaptureQuestions(text, data || {});
+
+  // A value the app will not invent is asked for in the person's own words. This has to happen
+  // before the "no questions at all" bail-out below, because a sentence that only needs a date
+  // produces no fixed questions — and that is precisely the case the conversation exists for.
+  //
+  // The conversation also outranks a fixed yes/no. "Remind me to call Arun" is not in doubt about
+  // being a task, it is in doubt about when, and a question about the kind would sit in front of
+  // the one that matters.
+  if (!captureDialogue.answering && !captureDialogue.turns.length) {
+    const slots = requiredCaptureSlots(text, data || {});
+    if (slots.length) captureDialogue.required = slots;
+  }
+  if (captureDialogue.required.length) {
+    // Only rebuild when the value being asked for has actually changed. A second reading of the
+    // same sentence — which arrives whenever the model is consulted a moment later — must not wipe
+    // an answer that is already being typed, nor steal the caret out from under it.
+    if (captureDialogue.shownSlot && captureDialogue.shownSlot === captureDialogue.required[0]) {
+      captureQuestions = questions;
+      return;
+    }
+    captureQuestions = questions;
+    advanceCaptureDialogue();
+    return;
+  }
+
   if (!questions.length) {
     card.hidden = true;
     card.innerHTML = "";
@@ -6813,7 +6880,11 @@ function buildCaptureQuestions(text, data) {
 
   // A promise the person made. Worth one tap: a reminder for it is the difference between
   // keeping a commitment and quietly missing it.
-  if (COMMITMENT_RE.test(body)) {
+  //
+  // Not asked when the sentence already says "remind me to". There the intent is not in doubt, and
+  // a yes/no about it would sit in front of the conversation that actually settles the reminder —
+  // three taps to reach a question the person had already answered by speaking.
+  if (COMMITMENT_RE.test(body) && !REMINDER_INTENT_RE.test(body)) {
     questions.push({
       id: "commitment",
       question: "This sounds like something you promised. Shall I keep it as a task?",
@@ -6848,7 +6919,9 @@ function buildCaptureQuestions(text, data) {
   return questions;
 }
 
-/* Shows one question at a time so the sheet never turns into a form to fill in. */
+/* Shows one question at a time so the sheet never turns into a form to fill in. A slot question
+   also gets a free-text field and a mic, because the whole point is to answer in your own words
+   rather than open a date picker. */
 function renderCaptureQuestion() {
   const card = document.getElementById("captureQuestion");
   if (!card) return;
@@ -6859,21 +6932,60 @@ function renderCaptureQuestion() {
     return;
   }
   card.hidden = false;
-  card.innerHTML = `
+  // A slot question has no fixed answers, so it renders the field and nothing else.
+  const actions = question.slot
+    ? ""
+    : `<div class="capture-question-actions">
+        ${question.options
+          .map(
+            (option) =>
+              `<button type="button" class="btn" onclick="answerCaptureQuestion(${jsStr(
+                option.value,
+              )})">${escapeHtml(option.label)}</button>`,
+          )
+          .join("")}
+        <button type="button" class="capture-question-skip" onclick="dismissCaptureQuestion()">Dismiss</button>
+      </div>`;
+  const reply = question.slot
+    ? `<div class="capture-question-reply">
+        <input
+          id="captureQuestionInput"
+          class="capture-question-input"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          placeholder="${escapeHtml(question.placeholder || "")}"
+          aria-label="${escapeHtml(question.question)}"
+          onkeydown="if (event.key === 'Enter') { event.preventDefault(); submitCaptureAnswer(); }"
+        />
+        <button type="button" class="btn capture-question-send" onclick="submitCaptureAnswer()">Send</button>
+        <button
+          type="button"
+          id="captureQuestionMic"
+          class="capture-question-mic"
+          onclick="toggleCaptureAnswerDictation()"
+          aria-label="Say the answer"
+          title="Say the answer"
+        >${icon("mic")}</button>
+        <button type="button" class="capture-question-skip" onclick="dismissCaptureQuestion()">Dismiss</button>
+        <p class="capture-question-status" id="captureQuestionStatus" role="status"></p>
+      </div>`
+    : "";
+  card.innerHTML = `${captureDialogueLogHtml()}
     <p class="capture-question-text">${question.question}</p>
-    <div class="capture-question-actions">
-      ${question.options
-        .map(
-          (option) =>
-            `<button type="button" class="btn" onclick="answerCaptureQuestion(${jsStr(option.value)})">${escapeHtml(option.label)}</button>`,
-        )
-        .join("")}
-      <button type="button" class="capture-question-skip" onclick="dismissCaptureQuestion()">Dismiss</button>
-    </div>`;
+    ${reply}
+    ${actions}`;
+  refreshIcons();
 }
 
 function dismissCaptureQuestion() {
   captureQuestions = [];
+  // Dismissing ends the conversation rather than leaving it half-asked. This is the promise the
+  // question card has always made — it can be ignored and never blocks a save — so a conversation
+  // must not become the one thing in the sheet that cannot be waved away.
+  stopCaptureAnswerDictation();
+  captureDialogue.answering = false;
+  captureDialogue.required = [];
   const card = document.getElementById("captureQuestion");
   if (card) {
     card.hidden = true;
@@ -6916,6 +7028,339 @@ function answerCaptureQuestion(value) {
   renderCaptureQuestion();
   const currentText = captureInputValue();
   if (currentText) updateCaptureDuplicate(captureType, currentText);
+}
+
+/* ---------- Conversation engine ----------
+
+   The question card above can only offer fixed buttons, so "Remind me to call Arun" could ask
+   whether to keep it but never *when*. The only answer available was the native date picker,
+   which is the form this is meant to remove.
+
+   This turns that card into a short conversation. A slot is a value the app refuses to invent —
+   the same rule VAGUE_TIME_RE already encodes, applied to the whole capture rather than to one
+   phrase. The person supplies it in their own words, typed or spoken, and it is resolved against
+   the parsers that already exist in this file.
+
+   Every limit of the question card is kept deliberately:
+     - one question at a time
+     - always dismissible, so nothing here can block a save
+     - an answer that resolves to nothing is never guessed at; it is asked again
+     - the original buttons stay, as the route for someone who would rather tap than type     */
+const CAPTURE_SLOT_QUESTIONS = {
+  dueDate: { question: "Sure. What date?", placeholder: "Tomorrow" },
+  dueTime: { question: "What time?", placeholder: "10 AM" },
+};
+
+/* A clock time on its own — "10 AM", "at 4:30". parseLocalDate() deliberately answers null
+   without a date word, so the two halves of "tomorrow at 4" have to be read separately rather
+   than by one parser that would have to guess which half was meant. */
+function parseLocalTimeOnly(text) {
+  const t = " " + String(text || "").toLowerCase() + " ";
+  const match =
+    t.match(/\b(?:at\s+)?(\d{1,2})(?::|.)(\d{2})\s*(am|pm)\b/) ||
+    t.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/) ||
+    t.match(/\bat\s+(\d{1,2})[:.](\d{2})\b/) ||
+    t.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2] ? parseInt(match[2], 10) : 0;
+  if (hours > 23 || minutes > 59) return null;
+  if (match[3] === "pm" && hours < 12) hours += 12;
+  if (match[3] === "am" && hours === 12) hours = 0;
+  // A lone "10" with neither a colon nor am/pm is far more often a quantity than an hour, so it
+  // is left alone rather than read as midnight.
+  if (!match[3] && !t.includes(":") && !t.includes(".")) return null;
+  return { hours, minutes };
+}
+
+/* Did this value carry a real clock time, or is it a bare day parked at midnight?
+   toDateTimeLocalValue writes 00:00 for "tomorrow", and a day with no time must still be asked
+   for one. */
+function hasExplicitClock(value) {
+  const parsed = new Date(String(value || ""));
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getHours() !== 0 || parsed.getMinutes() !== 0;
+}
+
+/* Words that mean the sentence is asking to be reminded of something, rather than simply
+   recording it. This is the whole trigger for the conversation: only a sentence like this is
+   genuinely incomplete without a day, because a task with no date is still a perfectly good task. */
+const REMINDER_INTENT_RE =
+  /\b(remind me|remind us|reminder|remember to|don'?t forget|do not forget|ping me|notify me|alarm)\b/i;
+
+/* Which values this sentence still needs before it can become an item. Deliberately narrow.
+   Anything outside it has always been allowed to save as it stands, and a capture that used to
+   save itself silently must not start stopping to ask — otherwise this feature would quietly
+   break every clear sentence the app already handled on its own. */
+function requiredCaptureSlots(text, data) {
+  const body = String(text || "");
+  if (!REMINDER_INTENT_RE.test(body)) return [];
+  const due = data?.dueDate || document.getElementById("captureDueDate")?.value || "";
+  // A reminder with no day is not a reminder yet.
+  if (!due) return ["dueDate"];
+  // A reminder with a day but no hour is still a reminder, so the clock time is asked for as a
+  // convenience, not as a blocker.
+  if (!hasExplicitClock(due)) return ["dueTime"];
+  return [];
+}
+
+/* Resolves one typed or spoken answer and writes it into the field the item is saved from.
+   Returns what it understood, or null when the words do not actually carry the value — the
+   caller asks again rather than inventing one. */
+function applyCaptureSlot(slot, answer) {
+  const words = String(answer || "").trim();
+  if (!words) return null;
+  const field = document.getElementById("captureDueDate");
+  if (!field) return null;
+
+  const time = parseLocalTimeOnly(words);
+  let when = null;
+
+  if (slot === "dueTime") {
+    if (!time) return null;
+    // A clock time is set onto whichever day is already chosen. With no day yet there is nothing
+    // to attach it to, so the date question has to come first.
+    const base = field.value ? new Date(field.value) : null;
+    if (!base || Number.isNaN(base.getTime())) return null;
+    base.setHours(time.hours, time.minutes, 0, 0);
+    // "10 AM" said for a morning that has already gone means the next one.
+    if (base.getTime() <= Date.now()) base.setDate(base.getDate() + 1);
+    when = base;
+  } else {
+    const parsed = parseLocalDate(words);
+    if (!parsed) return null;
+    // "4 pm" carries an hour as well as a day, and answering both at once must not ask twice.
+    if (time) parsed.setHours(time.hours, time.minutes, 0, 0);
+    when = parsed;
+  }
+
+  const iso = when.toISOString();
+  field.value = toDateTimeLocalValue(iso);
+  // A value the person gave is a decision, not a suggestion, so "Clear suggestions" must not
+  // take it away. This is the same rule answerCaptureQuestion() already follows.
+  captureSuggestionFields.captureDueDate = null;
+  captureDialogue.filled[slot] = iso;
+  // Whether the answer actually carried a clock time. parseLocalDate() invents a 9am when none was
+  // said, so the ISO alone cannot answer this — the words can.
+  return { iso, said: formatDueDisplay(iso), hadTime: Boolean(time) };
+}
+
+/* An answered slot resolves the doubt the model raised about it. Left in place it would keep
+   capturePlanIsClear() false forever, so the conversation would finish and nothing would ever be
+   created. Only cleared once every required slot is actually answered. */
+function clearResolvedAmbiguity() {
+  const unanswered = captureDialogue.required.filter((slot) => !captureDialogue.filled[slot]);
+  if (unanswered.length) return;
+  if (!Object.keys(captureDialogue.filled).length) return;
+  captureMainAsk = "";
+  capturePlan = capturePlan.map((entry) =>
+    entry.ambiguous ? { ...entry, ambiguous: "" } : entry,
+  );
+  renderCapturePlan();
+}
+
+/* Asks for the next value the sentence is still missing, or finishes. One at a time, because a
+   list of blanks is exactly the form this is replacing. */
+function advanceCaptureDialogue() {
+  captureDialogue.required = captureDialogue.required.filter(
+    (slot) => !captureDialogue.filled[slot],
+  );
+  const next = captureDialogue.required[0] || null;
+  captureDialogue.answering = Boolean(next);
+  // Which slot the card is currently showing, so a re-read of the same sentence can tell a real
+  // change apart from a repeated render.
+  captureDialogue.shownSlot = next || "";
+  // The pending slot question is rebuilt rather than appended, so re-reading the same sentence
+  // cannot stack a second identical question on top of the first. It goes in front of any fixed
+  // question, because the value being asked for is the one that is actually missing.
+  captureQuestions = captureQuestions.filter(
+    (question) => !String(question.id || "").startsWith("slot-"),
+  );
+  if (next) {
+    captureQuestions.unshift({
+      id: `slot-${next}`,
+      slot: next,
+      ...CAPTURE_SLOT_QUESTIONS[next],
+    });
+  }
+  renderCaptureQuestion();
+  focusCaptureAnswer();
+  if (!next) finishCaptureDialogue();
+}
+
+/* Everything the conversation needed is known, so the sentence can finally save itself. The same
+   guards scheduleAutoSave() applies run first: a row the person corrected afterwards, or a
+   duplicate, still stops it. */
+function finishCaptureDialogue() {
+  cancelAutoSave();
+  if (!captureLastPlan.length || !captureLastText) return;
+  scheduleAutoSave(captureLastPlan, captureLastText);
+}
+
+function resetCaptureDialogue() {
+  captureDialogue = { turns: [], filled: {}, required: [], answering: false, shownSlot: "" };
+  captureLastPlan = [];
+  captureLastText = "";
+}
+
+function focusCaptureAnswer() {
+  const input = document.getElementById("captureQuestionInput");
+  // Only take the caret on a pointer-capable device. On a phone this runs as a side effect of
+  // the sheet opening and would push the keyboard up over the sheet being read.
+  if (input && window.matchMedia?.("(pointer: fine)")?.matches) input.focus();
+}
+
+/* Takes one answer in the person's own words. Typed or dictated it goes through the same parser,
+   so "tomorrow" and "tomorrow" spoken are the same answer. */
+function submitCaptureAnswer() {
+  const input = document.getElementById("captureQuestionInput");
+  const question = captureQuestions[0];
+  if (!input || !question?.slot) return;
+  const answer = input.value.trim();
+  if (!answer) return;
+
+  const resolved = applyCaptureSlot(question.slot, answer);
+  if (!resolved) {
+    // Say plainly what went wrong and stay on the same question. Guessing here is the single
+    // failure this whole path exists to prevent.
+    captureDialogue.turns.push({
+      role: "app",
+      text: `I could not read "${answer}" as ${
+        question.slot === "dueTime" ? "a time" : "a day"
+      }. Try something like "${question.placeholder}".`,
+    });
+    input.value = "";
+    renderCaptureQuestion();
+    focusCaptureAnswer();
+    return;
+  }
+
+  captureDialogue.turns.push({ role: "you", text: answer });
+  captureDialogue.turns.push({
+    role: "app",
+    text: question.slot === "dueTime" ? `Noted, ${resolved.said}.` : `That is ${resolved.said}.`,
+  });
+  // "Tomorrow" settles the day but says nothing about the hour, and for a reminder that is
+  // genuinely still open — so one more question is asked. Answering "tomorrow at 4" in one go
+  // settles both and must not ask twice.
+  if (
+    question.slot === "dueDate" &&
+    !resolved.hadTime &&
+    REMINDER_INTENT_RE.test(captureLastText)
+  ) {
+    captureDialogue.required.push("dueTime");
+  }
+  input.value = "";
+  clearResolvedAmbiguity();
+  advanceCaptureDialogue();
+}
+
+/* The short transcript, so the exchange reads as a conversation and not as a field being filled.
+   Everything in it is escaped: the answers are free text typed by the person. */
+function captureDialogueLogHtml() {
+  if (!captureDialogue.turns.length) return "";
+  return `<div class="capture-dialogue-log" aria-live="polite">${captureDialogue.turns
+    .map(
+      (turn) =>
+        `<p class="capture-dialogue-turn ${turn.role === "you" ? "you" : "app"}"><span>${
+          turn.role === "you" ? "You" : "Everything"
+        }</span> ${escapeHtml(turn.text)}</p>`,
+    )
+    .join("")}</div>`;
+}
+
+/* ---------- Dictating the answer ----------
+
+   A separate recogniser from the capture dictation on purpose. That one writes into the main
+   textarea, which mid-conversation would overwrite the very sentence being asked about and
+   restart the reading. Here the transcript only ever reaches the answer field. */
+let captureAnswerRecognition = null;
+let captureAnswerActive = false;
+let captureAnswerFinal = "";
+
+function setCaptureAnswerMicState(active, message) {
+  const button = document.getElementById("captureQuestionMic") ||
+    document.querySelector(".capture-question-mic");
+  if (button) button.classList.toggle("listening", Boolean(active));
+  const status = document.getElementById("captureQuestionStatus");
+  if (status) status.textContent = message || "";
+}
+
+function stopCaptureAnswerDictation() {
+  const recognition = captureAnswerRecognition;
+  captureAnswerRecognition = null;
+  captureAnswerActive = false;
+  if (recognition) {
+    try {
+      recognition.onend = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.stop();
+    } catch (error) {
+      // Already stopped by the browser.
+    }
+  }
+  setCaptureAnswerMicState(false, "");
+}
+
+function toggleCaptureAnswerDictation() {
+  if (captureAnswerActive) {
+    stopCaptureAnswerDictation();
+    return;
+  }
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    setCaptureAnswerMicState(false, "Dictation is not supported here — type the answer instead.");
+    return;
+  }
+  const input = document.getElementById("captureQuestionInput");
+  if (!input) return;
+
+  captureAnswerFinal = "";
+  captureAnswerActive = true;
+  const recognition = new Recognition();
+  captureAnswerRecognition = recognition;
+  // The same language the person chose for their captures, so a Tamil or Hindi answer is not
+  // transcribed as English.
+  recognition.lang = captureVoiceLang || defaultVoiceLang();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.onresult = (event) => {
+    let interim = "";
+    let final = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const transcript = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) final += `${transcript} `;
+      else interim += transcript;
+    }
+    captureAnswerFinal = `${captureAnswerFinal}${final}`.trim();
+    input.value = `${captureAnswerFinal} ${interim}`.trim();
+  };
+  recognition.onerror = (event) => {
+    setCaptureAnswerMicState(
+      false,
+      event.error === "not-allowed"
+        ? "Microphone permission was denied."
+        : "No speech was detected — type the answer instead.",
+    );
+  };
+  recognition.onend = () => {
+    if (captureAnswerRecognition !== recognition) return;
+    captureAnswerRecognition = null;
+    captureAnswerActive = false;
+    setCaptureAnswerMicState(false, "");
+    // An answer spoken aloud is an answer: it goes straight through the same parser as a typed
+    // one, so nobody has to reach for the keyboard after saying it.
+    if (captureAnswerFinal) submitCaptureAnswer();
+  };
+  setCaptureAnswerMicState(true, "Listening…");
+  try {
+    recognition.start();
+  } catch (error) {
+    captureAnswerActive = false;
+    captureAnswerRecognition = null;
+    setCaptureAnswerMicState(false, "Dictation could not start — type the answer instead.");
+  }
 }
 
 const DAY_NAMES = [
@@ -7229,6 +7674,10 @@ function mergeExtractions(local, ai) {
 }
 function closeCapture() {
   stopVoiceDictation();
+  // The answer recogniser is separate, so it is not covered by the line above and has to be told
+  // explicitly, or it would keep the microphone open behind a closed sheet.
+  stopCaptureAnswerDictation();
+  resetCaptureDialogue();
   if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
   document.getElementById("captureModal").classList.remove("open");
   lockPageScroll(false);

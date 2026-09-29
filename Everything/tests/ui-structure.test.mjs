@@ -2322,6 +2322,74 @@ check('an uncertain value is asked about, never invented', () => {
   assert.match(css, /\.capture-question\[hidden\]\s*\{[\s\S]*?display:\s*none/, 'a hidden question card must not take up space');
 });
 
+check('a missing value can be answered in words, not only in a form', () => {
+  // The question card alone could only offer fixed buttons, so "Remind me to call Arun" could ask
+  // whether to keep it but never when. These pin the free-text path that replaced the date picker.
+  assert.match(js, /function requiredCaptureSlots\(text, data\)/, 'the slot builder is missing');
+  assert.match(js, /function applyCaptureSlot\(slot, answer\)/, 'an answer is never resolved into a value');
+  assert.match(js, /function submitCaptureAnswer\(\)/, 'there is no way to answer a question in words');
+  assert.match(js, /id="captureQuestionInput"/, 'the reply field is not rendered');
+  // Answering must reach the same field the item is saved from, not a private copy.
+  assert.match(js, /function applyCaptureSlot[\s\S]{0,900}?getElementById\("captureDueDate"\)/,
+    'a spoken or typed answer must land in the field the item is saved from');
+  // And it must go through the parsers that already exist, rather than a second date reader.
+  assert.match(js, /function applyCaptureSlot[\s\S]{0,900}?parseLocalDate\(/, 'the answer bypasses the date parser');
+  assert.match(js, /function applyCaptureSlot[\s\S]{0,1400}?parseLocalTimeOnly\(/, 'the answer bypasses the time parser');
+});
+
+check('the conversation never invents a value, and never blocks a save', () => {
+  // An unreadable answer is refused and the same question stays. Guessing is the one failure this
+  // whole path exists to prevent, so it is asserted rather than assumed.
+  assert.match(js, /const resolved = applyCaptureSlot\([\s\S]{0,200}?if \(!resolved\)/,
+    'an answer that resolves to nothing must be refused, not accepted');
+  assert.match(js, /could not read/, 'a refusal has to say what went wrong');
+  // Dismiss has to end the conversation, or this becomes the one thing in the sheet that cannot be
+  // waved away — the opposite of what the question card has always promised.
+  assert.match(js, /function dismissCaptureQuestion\(\)[\s\S]{0,400}?captureDialogue\.required = \[\];/,
+    'dismissing must end the conversation');
+  // While a value is still being asked for, nothing may decide on the person's behalf.
+  assert.match(js, /function scheduleAutoSave[\s\S]{0,700}?captureDialogue\.required\.length\) return;/,
+    'the auto-create must not fire while a question is outstanding');
+  // A changed sentence invalidates the answers given about the previous one.
+  assert.match(js, /function onCaptureInput[\s\S]{0,900}?resetCaptureDialogue\(\)/,
+    'editing the sentence must reset the conversation');
+});
+
+check('a sentence that is not a reminder is never stopped to ask', () => {
+  // The regression this could most easily cause. Making every capture stop and question would break
+  // the silent auto-create that plain tasks and meetings already rely on.
+  assert.match(js, /const REMINDER_INTENT_RE\s*=/, 'the reminder-intent rule is missing');
+  const slots = js.match(/function requiredCaptureSlots\(text, data\)[\s\S]{0,600}?\n}/);
+  assert.ok(slots, 'requiredCaptureSlots is missing');
+  assert.match(slots[0], /if \(!REMINDER_INTENT_RE\.test\(body\)\) return \[\];/,
+    'only a sentence asking to be reminded may open a conversation');
+});
+
+check('an answer is never dictated over the sentence it is about', () => {
+  // The capture recogniser writes into the main textarea. Mid-conversation that would destroy the
+  // very sentence under discussion, so it is routed to the answer instead.
+  assert.match(js, /function toggleVoiceDictation\(\)[\s\S]{0,600}?if \(captureDialogue\.answering\)[\s\S]{0,200}?toggleCaptureAnswerDictation\(\)/,
+    'dictation must be routed to the answer while a question is outstanding');
+  assert.match(js, /function toggleCaptureAnswerDictation\(\)/, 'there is no way to say the answer');
+  // And the answer recogniser has to be stopped when the sheet closes, or it holds the microphone
+  // open behind a closed dialog.
+  assert.match(js, /function closeCapture\(\)[\s\S]{0,300}?stopCaptureAnswerDictation\(\)/,
+    'closing the sheet must stop the answer recogniser');
+});
+
+check('a re-read of the same sentence cannot wipe an answer being typed', () => {
+  // The model is consulted a moment after the local rules, and a second render of the card is what
+  // silently threw away whatever the person had already typed into it.
+  assert.match(js, /captureDialogue\.shownSlot/, 'the shown slot is not tracked, so a re-read cannot tell a change from a repeat');
+  assert.match(js, /shownSlot === captureDialogue\.required\[0\][\s\S]{0,200}?return;/,
+    'a repeated render of the same question must be skipped');
+  // Every turn is escaped: the answers are free text typed by the person.
+  assert.match(js, /function captureDialogueLogHtml\(\)[\s\S]{0,600}?escapeHtml\(turn\.text\)/,
+    'the transcript must escape what the person typed');
+  assert.match(css, /\.capture-question-input\s*\{[^}]*font-size:\s*16px/,
+    'the reply field must not trigger the iOS focus-zoom');
+});
+
 check('capture is never blocked by the AI being unavailable', () => {
   // A failed model call must resolve to null rather than rejecting into the capture flow.
   const fn = js.slice(js.indexOf('async function requestModelExtraction'));

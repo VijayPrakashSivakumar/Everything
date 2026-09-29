@@ -267,6 +267,45 @@ not undo it.
 
 Type, voice and image all end up in the same pipeline, so all three get the same reading.
 
+### The conversation — answering in words
+
+Asking *whether* to keep a sentence is one thing. Asking *when* is another, and the question card
+could only ever offer fixed buttons, so a reminder had nowhere to go but a native date picker — the
+very form this is meant to remove.
+
+> **🎙️** "Remind me to call Arun."
+> **Everything:** Sure. What date?
+> **You:** Tomorrow.
+> **Everything:** What time?
+> **You:** 10 AM.
+> **Everything:** *saves it, with an Undo bar*
+
+A **slot** is a value the app refuses to invent — the same rule *"Maybe Friday" is not a date*
+already encodes, applied to the whole capture rather than to one phrase. The person supplies it in
+their own words, typed or spoken, and it is resolved against the parsers that already exist in
+`script.js` (`parseLocalDate`, and a small `parseLocalTimeOnly` for a bare clock time).
+
+| | |
+| --- | --- |
+| `remind me to …` with no day | opens a conversation — a reminder with no day is not a reminder yet |
+| `remind me to … tomorrow` | asks for the time as well, because the hour is still open |
+| `tomorrow at 4 pm` as an answer | settles both at once, and does **not** ask twice |
+| `banana` as an answer | refused, with an explanation — the same question stays |
+| anything that is not a reminder | **never** asked anything, so silent auto-create is untouched |
+| Dismiss | ends the conversation; nothing here can block a save |
+| editing the sentence | resets the conversation, so an answer never lands on a different sentence |
+
+The trigger is deliberately narrow. A task with no date is a perfectly good task, and a capture
+that used to save itself must not start stopping to ask — the engine is for the one case that is
+genuinely incomplete, not a general-purpose form.
+
+**The answer is never dictated over the sentence it is about.** The capture recogniser writes into
+the main textarea; mid-conversation that would destroy the very sentence under discussion, so it is
+routed to a separate recogniser for the answer field, and stopped when the sheet closes.
+
+`conversation-engine-probe.mjs` drives the whole exchange in a real browser and pins both the
+feature and the two regressions it could most easily cause.
+
 ### What a capture is called
 
 A capture that saves itself used to make the **whole sentence** the title of every meeting and

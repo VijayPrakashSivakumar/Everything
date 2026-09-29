@@ -15,6 +15,7 @@
     "serve": "node serve.mjs",
     "audit": "node audit.mjs",
     "test:responsive": "node Everything/tests/responsive-audit.mjs",
+    "test:conversation": "node Everything/tests/conversation-engine-probe.mjs",
     "check:drift": "node Everything/scripts/schema-drift.mjs",
     "probe:projects": "node projects-probe.mjs"
   },
