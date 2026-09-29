@@ -3016,32 +3016,28 @@ h1.page-title {
 }
 
 /* ---------- Conversation engine ----------
-   The question card gains a free-text reply row, because answering "Tomorrow" in your own words is
-   the entire point — a date picker is the form this replaces. The transcript above it makes the
-   exchange read as a conversation rather than as a field being filled in. */
-.capture-dialogue-log {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 0 0 9px;
-  padding: 0 0 8px;
-  border-bottom: 1px solid var(--line);
+   A slot question is not a panel of its own. The answer goes back into the capture box as words —
+   "remind me" becomes "remind me tomorrow" — and the next question drops in right underneath, so
+   one growing sentence is all there is to look at. A second card beside the box made the sheet
+   feel like two forms fighting for the same small space. */
+
+/* It therefore loses the card treatment entirely: no border, no fill, no side padding. It reads as
+   the next line of what you are already writing. */
+.capture-question.slot {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
-.capture-dialogue-turn {
-  margin: 0;
+.capture-question.slot .capture-question-text {
+  margin: 0 0 7px;
   font-size: var(--fs-body-s);
-  line-height: var(--lh-base);
   color: var(--muted);
 }
 
-.capture-dialogue-turn span {
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.capture-dialogue-turn.you {
-  color: var(--text);
+.capture-question.slot .capture-question-skip {
+  padding: 6px 2px;
 }
 
 .capture-question-reply {

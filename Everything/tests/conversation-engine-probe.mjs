@@ -51,6 +51,9 @@ try {
     // A date picker would mean the form came back, which is the thing being removed.
     hasPicker: !!document.querySelector('.capture-question input[type=date], .capture-question input[type=datetime-local]'),
     due: (document.getElementById('captureDueDate') || {}).value || '',
+    // The sentence itself is the record: an answer is added to it as words.
+    sentence: (document.getElementById('captureText') || {}).value || '',
+    hint: (document.getElementById('captureHint') || {}).textContent || '',
     turns: [].slice.call(document.querySelectorAll('.capture-dialogue-turn')).map(function (el) { return el.textContent.trim(); }),
     answering: typeof captureDialogue !== 'undefined' && captureDialogue.answering,
     required: typeof captureDialogue !== 'undefined' ? [].slice.call(captureDialogue.required) : []
@@ -178,12 +181,54 @@ try {
     assert.equal(s.answering, false, 'the conversation should be finished');
   });
 
+  await check('the answer becomes words in the sentence, not a side panel', async () => {
+    // "remind me" has to become "remind me tomorrow" in the box itself — that is what makes this one
+    // growing thought rather than a form with a transcript next to it.
+    const s = await chip('Remind me to call Arun', 'Tomorrow');
+    assert.match(s.sentence, /tomorrow/i, `the answer never reached the box: "${s.sentence}"`);
+    assert.match(s.sentence, /remind me/i, 'the original words were lost');
+    assert.equal(s.turns.length, 0, 'a transcript panel is still being rendered');
+  });
+
+  await check('the next question arrives under the sentence', async () => {
+    const s = await chip('Remind me to call Arun', 'Tomorrow');
+    assert.match(s.question, /what time/i, `expected a time question, got "${s.question}"`);
+    // And it is the same block as the sentence, not a separate card.
+    const flush = await page.evaluate(() => {
+      const card = document.getElementById('captureQuestion');
+      return { slot: card.classList.contains('slot'), border: getComputedStyle(card).borderTopWidth };
+    });
+    assert.equal(flush.slot, true, 'the follow-up is still drawn as a card of its own');
+    assert.equal(flush.border, '0px', 'the follow-up still has a card border');
+  });
+
+  await check('tapping the same chip twice does not repeat the words', async () => {
+    const s = await page.evaluate(async () => {
+      openCapture();
+      await new Promise((r) => setTimeout(r, 120));
+      document.getElementById('captureText').value = 'Remind me to call Arun';
+      onCaptureInput();
+      await new Promise((r) => setTimeout(r, 1100));
+      const tap = () => {
+        const b = [].slice.call(document.querySelectorAll('.capture-chip'))
+          .find((x) => x.textContent.trim() === 'Tomorrow');
+        if (b) b.click();
+      };
+      tap();
+      return { once: document.getElementById('captureText').value };
+    });
+    const once = s.once.trim();
+    const doubled = (once.match(/tomorrow/gi) || []).length;
+    assert.equal(doubled, 1, `"Tomorrow" was written more than once: "${once}"`);
+  });
+
   await check('an answer that is not a date is refused, and the same question stays', async () => {
     const s = await answer('Remind me to call Arun', 'banana');
     assert.equal(s.answering, true, 'an unreadable answer must not end the conversation');
     assert.match(s.question, /what date/i, 'the same question must still be on screen');
-    assert.ok(s.turns.some((t) => /could not read/i.test(t)),
-      `nothing explained the refusal: ${JSON.stringify(s.turns)}`);
+    assert.match(s.hint, /could not read/i, `nothing explained the refusal: "${s.hint}"`);
+    // And the bad words must not have been added to the sentence.
+    assert.doesNotMatch(s.sentence, /banana/i, 'an unreadable answer was written into the sentence');
   });
 
   await check('"tomorrow at 4 pm" settles both at once and does not ask twice', async () => {
@@ -193,17 +238,16 @@ try {
     assert.equal(s.answering, false, 'the conversation should have finished');
   });
 
-  await check('the exchange reads back as a conversation', async () => {
+  await check('the exchange is one sentence, read back from the box', async () => {
     const s = await answer('Remind me to call Arun', 'Tomorrow');
-    assert.ok(s.turns.length >= 2, `expected a transcript, got ${JSON.stringify(s.turns)}`);
-    assert.ok(s.turns.some((t) => /Tomorrow/.test(t)), 'the answer given is missing from the transcript');
-    assert.ok(s.turns.some((t) => /Everything/.test(t)), 'the assistant never spoke');
+    assert.match(s.sentence, /remind me to call arun tomorrow/i,
+      `the sentence is not the whole exchange: "${s.sentence}"`);
   });
 
-  await check('a tapped chip is recorded in the transcript just as a typed one is', async () => {
+  await check('a tapped chip is added to the sentence just as a typed one is', async () => {
     // One code path for both, so the two can never drift apart in what gets saved.
     const s = await chip('Remind me to call Arun', 'Tomorrow');
-    assert.ok(s.turns.some((t) => /Tomorrow/.test(t)), `the chip answer is missing: ${JSON.stringify(s.turns)}`);
+    assert.match(s.sentence, /tomorrow/i, `the chip answer is missing: "${s.sentence}"`);
   });
 
   await check('a sentence that is not a reminder is never asked anything', async () => {

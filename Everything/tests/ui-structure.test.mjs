@@ -2423,11 +2423,31 @@ check('a re-read of the same sentence cannot wipe an answer being typed', () => 
   assert.match(js, /captureDialogue\.shownSlot/, 'the shown slot is not tracked, so a re-read cannot tell a change from a repeat');
   assert.match(js, /shownSlot === captureDialogue\.required\[0\][\s\S]{0,200}?return;/,
     'a repeated render of the same question must be skipped');
-  // Every turn is escaped: the answers are free text typed by the person.
-  assert.match(js, /function captureDialogueLogHtml\(\)[\s\S]{0,600}?escapeHtml\(turn\.text\)/,
-    'the transcript must escape what the person typed');
   assert.match(css, /\.capture-question-input\s*\{[^}]*font-size:\s*16px/,
     'the reply field must not trigger the iOS focus-zoom');
+});
+
+check('an answer goes into the sentence itself, not into a side panel', () => {
+  // The answer is words in the capture box — "remind me" becomes "remind me tomorrow" — and the next
+  // question lands under it. A separate transcript made the sheet look like two forms competing.
+  assert.match(js, /function appendCapturePhrase\(phrase\)/, 'the answer never reaches the sentence');
+  assert.match(js, /function answerSlot[\s\S]{0,2500}?appendCapturePhrase\(answer\)/,
+    'a resolved answer must be added to the sentence');
+  // It must not re-run the reader, which would throw the conversation away and re-open the question.
+  const append = js.match(/function appendCapturePhrase\(phrase\)[\s\S]{0,900}?\n}/);
+  assert.ok(append, 'appendCapturePhrase is missing');
+  assert.doesNotMatch(append[0], /onCaptureInput\(\)/,
+    'appending must not restart the reading and lose the conversation');
+  // The auto-create compares against the text the reading was made from, so it must be re-registered.
+  assert.match(append[0], /captureLastText = next;/, 'the extended sentence must be re-registered');
+  // Tapping the same chip twice must not read "tomorrow tomorrow".
+  assert.match(append[0], /next === current\) return;/, 'a repeated tap must not duplicate the words');
+  // And there is no transcript any more — the box is the record.
+  assert.doesNotMatch(js, /captureDialogueLogHtml/, 'the separate transcript still exists');
+  assert.doesNotMatch(css, /\.capture-dialogue-log/, 'the transcript is still styled');
+  // A refusal is one line of feedback, not a panel.
+  assert.match(js, /function answerSlot[\s\S]{0,1400}?setCaptureHint\(/,
+    'a refusal must be said in the hint line');
 });
 
 check('capture is never blocked by the AI being unavailable', () => {

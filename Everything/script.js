@@ -6965,6 +6965,9 @@ function renderCaptureQuestion() {
     return;
   }
   card.hidden = false;
+  // A slot question is a continuation of the sentence, not a separate dialog: it sits flush under
+  // the box with no card of its own, because the answer is going back into that box as words.
+  card.classList.toggle("slot", Boolean(question.slot));
   // A slot question has no fixed answers, so it renders the field and nothing else.
   const actions = question.slot
     ? ""
@@ -7028,8 +7031,7 @@ function renderCaptureQuestion() {
         <p class="capture-question-status" id="captureQuestionStatus" role="status"></p>
       </div>`
     : "";
-  card.innerHTML = `${captureDialogueLogHtml()}
-    <p class="capture-question-text">${question.question}</p>
+  card.innerHTML = `<p class="capture-question-text">${question.question}</p>
     ${reply}
     ${actions}`;
   // Once a question is on screen it has taken over from the progress line, and "Reading more
@@ -7329,24 +7331,23 @@ function toggleCaptureAnswerField() {
 function answerSlot(question, answer) {
   const resolved = applyCaptureSlot(question.slot, answer);
   if (!resolved) {
-    captureDialogue.turns.push({
-      role: "app",
-      text: `I could not read "${answer}" as ${
-        question.slot === "dueTime" ? "a time" : "a day"
-      }. Try something like "${question.placeholder}".`,
-    });
-    // The field has to be open for this to have come from one at all, but a chip can land here too.
+    // A chip can land here too, so the field opens to show what went wrong.
     captureAnswerOpen = true;
     renderCaptureQuestion();
+    // Said in the hint line rather than in a card of its own: the sheet has no room for a second
+    // panel, and this is one line of feedback, not a conversation. Set *after* the render, because
+    // rendering a question clears the hint as the superseded progress line.
+    setCaptureHint(`${icon("circle-help")} I could not read “${escapeHtml(answer)}” as ${
+      question.slot === "dueTime" ? "a time" : "a day"
+    }. Try “${escapeHtml(question.placeholder)}”.`);
     focusCaptureAnswer();
     return;
   }
 
-  captureDialogue.turns.push({ role: "you", text: answer });
-  captureDialogue.turns.push({
-    role: "app",
-    text: question.slot === "dueTime" ? `Noted, ${resolved.said}.` : `That is ${resolved.said}.`,
-  });
+  // The answer becomes words in the sentence itself, so the box reads as one growing thought
+  // rather than a form being filled in beside a transcript. "remind me" becomes "remind me
+  // tomorrow" — the same sentence, said out loud, and it can be corrected by hand like any other.
+  appendCapturePhrase(answer);
   // "Tomorrow" settles the day but says nothing about the hour, and for a reminder that is
   // genuinely still open — so one more question is asked. Answering "tomorrow at 4" in one go
   // settles both and must not ask twice.
@@ -7361,6 +7362,31 @@ function answerSlot(question, answer) {
   advanceCaptureDialogue();
 }
 
+/* Adds an answer to the end of the sentence, as words, so the capture box reads as one thought
+   being spoken aloud. The caret is placed after the added words and the box is scrolled to it, so
+   the person can see and correct exactly what was added — the answer is not hidden anywhere.
+
+   onCaptureInput() is deliberately not called: that would read the new sentence as a fresh one,
+   throw away the conversation so far, and re-open the question just answered. The date field has
+   already been written, so the reading itself does not need to run again. */
+function appendCapturePhrase(phrase) {
+  const field = document.getElementById("captureText");
+  if (!field) return;
+  const current = field.value.trim();
+  // Not repeated: tapping "Tomorrow" twice must not produce "tomorrow tomorrow".
+  const next = current && /\btomorrow\b/i.test(current) && /^tomorrow$/i.test(phrase)
+    ? current
+    : `${current}${current ? " " : ""}${phrase}`;
+  if (next === current) return;
+  field.value = next;
+  field.focus();
+  const caret = field.value.length;
+  field.setSelectionRange(caret, caret);
+  // The auto-create compares the text against the one the reading was made from, so a sentence
+  // that has just been extended must be re-registered or the timer would never fire.
+  captureLastText = next;
+}
+
 function submitCaptureAnswer() {
   const input = document.getElementById("captureQuestionInput");
   const question = captureQuestions[0];
@@ -7369,20 +7395,6 @@ function submitCaptureAnswer() {
   if (!answer) return;
   input.value = "";
   answerSlot(question, answer);
-}
-
-/* The short transcript, so the exchange reads as a conversation and not as a field being filled.
-   Everything in it is escaped: the answers are free text typed by the person. */
-function captureDialogueLogHtml() {
-  if (!captureDialogue.turns.length) return "";
-  return `<div class="capture-dialogue-log" aria-live="polite">${captureDialogue.turns
-    .map(
-      (turn) =>
-        `<p class="capture-dialogue-turn ${turn.role === "you" ? "you" : "app"}"><span>${
-          turn.role === "you" ? "You" : "Everything"
-        }</span> ${escapeHtml(turn.text)}</p>`,
-    )
-    .join("")}</div>`;
 }
 
 /* ---------- Dictating the answer ----------
