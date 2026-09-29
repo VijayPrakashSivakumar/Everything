@@ -2377,6 +2377,28 @@ check('an answer is never dictated over the sentence it is about', () => {
     'closing the sheet must stop the answer recogniser');
 });
 
+check('a picture with a date is offered a choice instead of a silent guess', () => {
+  // A date says when, not what. Reading "05 October 4:00 PM" out of a photograph and filing it as
+  // whatever the rules happened to call it is the outcome nobody asked for.
+  assert.match(js, /id: "image-choice"/, 'a picture carrying a date must raise a choice');
+  // Only when the text really came out of a picture, and there is a date to be uncertain about.
+  assert.match(js, /captureChannel === "image" && imageOcrText && data\.dueDate/,
+    'the choice must require a real read, on the image channel, with a date');
+  // The three answers have to reach real kinds, not just dismiss themselves.
+  const answer = js.match(/if \(question\.id === "image-choice"\)[\s\S]{0,900}?\n  }/);
+  assert.ok(answer, 'the image choice is never answered');
+  assert.match(answer[0], /"event" \? "event" : value === "note" \? "memory" : "task"/,
+    'the three options must map onto three different kinds');
+  // A manual choice outranks the card, exactly as everywhere else in capture.
+  assert.match(answer[0], /!captureAutoDetected/, 'the card must not override a manual choice');
+  // And the silent auto-create has to wait, or the card is decorative.
+  assert.match(js, /function scheduleAutoSave[\s\S]{0,900}?if \(captureImageChoicePending\) return;/,
+    'the auto-create must not fire while the choice is unanswered');
+  // Editing the read text drops the choice: the date it was about is no longer the date on screen.
+  assert.match(js, /function onCaptureInput[\s\S]{0,1200}?captureImageChoicePending = false;/,
+    'editing the read text must drop the choice');
+});
+
 check('a re-read of the same sentence cannot wipe an answer being typed', () => {
   // The model is consulted a moment after the local rules, and a second render of the card is what
   // silently threw away whatever the person had already typed into it.

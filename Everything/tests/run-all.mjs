@@ -42,6 +42,9 @@ const SUITES = [
   // A reminder could be asked *whether* to keep it but never *when*: the only route to a date was
   // a date picker. This drives the whole exchange, and pins the two ways it could break the rest.
   { name: 'conversation', file: 'conversation-engine-probe.mjs', timeoutMs: 120000 },
+  // A date on a picture says when, not what. Filing a photographed appointment card as a task on a
+  // silent guess is the outcome nobody asked for, so the one decision is offered instead.
+  { name: 'imagechoice', file: 'image-choice-probe.mjs', timeoutMs: 120000 },
   // The next-step card, and above all that it stops asking once it has been turned down.
   { name: 'nextaction', file: 'next-action-probe.mjs', timeoutMs: 120000 },
   // Mostly about silence: a daily notification that nags is worse than none.

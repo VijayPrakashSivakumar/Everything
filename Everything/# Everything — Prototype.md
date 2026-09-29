@@ -306,6 +306,29 @@ routed to a separate recogniser for the answer field, and stopped when the sheet
 `conversation-engine-probe.mjs` drives the whole exchange in a real browser and pins both the
 feature and the two regressions it could most easily cause.
 
+### A picture with a date on it is asked, not guessed
+
+> 📷 **APOLLO CLINIC — 05 October 2026, 4:00 PM**
+> **Everything:** I found a date on 5 Oct 2026, 4:00 PM: Apollo Clinic. What would you like me to do?
+> **[ Create event ]  [ Set reminder ]  [ Save as note ]**
+
+A date says **when**, not **what**. A photographed appointment card, ticket or invitation used to
+be read and then left to the silent auto-create, which filed it as whatever the rules happened to
+call it. A reminder with no day is not a reminder yet; a photograph with a date is not yet an
+event. This is the one decision a picture cannot settle by reading it, so it is asked.
+
+| | |
+| --- | --- |
+| picture with a readable date | offers the three choices, and **creates nothing yet** |
+| picture with no date | never asked anything — there is nothing to be uncertain about |
+| Create event / Set reminder / Save as note | `event` / `task` / `memory` |
+| you already picked a kind yourself | the card never overrides it |
+| Dismiss | nothing is created on its own; Save still works |
+| you edit the read text | the choice is dropped, because the date it was about is no longer on screen |
+
+`image-choice-probe.mjs` covers it in 10 checks, without loading Tesseract — the probe feeds it the
+text a real read would have left behind, so it tests the decision rather than the OCR.
+
 ### What a capture is called
 
 A capture that saves itself used to make the **whole sentence** the title of every meeting and

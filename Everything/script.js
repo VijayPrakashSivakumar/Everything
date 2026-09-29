@@ -6098,6 +6098,10 @@ let captureDialogue = {
    the sentence and without the model being asked a second time. */
 let captureLastPlan = [];
 let captureLastText = "";
+/* A picture carried a date and the person has not yet said what it is. The auto-create waits on
+   this: silently filing a photographed appointment card as a task is the one outcome nobody asked
+   for, and it is not cheap to notice afterwards. */
+let captureImageChoicePending = false;
 let capturePlan = []; // Extra items from the same sentence. See setCapturePlan.
 let captureAgenda = []; // Agenda lines, saved as the main item's checklist steps.
 let captureMainAsk = ""; // A question the model raised about the main item.
@@ -6242,6 +6246,8 @@ function scheduleAutoSave(items, text) {
   // A value is still being asked for, so the sentence is not finished with. Deciding now would
   // create it without the date the person is one word away from giving.
   if (captureDialogue.answering || captureDialogue.required.length) return;
+  // Same reasoning for a picture that carried a date: the kind is still undecided.
+  if (captureImageChoicePending) return;
   if (!capturePlanIsClear(items)) return;
   captureAutoSaveTimer = setTimeout(() => {
     captureAutoSaveTimer = null;
@@ -6552,6 +6558,9 @@ function onCaptureInput() {
     stopCaptureAnswerDictation();
     resetCaptureDialogue();
   }
+  // Same for a picture whose text has since been edited: the date that was read is no longer the
+  // date on screen, so the kind is no longer known either.
+  captureImageChoicePending = false;
   cancelAutoSave();
   renderCapturePlan();
   updateCaptureDuplicate(captureType, text);
@@ -6878,6 +6887,27 @@ function buildCaptureQuestions(text, data) {
   const body = String(text || "");
   const questions = [];
 
+  // A picture that carries a date. Photographed appointment cards, tickets and invitations all
+  // land here, and a date on its own does not say what the thing *is* — an event, something to be
+  // reminded of, or just a record worth keeping. That is the one decision a picture cannot settle
+  // by reading it, so it is offered rather than guessed.
+  if (captureChannel === "image" && imageOcrText && data.dueDate) {
+    // Set here rather than where the card renders, because this is the moment the app knows it is
+    // in doubt, and the auto-create gate has to see it from that moment on.
+    captureImageChoicePending = true;
+    questions.push({
+      id: "image-choice",
+      question: `I found a date on ${escapeHtml(formatDueDisplay(data.dueDate))}: ${escapeHtml(
+        String(data.title || body).trim().slice(0, 80) || "an appointment",
+      )}. What would you like me to do?`,
+      options: [
+        { label: "Create event", value: "event" },
+        { label: "Set reminder", value: "reminder" },
+        { label: "Save as note", value: "note" },
+      ],
+    });
+  }
+
   // A promise the person made. Worth one tap: a reminder for it is the difference between
   // keeping a commitment and quietly missing it.
   //
@@ -6998,6 +7028,26 @@ function dismissCaptureQuestion() {
 function answerCaptureQuestion(value) {
   const question = captureQuestions[0];
   if (!question) return;
+
+  // A picture that carried a date, and nothing is being asked about it any more. The auto-create
+  // has to wait for this answer: a photographed appointment card is exactly the case where a
+  // silent wrong guess is worst, because the person never asked for one.
+  if (question.id === "image-choice") {
+    captureImageChoicePending = false;
+    // Never override a kind the person chose themselves.
+    if (!captureAutoDetected && !["file", "link"].includes(captureChannel)) {
+      const wanted = value === "event" ? "event" : value === "note" ? "memory" : "task";
+      if (wanted !== captureType) {
+        captureSuggestionFields.kind = { appliedKind: wanted, previous: captureType };
+        pickType(wanted, false);
+      }
+    }
+    // A reminder is a task with a time on it, and the date the picture carried is the reminder.
+    if (value === "reminder") {
+      const field = document.getElementById("captureDueDate");
+      if (field?.value) captureSuggestionFields.captureDueDate = null;
+    }
+  }
 
   if (question.id === "commitment") {
     if (value === "task") {
@@ -7201,6 +7251,7 @@ function resetCaptureDialogue() {
   captureDialogue = { turns: [], filled: {}, required: [], answering: false, shownSlot: "" };
   captureLastPlan = [];
   captureLastText = "";
+  captureImageChoicePending = false;
 }
 
 function focusCaptureAnswer() {
