@@ -786,21 +786,168 @@ function showNormalAuth() {
   document.getElementById("authFormNormal").style.display = "block";
 }
 
+/* The reset panel is the worst place to fail silently: someone locked out of their account presses
+   this, and "nothing happened" tells them nothing except that the app is broken. So the request is
+   guarded, timed, and always ends in a line the person can read.
+
+   Three things it used to get wrong:
+     - no busy state, so a second tap sent a second email and could trip the provider's rate limit
+     - no timeout, so a request that never resolved left the button looking dead
+     - nothing about spam, which is where the mail actually goes most of the time            */
+let forgotInFlight = false;
+
+/* A title, without a model.
+
+   Clean titles normally come from the reading, so with no model configured the whole sentence was
+   being stored: "remind me to call ravi Tomorrow 10 AM" as a task's title. The date and time are
+   now stripped anyway, and the reminder wrapper with them, so the local path produces something a
+   person would have written themselves.
+
+   Only ever applied when the text is a reminder, and only to the wrapper that is actually there —
+   a sentence that is already a clean title is left completely alone, because guessing here would
+   make titles worse rather than better. */
+const TITLE_REMINDER_WRAPPERS = [
+  /^remind\s+me\s+to\s+/i,
+  /^please\s+remind\s+me\s+(?:to|about)\s+/i,
+  /^don'?t\s+forget\s+(?:to\s+)?/i,
+  /^do\s+not\s+forget\s+(?:to\s+)?/i,
+  /^i\s+need\s+to\s+remember\s+to\s+/i,
+  /^remember\s+to\s+/i,
+  /^i\s+need\s+to\s+/i,
+  /^i\s+have\s+to\s+/i,
+  /^i\s+must\s+/i,
+  /^need\s+to\s+/i,
+];
+
+/* "remind me to call ravi Tomorrow 10 AM" -> "Call Ravi". Returns the text unchanged unless it
+   really is a wrapped reminder, so this can never invent a title. */
+function cleanReminderTitle(text) {
+  let body = String(text || "").trim();
+  if (!body) return "";
+  for (const wrapper of TITLE_REMINDER_WRAPPERS) {
+    const stripped = body.replace(wrapper, "");
+    // A wrapper that leaves nothing behind means it matched the whole sentence, which is not a
+    // title and not worth saving as one.
+    if (stripped.trim() && stripped !== body) {
+      body = stripped.trim();
+      break;
+    }
+  }
+  // The date and time are already stored in their own field, so repeating them in the title only
+  // makes every row longer. The month names are matched before the days so "Monday" is not read
+  // as a bare day inside "next Monday".
+  body = body
+    .replace(/\b(today|tomorrow|tonight|this (?:morning|afternoon|evening|week|weekend|month)|next (?:week|weekend|month|year))\b/gi, "")
+    .replace(/\b(mon|tues|wednes|thurs|fri|satur|sun)day\b/gi, "")
+    .replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, "")
+    .replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/gi, "")
+    .replace(/\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/gi, "")
+    .replace(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\b/gi, "")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[\s,.-]+|[\s,.-]+$/g, "")
+    .trim();
+  if (!body) return "";
+  // A reminder is work, so the title reads as an instruction — the same way the model phrases one.
+  return body.charAt(0).toUpperCase() + body.slice(1);
+}
+
 async function authForgotPassword() {
-  const email = document.getElementById("forgotEmail").value.trim();
+  const field = document.getElementById("forgotEmail");
   const msg = document.getElementById("forgotMessage");
+  const button = document.getElementById("forgotSendBtn");
+  const email = field.value.trim();
+
+  if (forgotInFlight) return;
+  msg.textContent = "";
   if (!email) {
     msg.style.color = "var(--red-fg)";
     msg.textContent = "Enter your email first.";
+    field.focus();
     return;
   }
-  const { error } = await sb.auth.resetPasswordForEmail(email, {
-    redirectTo: window.location.origin,
+  // A malformed address is refused here rather than sent, so the person is told immediately
+  // instead of waiting a minute for a rejection that is easy to miss.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    msg.style.color = "var(--red-fg)";
+    msg.textContent = "That does not look like an email address.";
+    field.focus();
+    field.select();
+    return;
+  }
+
+  forgotInFlight = true;
+  const original = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Sending…";
+  }
+  msg.style.color = "var(--muted)";
+  msg.textContent = "Sending the reset link…";
+
+  try {
+    // A reset request has one job, so a bounded wait is enough. supabase-js has no built-in
+    // timeout, and a request that never settles is what "nothing happens" looks like.
+    const result = await withTimeoutMs(
+      sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin }),
+      15000,
+    );
+    if (result?.timedOut) {
+      msg.style.color = "var(--red-fg)";
+      msg.textContent =
+        "That took too long and no answer came back. Check your connection, or try again in a minute.";
+      return;
+    }
+    const error = result?.error;
+    if (error) {
+      msg.style.color = "var(--red-fg)";
+      // The two real causes are both project setup, so they are named rather than left as a code
+      // nobody can act on. "Requested path is not allowed" is the redirect allow-list.
+      const notAllowed = /not allowed|invalid redirect|redirect/i.test(error.message || "");
+      msg.textContent = notAllowed
+        ? "This app's address is not on the project's allowed redirect list, so the link cannot be built. Add it in Supabase → Authentication → URL Configuration."
+        : `Could not send the reset link: ${error.message}`;
+      return;
+    }
+    msg.style.color = "var(--accent)";
+    msg.textContent = "Check your email for a reset link — including your spam folder. It works once.";
+  } catch (err) {
+    msg.style.color = "var(--red-fg)";
+    msg.textContent = `Could not send the reset link: ${err?.message || "unknown error"}`;
+  } finally {
+    forgotInFlight = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = original || "Send reset link";
+    }
+  }
+}
+
+/* Resolves with { timedOut: true } rather than rejecting, so a caller can tell "the server said
+   no" from "the server never answered" — a person debugging a locked-out account needs that
+   difference, and a plain timeout would hide it. */
+function withTimeoutMs(promise, ms) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ timedOut: true });
+    }, ms);
+    Promise.resolve(promise)
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ error: err });
+      });
   });
-  msg.style.color = error ? "var(--red-fg)" : "var(--accent)";
-  msg.textContent = error
-    ? error.message
-    : "Check your email for a reset link.";
 }
 
 async function authUpdatePassword() {
@@ -7862,7 +8009,11 @@ async function saveCapture(forceSave = false, options = {}) {
   // for a note, a link or media, where the person's own words are the point. rawText keeps the
   // original sentence either way, so nothing is lost.
   const title = CAPTURE_MODEL_TITLE_KINDS.has(realKind)
-    ? String(captureExtraction?.title || "").trim().slice(0, 200) || candidateTitle
+    ? String(captureExtraction?.title || "").trim().slice(0, 200) ||
+      // No model, so the reading has no title of its own. The date and time live in their own field
+      // and the wrapper is just how the reminder was phrased, so neither belongs in the title.
+      (REMINDER_INTENT_RE.test(text) ? cleanReminderTitle(text) : "") ||
+      candidateTitle
     : candidateTitle;
   // Checked against the title that will actually be stored, so the fingerprint and the warning
   // can never disagree about what "the same capture" means.

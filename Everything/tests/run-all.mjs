@@ -45,6 +45,9 @@ const SUITES = [
   // A date on a picture says when, not what. Filing a photographed appointment card as a task on a
   // silent guess is the outcome nobody asked for, so the one decision is offered instead.
   { name: 'imagechoice', file: 'image-choice-probe.mjs', timeoutMs: 120000 },
+  // Someone locked out of their account pressing "forgot password" and seeing nothing has nowhere
+  // to go next, so every outcome of that screen has to say something.
+  { name: 'authrecovery', file: 'auth-recovery-probe.mjs', timeoutMs: 120000 },
   // The next-step card, and above all that it stops asking once it has been turned down.
   { name: 'nextaction', file: 'next-action-probe.mjs', timeoutMs: 120000 },
   // Mostly about silence: a daily notification that nags is worse than none.

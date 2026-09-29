@@ -2417,6 +2417,38 @@ check('a picture with a date is offered a choice instead of a silent guess', () 
     'editing the read text must drop the choice');
 });
 
+check('a captured reminder is titled by its work, not by its whole sentence', () => {
+  // With no model the reading has no title, so the whole sentence was stored as the title:
+  // "remind me to call ravi Tomorrow 10 AM". The date and the wrapper are both in the way.
+  assert.match(js, /function cleanReminderTitle\(text\)/, 'there is no local title to fall back on');
+  const save = js.match(/const title = CAPTURE_MODEL_TITLE_KINDS[\s\S]{0,700}?candidateTitle/);
+  assert.ok(save, 'the title is not built where the check can see it');
+  assert.match(save[0], /cleanReminderTitle\(text\)/,
+    'a model-less reminder still saves the whole sentence as its title');
+  // It must be a fallback, never an override: the model's own title is the better one.
+  assert.match(save[0], /captureExtraction\?\.title[\s\S]{0,160}?\|\|/,
+    'the local title outranks the model');
+  // Only a reminder is rewritten. A note keeps the person's own words exactly as written.
+  assert.match(save[0], /REMINDER_INTENT_RE\.test\(text\)\s*\?/,
+    'a title that is not a reminder must be left alone');
+});
+
+check('the reset path always ends in something the person can read', () => {
+  // A locked-out person pressing "forgot password" and seeing nothing has nowhere to go next, so
+  // every outcome has to say something, and none may claim success falsely.
+  assert.match(html, /id="forgotSendBtn"/, 'the send button is missing from the markup');
+  const forgot = js.match(/async function authForgotPassword\(\)[\s\S]*?\n\}/);
+  assert.ok(forgot, 'authForgotPassword is missing');
+  assert.match(forgot[0], /if \(forgotInFlight\) return;/, 'a second tap can send a second reset email');
+  assert.match(forgot[0], /withTimeoutMs\(/, 'a request that never answers leaves the button looking dead');
+  assert.match(forgot[0], /if \(result\?\.timedOut\)/, 'a timeout is not reported to the person');
+  // A failure must never be dressed up as a success.
+  assert.match(forgot[0], /if \(error\)[\s\S]{0,400}?var\(--red-fg\)/, 'a failure is not shown as a failure');
+  assert.match(forgot[0], /allowed redirect list|URL Configuration/,
+    'the one cause the owner can actually fix is not named');
+  assert.match(forgot[0], /spam folder/i, 'the mail lands in spam more often than not');
+});
+
 check('a re-read of the same sentence cannot wipe an answer being typed', () => {
   // The model is consulted a moment after the local rules, and a second render of the card is what
   // silently threw away whatever the person had already typed into it.
