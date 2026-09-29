@@ -1,5 +1,0 @@
-﻿Clear the reading hint once a question has taken over
-
-"Reading more carefully..." stayed on screen underneath the question card,
-which reads as though something is still in flight when nothing is. The card
-supersedes the hint, so it now clears it.
