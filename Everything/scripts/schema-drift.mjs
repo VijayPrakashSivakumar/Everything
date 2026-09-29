@@ -243,7 +243,10 @@ try {
   process.exit(1);
 }
 
-const { absentTables, absentColumns } = compare(claimed, liveSchema);
+/* readLiveSchema returns { live, missing } — a wrapper, not the map itself. Passing the
+   wrapper here made `live.has` undefined and crashed the check on its first table, which
+   is why the count line printed and then the run died: the parse had already succeeded. */
+const { absentTables, absentColumns } = compare(claimed, liveSchema.live);
 
 note(absentTables.length === 0, 'every table the migrations create exists',
   absentTables.length ? `missing: ${absentTables.join(', ')}` : '');
