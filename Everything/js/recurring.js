@@ -841,14 +841,19 @@ function openPersonModal(id, name) {
         )
         .join("")
     : '<p class="empty">No linked items yet.</p>';
-  document.getElementById("personModal").classList.add("open");
+  const modal = document.getElementById("personModal");
+  modal.classList.add("open");
   lockPageScroll(true);
+  // As with the item dialog, this one never took focus, so there was nothing for Tab to move from.
+  enterDialog(modal);
 }
 function closePersonModal() {
-  document.getElementById("personModal").classList.remove("open");
+  const modal = document.getElementById("personModal");
+  modal.classList.remove("open");
   currentPersonName = null;
   if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open"))
     lockPageScroll(false);
+  leaveDialog(modal);
 }
 /* Contact details are extra fields on the person record. The people table has only name/notes, so
    they travel inside its metadata column (already jsonb) — see buildStructuredRecordPayload. */

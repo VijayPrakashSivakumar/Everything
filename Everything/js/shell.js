@@ -30,6 +30,108 @@ function isTypingTarget(el) {
    instead would trap people on the site with no way out, which is worse than the problem. */
 const navState = { layers: [], reconciling: false };
 
+/* ---------- Dialog focus and the background ----------
+   What this fixes: pressing Tab inside an open sheet walked straight out of it into the page behind,
+   and closing the sheet dropped focus on <body>, which dumps a keyboard user at the top of the
+   document with nothing to say where they were. Four of the five overlays were also not marked as
+   dialogs at all, so a screen reader read the page as though no sheet were on top of it.
+
+   The earlier attempt at this kept its own stack of open layers, pushed on open and popped on close.
+   That is the shape that breaks: every close path has to remember to pop, and one that forgets leaves
+   the entire app marked inert — frozen, unclickable, with no way back. It did exactly that here.
+
+   So there is no list. Which dialogs are open is read from the DOM every time it is needed, and the
+   existing MutationObserver that already watches class changes for the back button calls
+   syncDialogBackground() whenever one opens or closes. A close path that forgets to do anything at
+   all therefore needs no recovery: the element is no longer `.open`, the next sync sees that, and
+   the app comes back. Nothing to forget means nothing can be forgotten.
+
+   Where focus came from is kept in a WeakMap keyed by the dialog. Keyed, not stacked: a WeakMap has
+   no ordering to get wrong, and an entry for an element that has left the DOM is collected on its
+   own instead of being left behind. */
+const OPEN_DIALOGS = ".modal-overlay.open, .ask-overlay.open";
+const FOCUSABLE = [
+  "a[href]", "button:not([disabled])", "input:not([disabled]):not([type=hidden])",
+  "select:not([disabled])", "textarea:not([disabled])", '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+const focusBeforeDialog = new WeakMap();
+
+function openDialogs() {
+  return Array.from(document.querySelectorAll(OPEN_DIALOGS));
+}
+
+/* Body children rather than a named container: the sheets are siblings of the app shell, so naming
+   one would hard-code the page structure and miss anything added later. */
+function syncDialogBackground() {
+  const open = openDialogs();
+  const top = open.length ? open[open.length - 1] : null;
+  for (const child of Array.from(document.body.children)) {
+    if (child.tagName === "SCRIPT") continue;
+    child.inert = Boolean(top) && !(child === top || child.contains(top));
+  }
+}
+
+function dialogFocusables(root) {
+  return Array.from(root.querySelectorAll(FOCUSABLE)).filter((el) => !el.disabled);
+}
+
+function enterDialog(el, initialFocusId) {
+  if (!el) return;
+  // Only recorded once, so a re-render of the same open sheet does not overwrite the element the
+  // person was actually standing on.
+  if (!focusBeforeDialog.has(el)) focusBeforeDialog.set(el, document.activeElement);
+  syncDialogBackground();
+  const target = initialFocusId
+    ? el.querySelector(`#${initialFocusId}`)
+    : dialogFocusables(el)[0];
+  if (!target) return;
+  // After paint, or the scroll lock and the caret fight each other. Re-checked at that point,
+  // because a sheet opened and closed inside one frame must not leave focus on a hidden element.
+  requestAnimationFrame(() => {
+    if (el.classList.contains("open")) target.focus();
+  });
+}
+
+function leaveDialog(el) {
+  // Read the DOM first, so this is also the recovery path for a close that never called it.
+  syncDialogBackground();
+  if (!el) return;
+  const was = focusBeforeDialog.get(el);
+  focusBeforeDialog.delete(el);
+  // Never hand focus to <body>. If nothing was focused before the dialog opened, the honest answer is
+  // the first real control on the page, not the top of the document — which is where a keyboard user
+  // ends up otherwise, with no idea what happened.
+  if (!was || was === document.body || !was.isConnected) {
+    const first = document.querySelector(FOCUSABLE);
+    if (first && !first.closest(".modal-overlay, .ask-overlay")) first.focus();
+    return;
+  }
+  was.focus();
+}
+
+/* Tab loops inside the topmost dialog. `inert` already keeps the keyboard out of the background; this
+   closes the remaining gap, where Tab off the last control walks out through the browser chrome and
+   back in again, losing the place and — on a long page — landing far from where the person was. */
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab") return;
+  const open = openDialogs();
+  if (!open.length) return;
+  const top = open[open.length - 1];
+  if (!top.contains(document.activeElement)) return;
+  const items = dialogFocusables(top);
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}, true);
+
 /* The view recorded is the one the entry represents, passed explicitly. Reading `activeView`
    here would store the view being *left*, so back would always land one step too far. */
 function navEntry(layer, view) {
@@ -102,6 +204,11 @@ function initBackNavigation() {
      is covered without touching any of them, and a layer opened from inside another layer
      correctly pushes a second entry instead of reusing the first. */
   const observer = new MutationObserver(() => {
+    /* Keep the background in step with what is actually on screen, before anything else. This is the
+       whole reason the dialog code has no list of open layers: a sheet that closes without telling
+       anyone still drops its `.open` class, this runs anyway, and the app unfreezes. A close path that
+       forgets to do anything is therefore not a failure mode — it is just a close. */
+    syncDialogBackground();
     if (navState.reconciling) return;
     const open = topmostOpenLayer();
     const stack = navState.layers;

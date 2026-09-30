@@ -531,8 +531,9 @@ function openCommandPalette() {
   input.value = "";
   renderCommands();
   lockPageScroll(true);
-  // Focus after the class lands, or the scroll lock and the caret fight each other.
-  setTimeout(() => input.focus(), 0);
+  // enterDialog moves the caret in after the class lands, or the scroll lock and the caret fight, and
+  // traps Tab inside the palette for as long as it is up.
+  enterDialog(overlay, "commandInput");
 }
 
 function closeCommandPalette() {
@@ -540,6 +541,7 @@ function closeCommandPalette() {
   if (!overlay) return;
   overlay.classList.remove("open");
   if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open")) lockPageScroll(false);
+  leaveDialog(overlay);
 }
 
 function saveDashboardLayout() {

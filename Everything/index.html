@@ -2057,11 +2057,20 @@
       </div>
     </div>
 
-    <!-- Capture modal -->
-    <div class="modal-overlay" id="captureModal">
+    <!-- Capture modal. role=dialog and aria-modal are what tell assistive tech this is a layer over the
+         page rather than part of it; aria-labelledby points at the heading so the sheet is announced
+         by name instead of as an unnamed dialog. Focus is moved in, trapped and restored by
+         enterDialog/leaveDialog in shell.js — see the note there. -->
+    <div
+      class="modal-overlay"
+      id="captureModal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="captureModalTitle"
+    >
       <div class="modal modal-capture">
         <div class="modal-head">
-          <h3>Capture something</h3>
+          <h3 id="captureModalTitle">Capture something</h3>
           <button class="close-x modal-close" onclick="closeCapture()" aria-label="Close capture dialog">
             <i data-lucide="x" aria-hidden="true"></i>
           </button>
@@ -2584,10 +2593,16 @@
     </div>
 
     <!-- Edit modal -->
-    <div class="modal-overlay" id="editModal">
+    <div
+      class="modal-overlay"
+      id="editModal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="editModalTitle"
+    >
       <div class="modal">
         <div class="modal-head">
-          <h3>Edit item</h3>
+          <h3 id="editModalTitle">Edit item</h3>
           <button class="close-x modal-close" onclick="closeEditModal()" aria-label="Close edit dialog">
             <i data-lucide="x" aria-hidden="true"></i>
           </button>
@@ -2864,7 +2879,13 @@
       </div>
     </div>
 
-    <div class="modal-overlay" id="personModal">
+    <div
+      class="modal-overlay"
+      id="personModal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="personModalName"
+    >
       <div class="modal">
         <div class="modal-head">
           <h3 id="personModalName">Person</h3>
@@ -2936,6 +2957,9 @@
     <div
       class="ask-overlay"
       id="askOverlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Search and ask"
       onclick="if (event.target === this) closeAsk();"
     >
       <div class="ask-box">

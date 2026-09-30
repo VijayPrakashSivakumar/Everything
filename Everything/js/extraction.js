@@ -132,8 +132,12 @@ function closeCapture() {
   stopCaptureAnswerDictation();
   resetCaptureDialogue();
   if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
-  document.getElementById("captureModal").classList.remove("open");
+  const modal = document.getElementById("captureModal");
+  modal.classList.remove("open");
   lockPageScroll(false);
+  // Hands focus back to whatever opened the sheet. Without this, closing Capture leaves focus on
+  // <body> and a keyboard user is dropped at the top of the document with nothing to say where.
+  leaveDialog(modal);
 }
 async function saveCapture(forceSave = false, options = {}) {
   if (captureSaveInFlight) return false;

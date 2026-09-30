@@ -708,7 +708,10 @@ function openCapture() {
   if (mediaRecorder && mediaRecorder.state === "recording")
     mediaRecorder.stop();
   setVoiceRecordLabel("Start recording", "mic");
-  setTimeout(() => document.getElementById("captureText").focus(), 50);
+  /* The caret lands in the box, as it always has — a sheet you open and cannot type into is a sheet
+     you have to tap before you can use. enterDialog keeps that behaviour and adds what was missing:
+     Tab stays inside the sheet, and closing it hands focus back to whatever opened it. */
+  enterDialog(document.getElementById("captureModal"), "captureText");
 }
 function populateProjectSelect() {
   const sel = document.getElementById("captureProject");

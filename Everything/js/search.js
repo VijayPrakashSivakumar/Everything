@@ -332,13 +332,18 @@ function openAsk(prefill = "") {
   document.getElementById("askInput").value = prefill;
   document.getElementById("askResults").innerHTML =
     '<p class="empty">Start typing to search your captures, tasks and notes.</p>';
-  setTimeout(() => document.getElementById("askInput").focus(), 50);
+  // enterDialog puts the caret in after the class lands, and keeps Tab inside the overlay until it
+  // closes — this one was missed when the other four were fixed, because the probe reads the markup
+  // for overlays rather than trusting a list of the ones remembered.
+  enterDialog(document.getElementById("askOverlay"), "askInput");
   if (prefill) runAsk(prefill);
 }
 function closeAsk() {
-  document.getElementById("askOverlay").classList.remove("open");
+  const overlay = document.getElementById("askOverlay");
+  overlay.classList.remove("open");
   if (!document.querySelector(".modal-overlay.open, #panel.open"))
     lockPageScroll(false);
+  leaveDialog(overlay);
 }
 let askDebounce = null;
 let lastAskQuery = "";

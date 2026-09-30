@@ -524,8 +524,12 @@ function openEditModal() {
       .join("");
   goalSel.value = item.goal || "";
   fillEditMoneyFields(item);
-  document.getElementById("editModal").classList.add("open");
+  const modal = document.getElementById("editModal");
+  modal.classList.add("open");
   lockPageScroll(true);
+  // This dialog used to take no focus at all, so opening it with a keyboard left the caret behind on
+  // the row that opened it — inside the page the dialog is sitting on top of.
+  enterDialog(modal, "editTitle");
 }
 
 /* The money half of the item dialog. Three kinds carry an amount — an expense, a bill, and a debt —
@@ -607,9 +611,11 @@ function applyEditMoneyFields(item) {
   if (isBill(item)) item.sub = minor === null ? "" : formatMoney(minor);
 }
 function closeEditModal() {
-  document.getElementById("editModal").classList.remove("open");
+  const modal = document.getElementById("editModal");
+  modal.classList.remove("open");
   if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open"))
     lockPageScroll(false);
+  leaveDialog(modal);
 }
 async function saveEdit() {
   const item = state.items.find((i) => i.id === currentItemId);
