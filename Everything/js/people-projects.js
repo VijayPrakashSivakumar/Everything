@@ -169,10 +169,10 @@ function renderProjects() {
   if (!el) return;
   if (!state.projects.length) {
     el.innerHTML = emptyStateHTML({
-      title: "No projects yet",
-      body: "A project is a piece of work with more than one step to it. Tag items with one and they collect here.",
+      title: "Anything worth grouping",
+      body: "A project is something with more than one step to it. Start one, put the tasks under it, and watch it move instead of hunting through a list.",
       action: "document.getElementById('newProjectInput')?.focus()",
-      actionLabel: "Name a project",
+      actionLabel: "Start a project",
     });
     return;
   }
@@ -267,8 +267,8 @@ function renderGoals() {
   if (!el) return;
   if (!state.goals.length) {
     el.innerHTML = emptyStateHTML({
-      title: "No goals yet",
-      body: "A goal is the thing underneath the tasks. Set one and progress is measured against it.",
+      title: "The thing underneath the tasks",
+      body: "Pick what's actually going right this year. Tasks you link to it show how far you've come, which is the part a to-do list can't tell you.",
       action: "document.getElementById('newGoalInput')?.focus()",
       actionLabel: "Set a goal",
     });
@@ -450,8 +450,10 @@ function renderReview() {
           ? `<p class="empty">and ${stuck.length - 12} more — open the view they belong to.</p>`
           : "")
       : emptyStateHTML({
-            title: "Nothing is stuck",
-            body: "No task has been sitting untouched past its date. That is a good week.",
+            /* "That is a good week" was doing the work in the old copy, so the body keeps the warmth
+               and stops apologising. Nothing about this screen is an absence. */
+            title: "Nothing's stuck",
+            body: "Nothing has been sitting past its date. Nothing to do here — keep it that way.",
             tone: "good",
           });
   }
@@ -588,7 +590,12 @@ function renderReports() {
         </div>`;
         })
         .join("")
-    : '<p class="empty">No data yet.</p>';
+    : emptyStateHTML({
+        title: "Patterns need a little company",
+        body: "Once you've captured a little, this is where you'll see what's slipping, what you keep finishing, and what keeps getting quietly put off.",
+        action: "openCapture()",
+        actionLabel: "Capture something",
+      });
 
   const chartEl = document.getElementById("reportChart");
   if (chartEl) chartEl.innerHTML = renderActivityChart(14);

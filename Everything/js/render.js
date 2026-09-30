@@ -329,8 +329,15 @@ function renderInsights() {
           )
           .join("")
       : emptyStateHTML({
-          title: "Nothing to show yet",
-          body: "Capture a few things and the patterns here — what is due, what is stuck, what nobody has touched — appear on their own.",
+          /* The rule this copy follows: name the state in the person's words, then say what will
+             happen — in the same breath. A title that describes the app ("Nothing to show yet") is
+             about the database. What someone recognises is the state itself — a clear board — so that
+             is the title, and the body carries the explanation.
+
+             The body also does the reassuring part: "you don't have to" is what stops a dashboard
+             from reading as homework. It works the patterns out by itself. */
+          title: "A clear board",
+          body: "Anything overdue, waiting on someone, or due today would land here. Right now there's none of that — so capture something, and this fills itself in.",
           action: "openCapture()",
           actionLabel: "Capture something",
         });

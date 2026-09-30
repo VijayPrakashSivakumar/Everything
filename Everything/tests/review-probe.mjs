@@ -74,15 +74,19 @@ try {
       open({ id: 'a', title: 'On track', dueDate: day(2) }),
       open({ id: 'b', title: 'Also fine', recurrence: 'weekly' }),
     ]);
-    assert.match(r.stuck, /Nothing is stuck/, `a clean week still produced findings: "${r.stuck}"`);
-    assert.match(r.undated, /has a day or a rhythm/, `undated list should be empty: "${r.undated}"`);
+    /* Matched loosely on purpose. These two used to pin the exact phrase, so improving the wording of a
+   clean week — which is a good thing — broke a test whose actual subject is whether a clean week is
+   *reassured*, not which three words were chosen. `nothing.?s stuck` survives "Nothing is stuck" and
+   "Nothing's stuck" alike, so the copy can keep improving without the safety check moving with it. */
+    assert.match(r.stuck, /nothing.?s stuck/i, `a clean week still produced findings: "${r.stuck}"`);
+    assert.match(r.undated, /day or a rhythm/i, `undated list should be empty: "${r.undated}"`);
   });
 
   await check('an empty account gets an honest page', async () => {
     const r = await show([]);
-    assert.match(r.stuck, /Nothing is stuck/, 'an empty account is not told it is fine');
-    assert.match(r.done, /Nothing finished/, 'an empty account is not told it finished nothing');
-    assert.match(r.projects, /moved recently/, 'an empty account is not reassured about projects');
+    assert.match(r.stuck, /nothing.?s stuck/i, 'an empty account is not told it is fine');
+    assert.match(r.done, /nothing finished/i, 'an empty account is not told it finished nothing');
+    assert.match(r.projects, /moved recently/i, 'an empty account is not reassured about projects');
   });
 
   await check('finished work is counted once, and only this week', async () => {

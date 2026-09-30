@@ -2656,6 +2656,46 @@ check('an empty view says why it is empty and offers one next step', () => {
   assert.match(css, /\.empty-state--good/, 'the good tone has no styles');
 });
 
+check('an empty view teaches the mechanism, not just the state', () => {
+  /* Copy is code here, because it is the app's opening line and it decays silently. The two failures
+     worth naming are both invisible to a test that only checks the words exist.
+
+     "No data yet." describes the app's state and stops. What makes somebody press the button is being
+     able to picture the result, so every full empty state has to name what the thing *does* — and the
+     rule is simply that the body is a sentence, not a label. The old copy passed a length check and
+     taught nothing.
+
+     The second failure is a good outcome drawn as a gap. "Nothing is stuck" is a win; making it look
+     like every failure state is the one thing a good week must not do. */
+  const states = [...js.matchAll(/emptyStateHTML\(\{([\s\S]{0,900}?)\n\s*\}\)/g)].map((m) => m[1]);
+  assert.ok(states.length >= 9, `expected the first-run states to be migrated, found ${states.length}`);
+  for (const s of states) {
+    const title = (s.match(/title: "([^"]*)"/) || [])[1] || '';
+    const body = (s.match(/body: "([^"]*)"/) || [])[1] || '';
+    assert.ok(title, 'an empty state has no title');
+    // A sentence, not a label. Four-word labels are what this replaced.
+    const words = body.replace(/—/g, ' ').split(/\s+/).filter(Boolean);
+    assert.ok(words.length >= 12,
+      `"${title}" explains nothing in ${words.length} words: "${body}"`);
+    // The state is named in the person's words, never the app's. "No data yet" is about the
+    // database; "Patterns need a little company" is about them.
+    assert.doesNotMatch(title, /^(No |Nothing (to show )?yet$|No data)/,
+      `"${title}" describes the app's state rather than the person's`);
+  }
+
+  // The strongest one has to survive: it teaches the mechanism and removes the two things people
+  // actually dread about tracking money, which are the form and the categories.
+  const money = js.match(/title: "Your money, without the paperwork"[\s\S]{0,400}/);
+  assert.ok(money, 'the Money empty state no longer teaches the receipt/voice route');
+  assert.match(money[0], /no forms, no categories/i,
+    'the Money copy stopped removing the two things people dread about tracking money');
+  assert.match(money[0], /actionLabel: "Record your first expense"/,
+    'the Money empty state no longer offers the action it just described');
+
+  assert.match(js, /tone: "good"/, 'a good outcome is no longer marked as one');
+  assert.match(css, /\.empty-state--good/, 'the good tone has no styles');
+});
+
 check('a wait a person watches shows the brand mark, not a line of text', () => {
   /* The two waits long enough to be stared at. Both were static text, which is indistinguishable
      from a hung app — and unlike a layout bug, removing the loader fails nothing and breaks nothing,

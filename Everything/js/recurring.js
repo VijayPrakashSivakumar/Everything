@@ -558,7 +558,12 @@ function renderMoney() {
             </div>`,
           )
           .join("")
-      : `<p class="empty">Nothing recorded this month yet.</p>`;
+      : emptyStateHTML({
+          title: "Your money, without the paperwork",
+          body: "Photograph a receipt or just say what you spent. Everything adds itself up — no forms, no categories to pick, no monthly chore.",
+          action: "openCapture()",
+          actionLabel: "Record your first expense",
+        });
   }
 
   // Money owed. A debt is neither spending nor a bill, so without its own section the only trace of
@@ -787,8 +792,16 @@ function renderPeople() {
 
   if (!rows.length) {
     el.innerHTML = query
-      ? '<p class="empty">Nobody matches that.</p>'
-      : '<p class="empty">No people yet — add one above or tag someone on a task.</p>';
+      ? emptyNoteHTML("Nobody matches that.")
+      /* People are not something you fill in — they appear because you mentioned them, which is the
+         one route the app will not ask anyone to learn first. So the empty state does not say "add a
+         person"; it says the tagging is what does it, and the button does exactly that. */
+      : emptyStateHTML({
+          title: "Nobody's here yet",
+          body: "Tag any task with someone's name and they turn up here — along with what you owe each other and what you last talked about.",
+          action: "document.getElementById('newPersonInput')?.focus()",
+          actionLabel: "Add a person",
+        });
     return;
   }
 

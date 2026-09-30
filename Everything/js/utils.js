@@ -260,7 +260,7 @@ function renderNotifPanel() {
     </div>`,
         )
         .join("")
-    : '<p class="empty" style="padding:14px;">Nothing needs attention right now.</p>';
+    : emptyNoteHTML("Nothing needs you right now.");
 }
 document.addEventListener("click", (e) => {
   const panel = document.getElementById("notifPanel");
