@@ -2963,6 +2963,26 @@
     <div class="capture-undo" id="captureUndo" role="status" aria-live="polite" hidden></div>
 
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="script.js"></script>
+
+    <!-- The app logic, split by concern and loaded in this order. The order IS the contract: each
+         file is a classic script sharing one global scope, so a file that reads a top-level const
+         while it loads has to come after the file that declares it. index.html is the only place that
+         order is written down, and the tests read it from here rather than keeping a second list
+         that can quietly disagree. -->
+    <script src="js/core.js"></script>
+    <script src="js/model.js"></script>
+    <script src="js/render.js"></script>
+    <script src="js/recurring.js"></script>
+    <script src="js/people-projects.js"></script>
+    <script src="js/calendar.js"></script>
+    <script src="js/item-panel.js"></script>
+    <script src="js/capture.js"></script>
+    <script src="js/extraction.js"></script>
+    <script src="js/lists.js"></script>
+    <script src="js/search.js"></script>
+    <script src="js/shell.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/reminders.js"></script>
+    <script src="js/init.js"></script>
   </body>
 </html>

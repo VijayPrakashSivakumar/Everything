@@ -10,7 +10,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
-const js = fs.readFileSync(path.join(root, 'script.js'), 'utf8');
+
+/* The app logic is fifteen files and the load order is part of the contract, so it is read from
+   index.html — the one place that order is written — and joined into the single string these checks
+   slice between function names in. Hard-coding a list here would be a second copy to forget, and the
+   failure would be a green suite asserting against files the page never loads. */
+const appScriptOrder = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+const js = appScriptOrder
+  .map((rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
+  .join('\n');
 
 const results = [];
 const inflight = [];
@@ -2599,6 +2607,21 @@ check('a version mismatch repairs itself instead of staying broken', () => {
   assert.match(js, /repairVersionMismatch\(\);/, 'the repair is never run at startup');
   // The reload must be guarded, or a broken deploy would loop forever.
   assert.match(js, /sessionStorage\.getItem\("everythingBuildRepair"\)/, 'the reload must be guarded by a session flag');
+});
+
+check('every script the page loads is precached, and nothing is precached that is not loaded', () => {
+  /* The load order lives in index.html; the precache list lives in sw.js. They are two copies of one
+     fact, and a part missing from SHELL_FILES fails as a random offline error long after the change
+     that caused it — with nothing in the commit that mentions caching. So the agreement is asserted
+     rather than remembered. */
+  const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
+  const block = sw.slice(sw.indexOf('const SHELL_FILES = ['), sw.indexOf('];', sw.indexOf('const SHELL_FILES = [')));
+  const cached = [...block.matchAll(/'\.\/(js\/[^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(cached, appScriptOrder,
+    `sw.js precaches ${cached.length} app scripts and index.html loads ${appScriptOrder.length}, in a different order or set`);
+  for (const rel of appScriptOrder) {
+    assert.ok(fs.existsSync(path.join(root, rel)), `index.html loads ${rel} but the file is not there`);
+  }
 });
 
 check('the service worker cache is versioned and current', () => {

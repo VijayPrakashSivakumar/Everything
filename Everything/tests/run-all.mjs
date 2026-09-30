@@ -18,6 +18,7 @@
 // longer block the terminal), and a missing dependency is reported as SKIPPED with the reason
 // rather than as a silent truncation.
 import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -163,8 +164,15 @@ let skipped = 0;
    is the same parser Node will use, and it is synchronous and side-effect free, so it is safe to
    run on every file in the repo that this suite can possibly execute. */
 function preflightParse() {
+  // The app logic is fifteen files in Everything/js, in the order index.html loads them. Reading
+  // that order from index.html rather than naming script.js here means a new part is parsed the day
+  // it is written, and the failure mode is a two-second "file X does not parse" rather than a suite
+  // that quietly stops covering whatever moved.
+  const appDir = path.join(here, '..', '..', 'Everything');
+  const html = readFileSync(path.join(appDir, 'index.html'), 'utf8');
+  const appScripts = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
   const targets = [
-    path.join(here, '..', '..', 'Everything', 'script.js'),
+    ...appScripts.map((rel) => path.join(appDir, rel)),
     path.join(here, 'run-all.mjs'),
     ...SUITES.map((suite) => path.join(here, suite.file)),
   ];

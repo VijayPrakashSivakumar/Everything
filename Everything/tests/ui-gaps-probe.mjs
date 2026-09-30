@@ -270,7 +270,15 @@ try {
     // check because the alternative is a browser test that cannot tell a shared engine from a
     // duplicated one.
     const fs = await import('node:fs');
-    const src = fs.readFileSync('Everything/script.js', 'utf8');
+    // The app logic is fifteen files in Everything/js now. The order they load in is read from
+    // index.html — the one place that order is written — and joined, because this check looks for a
+    // function that could be in any of them. Naming script.js here would have made this check pass
+    // vacuously on an empty string the moment the file was split.
+    const appDir = new URL('../', import.meta.url);
+    const htmlSource = fs.readFileSync(new URL('index.html', appDir), 'utf8');
+    const src = [...htmlSource.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)]
+      .map((m) => fs.readFileSync(new URL(m[1], appDir), 'utf8'))
+      .join('\n');
     const start = src.indexOf('function enableDashboardDragging');
     const dashBody = src.slice(start, src.indexOf('\n}', start));
     assert.ok(!/addEventListener\("dragstart"/.test(dashBody),

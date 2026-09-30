@@ -17,7 +17,23 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (p) => fs.readFileSync(path.join(here, p), 'utf8');
 const exists = (p) => fs.existsSync(path.join(here, p));
 
-const js = read('Everything/script.js');
+// ---- app scripts -------------------------------------------------------------------------------
+/* The app logic is fifteen files, and the order they load in is part of the contract. Every consumer
+   here wants "the script source" as one string — the dead-code audit scans it, and ui-structure
+   slices between function names in it — so it is rebuilt here by reading the load order straight out
+   of index.html rather than from a list in this file. A second list would be a second thing to forget
+   to update, and the failure would be a test that passes against files the page never loads. */
+function appScriptSource(htmlSource) {
+  const order = [...htmlSource.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+  if (!order.length) throw new Error('index.html loads no app scripts');
+  return order.map((rel) => {
+    const full = path.join(here, 'Everything', rel);
+    if (!fs.existsSync(full)) throw new Error(`index.html loads ${rel} but the file is missing`);
+    return fs.readFileSync(full, 'utf8');
+  }).join('\n');
+}
+
+const js = appScriptSource(read('Everything/index.html'));
 const html = read('Everything/index.html');
 const css = read('Everything/style.css');
 const sw = read('Everything/sw.js');

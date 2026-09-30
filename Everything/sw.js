@@ -1,6 +1,6 @@
-// Bump whenever a shell file (index.html / style.css / script.js) changes, otherwise returning
+// Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
 // phones keep serving the previous cached version and the new UI appears not to work.
-const CACHE_NAME = 'everything-shell-v44';
+const CACHE_NAME = 'everything-shell-v45';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed
@@ -17,7 +17,25 @@ const SHELL_FILES = [
   './',
   './index.html',
   './style.css',
-  './script.js',
+  // The app logic is fifteen files in a fixed load order. All fifteen are shell: they are the app.
+  // A list written by hand here would be a second copy of the order in index.html, and the two
+  // would drift — leaving a part uncached, which looks like a random offline failure rather than a
+  // cache miss. ui-structure.test.mjs derives this list from index.html and fails if they disagree.
+  './js/core.js',
+  './js/model.js',
+  './js/render.js',
+  './js/recurring.js',
+  './js/people-projects.js',
+  './js/calendar.js',
+  './js/item-panel.js',
+  './js/capture.js',
+  './js/extraction.js',
+  './js/lists.js',
+  './js/search.js',
+  './js/shell.js',
+  './js/utils.js',
+  './js/reminders.js',
+  './js/init.js',
   './manifest.json',
   './icon.svg'
 ];

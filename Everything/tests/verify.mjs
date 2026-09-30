@@ -16,7 +16,7 @@
 // the check count declared by the banner, no check nested inside another, and no file left with
 // a temporary marker in it. Cheap enough to run on every save, which is the point.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,14 +28,31 @@ const note = (message) => problems.push(message);
 
 /* ---------- 1. Every file parses ---------- */
 
+/* The app logic is fifteen files in Everything/js, in the load order index.html writes down. Reading
+   the order from there means a new part is parsed the day it is added, and a part that is added but
+   never loaded is still caught — which a hard-coded list would have missed silently. */
+const appDir = path.join(repo, 'Everything');
+const htmlSource = readFileSync(path.join(appDir, 'index.html'), 'utf8');
+const appScripts = [...htmlSource.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+
 const files = [
-  path.join(repo, 'Everything', 'script.js'),
+  ...appScripts.map((rel) => path.join(appDir, rel)),
   path.join(repo, 'serve.mjs'),
   path.join(here, 'run-all.mjs'),
   ...readdirSync(here)
     .filter((name) => name.endsWith('.mjs') || name.endsWith('.js'))
     .map((name) => path.join(here, name)),
 ];
+
+// A part in Everything/js that index.html never loads is dead weight in the shell, and nothing else
+// would ever notice it — so the directory is compared against the load order, both directions.
+const jsParts = readdirSync(path.join(appDir, 'js')).filter((n) => n.endsWith('.js'));
+for (const name of jsParts) {
+  if (!appScripts.includes(`js/${name}`)) note(`ORPHAN Everything/js/${name} is never loaded by index.html.`);
+}
+for (const rel of appScripts) {
+  if (!existsSync(path.join(appDir, rel))) note(`SHELL Everything/${rel} is loaded but missing.`);
+}
 
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
@@ -55,13 +72,20 @@ for (const file of files) {
 
 // A debug log or a temporary probe that shipped is a real defect, not a style note: it was in
 // script.js once already, from a diagnostic that was meant to be removed after use.
-const scriptSource = readFileSync(path.join(repo, 'Everything', 'script.js'), 'utf8');
-const scriptLines = scriptSource.split('\n');
-scriptLines.forEach((line, i) => {
-  if (/console\.log\((['"`]|\s*)\s*(swipe decided|PAGE:|bound |after |row |setup|probe)\b/.test(line)) {
-    note(`DEBUG  Everything/script.js:${i + 1} looks like a leftover diagnostic: ${line.trim().slice(0, 70)}`);
+// The app logic is fifteen files now, so every part is checked and the file is named in the report.
+// A leftover diagnostic is exactly as bad in js/capture.js as it was in one script.js.
+for (const rel of appScripts) {
+  const full = path.join(appDir, rel);
+  if (!existsSync(full)) {
+    note(`SHELL  Everything/${rel} is loaded by index.html but the file is missing.`);
+    continue;
   }
-});
+  readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
+    if (/console\.log\((['"`]|\s*)\s*(swipe decided|PAGE:|bound |after |row |setup|probe)\b/.test(line)) {
+      note(`DEBUG  Everything/${rel}:${i + 1} looks like a leftover diagnostic: ${line.trim().slice(0, 70)}`);
+    }
+  });
+}
 
 for (const name of readdirSync(here)) {
   if (/^_/.test(name) && /\.(mjs|js|cjs)$/.test(name)) {
