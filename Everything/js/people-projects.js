@@ -109,6 +109,10 @@ async function mergePerson(sourceName, targetName) {
   ["phone", "email", "birthday"].forEach((field) => {
     if (!target[field] && source && source[field]) target[field] = source[field];
   });
+  // The flag follows the record that carried it, but only one person is "me", so it is taken from
+  // either side rather than added: merging your own record into a duplicate would otherwise leave
+  // the survivor showing nobody's age.
+  target.ownBirthday = Boolean(target.ownBirthday || (source && source.ownBirthday));
   await dbSavePerson(target);
   // An inferred-only source has no record of its own, so only its tags need moving.
   if (source) await dbDeletePerson(source.id);

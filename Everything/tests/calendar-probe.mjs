@@ -448,11 +448,147 @@ try {
       { id: 'p1', name: 'Ann', birthday: `${lastYear}-${inDays(2).slice(5)}` },
     ]);
     assert.doesNotMatch(other.labels[0], /turns/, `a family member's age leaked: "${other.labels[0]}"`);
+  });
 
-    const own = await withPeople([
-      { id: 'p1', name: 'Me', birthday: `${lastYear}-${inDays(2).slice(5)}`, ownBirthday: true },
+  await check('"This is me" makes the age appear, and only then', async () => {
+    // Driven through the dialog rather than by assigning the flag. The earlier version of this test
+    // set ownBirthday straight onto the record and passed, which proved the display maths and nothing
+    // else: no person could ever reach that state through the app, so the feature was dead on arrival.
+    const lastYear = new Date().getFullYear() - 30;
+    const birthday = `${lastYear}-${inDays(2).slice(5)}`;
+
+    const viaDialog = await page.evaluate(async (b) => {
+      // Real writes are stubbed so this cannot reach an account.
+      const saved = [];
+      const realSave = window.dbSavePerson;
+      window.dbSavePerson = async (person) => { saved.push(JSON.parse(JSON.stringify(person))); };
+
+      state.items = [];
+      state.people = [{ id: 'p1', name: 'Me', birthday: b, notes: '' }];
+      openPersonModal('p1', 'Me');
+
+      const before = document.getElementById('personOwnBirthday').checked;
+      document.getElementById('personOwnBirthday').checked = true;
+      await savePersonNotes();
+
+      return {
+        before,
+        saved,
+        stored: state.people.find((p) => p.id === 'p1').ownBirthday,
+      };
+    }, birthday);
+
+    assert.equal(viaDialog.before, false, 'a record with no flag opened with the box already ticked');
+    assert.equal(viaDialog.stored, true, 'ticking the box did not set ownBirthday on the person');
+    assert.equal(viaDialog.saved.length, 1, 'the person was not saved through the normal path');
+    assert.equal(viaDialog.saved[0].ownBirthday, true, 'the flag was not written to the saved record');
+
+    // And only now does the age appear on the card.
+    const after = await withPeople([
+      { id: 'p1', name: 'Me', birthday, ownBirthday: true },
     ]);
-    assert.match(own.labels[0], new RegExp(`turns 30`), `the owner's own age was not shown: "${own.labels[0]}"`);
+    assert.match(after.labels[0], new RegExp('turns 30'), `the owner's own age was not shown: "${after.labels[0]}"`);
+  });
+
+  await check('"This is me" is given up when another record claims it', async () => {
+    const r = await page.evaluate(async () => {
+      const realSave = window.dbSavePerson;
+      window.dbSavePerson = async () => {};
+      state.items = [];
+      state.people = [
+        { id: 'p1', name: 'Me', notes: '', birthday: '1996-01-02', ownBirthday: true },
+        { id: 'p2', name: 'Also me', notes: '', birthday: '1996-01-03', ownBirthday: false },
+      ];
+      openPersonModal('p2', 'Also me');
+      document.getElementById('personOwnBirthday').checked = true;
+      await savePersonNotes();
+      window.dbSavePerson = realSave;
+      return state.people.map((p) => ({ id: p.id, own: Boolean(p.ownBirthday) }));
+    });
+    // Two "me"s would show two ages on the Coming up card with no way back to one.
+    assert.equal(r.filter((p) => p.own).length, 1, `the flag ended up on ${r.filter((p) => p.own).length} people at once`);
+    assert.deepEqual(r.find((p) => p.id === 'p2'), { id: 'p2', own: true }, 'the new claim did not take');
+    assert.deepEqual(r.find((p) => p.id === 'p1'), { id: 'p1', own: false }, 'the old claim was not given up');
+  });
+
+  await check('the flag survives a sync round trip', async () => {
+    const r = await page.evaluate(() => {
+      const payload = buildStructuredRecordPayload('person', {
+        id: 'p1', name: 'Me', notes: '', birthday: '1996-01-02', ownBirthday: true,
+      });
+      const back = normaliseStructuredRecord('person', {
+        client_id: 'p1', name: 'Me', notes: '', metadata: payload.metadata,
+      });
+      // A record written before the flag existed has no key at all, and must not be turned into an
+      // explicit false by a truthiness check — nor must it clear a true set on another device.
+      const older = normaliseStructuredRecord('person', {
+        client_id: 'p2', name: 'Ann', metadata: { phone: '', email: '', birthday: '1994-03-04' },
+      });
+      return { sent: payload.metadata.ownBirthday, back: back.ownBirthday, older: older.ownBirthday };
+    });
+    assert.equal(r.sent, true, 'ownBirthday did not reach the sync payload');
+    assert.equal(r.back, true, 'ownBirthday did not come back from the sync payload');
+    assert.equal(r.older, undefined, 'a record predating the flag gained an explicit false');
+  });
+
+  await check('a birthday reminder is sent once, on the day, and only when asked for', async () => {
+    const birthday = (() => {
+      const d = new Date();
+      const pad = (v) => String(v).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    })();
+
+    const r = await page.evaluate(async (b) => {
+      const shown = [];
+      const realShow = window.showLocalNotification;
+      const realSupported = window.notificationSupported;
+      const realPermission = Object.getOwnPropertyDescriptor(Notification, 'permission');
+      window.showLocalNotification = async (title, options) => { shown.push({ title, body: options?.body }); return true; };
+      window.notificationSupported = () => true;
+      // Notification.permission is a read-only getter, so a plain assignment is silently discarded
+      // and the delivery path stays shut. defineProperty is what actually replaces it.
+      Object.defineProperty(Notification, 'permission', { get: () => 'granted', configurable: true });
+
+      localStorage.removeItem('everything_birthday_reminders_v1');
+      state.people = [{ id: 'p1', name: 'Ann', birthday: b, notes: '' }];
+
+      // Off until asked for: nothing may be sent however many times the beat runs.
+      await deliverBirthdayReminder('off');
+      const whileOff = shown.length;
+
+      setBirthdayReminderEnabled(true);
+      await checkBirthdayReminder('on');
+      const afterFirst = shown.length;
+
+      // The same beat again — a 30s tick, a wake, the network returning — must not repeat it.
+      await checkBirthdayReminder('tick');
+      await checkBirthdayReminder('again');
+      const afterRepeats = shown.length;
+
+      // Tomorrow the anniversary is a year away, so it goes quiet again.
+      const tomorrow = new Date(Date.now() + 86400000);
+      const pad = (v) => String(v).padStart(2, '0');
+      const tKey = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
+      localStorage.setItem('everything_birthday_reminders_v1', JSON.stringify({ enabled: true, sent: {} }));
+      state.people = [{ id: 'p1', name: 'Ann', birthday: tKey, notes: '' }];
+      await checkBirthdayReminder('tomorrow');
+      const nextDay = shown.length;
+
+      window.showLocalNotification = realShow;
+      window.notificationSupported = realSupported;
+      if (realPermission) Object.defineProperty(Notification, 'permission', realPermission);
+      localStorage.removeItem('everything_birthday_reminders_v1');
+      return {
+        whileOff, afterFirst, afterRepeats, nextDay,
+        title: shown[0]?.title || '',
+      };
+    }, birthday);
+
+    assert.equal(r.whileOff, 0, 'a birthday was sent although the reminder was never switched on');
+    assert.equal(r.afterFirst, 1, `the birthday was sent ${r.afterFirst} times, expected once`);
+    assert.equal(r.afterRepeats, 1, `the same birthday was sent ${r.afterRepeats} times across repeated beats`);
+    assert.equal(r.nextDay, 1, 'a birthday that is not today was still sent');
+    assert.match(r.title, /Ann/, `the notification did not name the person: "${r.title}"`);
   });
 
   await check('the Coming up card is hidden when there is nothing to show', async () => {

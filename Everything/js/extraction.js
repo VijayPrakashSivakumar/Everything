@@ -472,3 +472,192 @@ function restoreNudge() {
   const card = document.getElementById("nudgeCard");
   if (card) card.style.display = "none";
 }
+
+/* ---------- Inbox categorization (the browser side) ----------
+
+   Asks /api/ask to propose a kind for a set of untidied captures, and shows the proposal before
+   anything is saved. The whole point is that it is visible and reversible: a wrong kind applied
+   silently is far worse than an Inbox nobody tidied, because the mistake only surfaces when
+   somebody goes looking for that item weeks later.
+
+   Three rules, each a place this could plausibly have gone wrong:
+
+     proposes      nothing is written until the person accepts
+     matches by id  only rows we actually sent are touched, so a reply cannot reorder or invent
+     falls back     any failure leaves the Inbox exactly as it was, and says so in one line */
+
+const CATEGORIZE_LIMIT = 20;
+let categorizeInFlight = false;
+
+/* Held between the preview and Apply rather than re-read from the DOM. Reading the proposal back
+   out of rendered text means matching on a title, and two captures can carry the same title — which
+   would then file the wrong row. The ids are the only stable key, so they are kept as data. */
+let pendingCategorization = [];
+
+/* Every row worth sorting, not only the ones with no kind. The person asked for the whole Inbox to be
+   sorted, so a row filed as the wrong kind earlier is in scope: correcting it is the point. The name
+   said "uncategorized" when it had always meant "everything except media", which is what made a
+   suggestion for an already-filed row look like a mistake rather than the intended behaviour. */
+function inboxItemsToSort() {
+  // Media keeps its own kind (voice/image/file): that records how it was captured, not something
+  // anybody chose, so proposing a different one would contradict the row it sits on.
+  const fixed = ["voice", "image", "file"];
+  return (state?.items || [])
+    .filter((item) => !isArchived(item))
+    .filter((item) => !fixed.includes(item.kind))
+    .slice(0, CATEGORIZE_LIMIT);
+}
+
+async function requestCategorization(entries) {
+  if (isFileProtocol()) return { error: "Open the app through a server to use this." };
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  try {
+    const res = await apiFetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "categorize", entries, today }),
+    });
+    if (!res.ok) {
+      let reason = "";
+      try {
+        const body = await res.json();
+        reason = body?.reason || body?.error || "";
+      } catch {
+        /* A non-JSON error body carries nothing beyond the status. */
+      }
+      return { error: describeCategorizeFailure(res.status, reason) };
+    }
+    const data = await res.json();
+    if (!Array.isArray(data?.items) || !data.items.length) {
+      return { error: "The model did not suggest anything for these." };
+    }
+    return { items: data.items };
+  } catch (error) {
+    return { error: "Nothing could be reached. The Inbox is unchanged." };
+  }
+}
+
+/* The server's `reason` trail (e.g. "groq:429 -> gemini:timeout") is carried into the message, so a
+   failure can be diagnosed from the screen without opening DevTools. */
+function describeCategorizeFailure(status, reason) {
+  if (status === 429) return "The model is busy right now. Try again in a minute.";
+  if (status === 401 || status === 403) return "Sign in again to use the model.";
+  if (reason) return `The model could not be reached (${reason}). The Inbox is unchanged.`;
+  return "The model could not be reached. The Inbox is unchanged.";
+}
+
+/* Runs the model, then shows what it would do. Every path that would otherwise leave the person
+   unsure of what happened sets a line of text saying so. */
+async function categorizeInbox() {
+  if (categorizeInFlight) return false;
+  const entries = inboxItemsToSort();
+  if (!entries.length) {
+    setInboxTidyMessage("There is nothing here that needs filing.", false);
+    return false;
+  }
+
+  categorizeInFlight = true;
+  setInboxTidyMessage(`Reading ${entries.length} capture${entries.length === 1 ? "" : "s"}…`, true);
+  try {
+    const result = await requestCategorization(entries.map((item) => ({ id: item.id, title: item.title })));
+    if (result.error) {
+      setInboxTidyMessage(result.error, false);
+      return false;
+    }
+
+    // Only suggestions that name a row we sent and would change it. One identical to what is
+    // already there is noise, and listing it as a change would overstate what the model did.
+    const sent = new Map(entries.map((item) => [item.id, item]));
+    const changes = result.items
+      .map((entry) => ({ id: entry.id, item: sent.get(entry.id), kind: entry.kind }))
+      .filter((change) => change.item && change.kind && change.item.kind !== change.kind);
+    if (!changes.length) {
+      setInboxTidyMessage("Nothing here needs filing — everything already has a kind.", false);
+      return false;
+    }
+
+    showCategorizePreview(changes);
+    return true;
+  } finally {
+    categorizeInFlight = false;
+  }
+}
+
+/* The proposal, shown as before → after. "Not now" is deliberately the same as ignoring it, because
+   most captures are already right and the cost of saying so must be zero. */
+function showCategorizePreview(changes) {
+  const host = document.getElementById("inboxTidyPanel");
+  if (!host) return;
+  pendingCategorization = changes;
+  const total = changes.length;
+  host.hidden = false;
+  host.innerHTML =
+    `<div class="card-head"><h3>Sort ${total} capture${total === 1 ? "" : "s"}?</h3></div>` +
+    changes
+      .map(
+        (change) =>
+          `<div class="task-row"><div class="task-meta"><div class="task-title">${escapeHtml(change.item.title)}</div>` +
+          `<div class="task-sub">${escapeHtml(change.item.kind || "uncategorised")} → <strong>${escapeHtml(CAPTURE_PLAN_KIND_LABELS[change.kind] || change.kind)}</strong></div></div></div>`,
+      )
+      .join("") +
+    `<div class="modal-actions" style="margin-top: 12px">
+      <button class="btn" onclick="dismissCategorizePreview()">Not now</button>
+      <button class="btn btn-primary" onclick="applyCategorization()">Apply ${total}</button>
+    </div>`;
+  setInboxTidyMessage("", false);
+}
+
+function dismissCategorizePreview() {
+  const host = document.getElementById("inboxTidyPanel");
+  if (host) {
+    host.hidden = true;
+    host.innerHTML = "";
+  }
+  pendingCategorization = [];
+  setInboxTidyMessage("", false);
+}
+
+/* Applies the proposal. Each row is saved through the same path as any other edit, so it syncs and
+   lands in that item's own history like anything else. A failure on one row must not abandon the
+   rest, which would leave the Inbox half-sorted with no route back. */
+async function applyCategorization() {
+  const changes = pendingCategorization;
+  dismissCategorizePreview();
+  if (!changes.length) return;
+
+  let applied = 0;
+  for (const change of changes) {
+    const item = state.items.find((i) => i.id === change.id);
+    if (!item || isArchived(item) || item.kind === change.kind) continue;
+    item.kind = change.kind;
+    // The sub-line describes the old kind ("Captured task") and would contradict the new one.
+    if (CAPTURE_PLAN_SUB[change.kind]) item.sub = CAPTURE_PLAN_SUB[change.kind];
+    await dbSaveItem(item);
+    applied += 1;
+  }
+
+  renderInbox();
+  setInboxTidyMessage(
+    applied
+      ? `Filed ${applied} capture${applied === 1 ? "" : "s"}.`
+      : "Nothing changed — those rows are already filed that way.",
+    false,
+  );
+}
+
+function setInboxTidyMessage(text, busy) {
+  const host = document.getElementById("inboxTidyStatus");
+  if (!host) return;
+  host.textContent = text;
+  host.hidden = !text;
+  const btn = document.getElementById("inboxTidyBtn");
+  if (btn) {
+    btn.disabled = !!busy;
+    btn.textContent = busy ? "Reading…" : "Sort with AI";
+  }
+}

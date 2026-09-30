@@ -38,10 +38,39 @@ const check = async (name, fn) => {
 
 let reply = CLEAR;
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-await page.route('**/api/ask', (r) => r.fulfill({
-  status: 200, contentType: 'application/json',
-  body: JSON.stringify({ extraction: reply[0], items: reply, provider: 'auto', model: 'auto' }),
-}));
+// One route serves two actions now, so it has to answer by action rather than always replying with
+// the extraction shape: the categorize reply carries ids and kinds, and an extraction reply has
+// neither. Returning the wrong one would make the Inbox tests pass for the wrong reason.
+await page.route('**/api/ask', async (r) => {
+  let action = '';
+  try {
+    action = JSON.parse(r.request().postData() || '{}').action || '';
+  } catch {
+    /* An unreadable body is treated as the default action rather than failing the whole check. */
+  }
+  if (action === 'categorize') {
+    return r.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [
+          { id: 'i1', kind: 'task' },
+          { id: 'i2', kind: 'waiting' },
+          // A row that was already filed, and one the model was never sent. Both must be ignored:
+          // the first needs no change, and the second is a reply about a row that does not exist.
+          { id: 'i3', kind: 'memory' },
+          { id: 'ghost', kind: 'task' },
+        ],
+        provider: 'probe',
+        model: 'probe',
+      }),
+    });
+  }
+  return r.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ extraction: reply[0], items: reply, provider: 'auto', model: 'auto' }),
+  });
+});
 
 const open = async () => {
   await page.evaluate(() => openCapture());
@@ -157,6 +186,94 @@ try {
     const s = await sheet();
     assert.equal(s.count, 1, 'a manual save must still create the item');
     assert.equal(s.undoShown, false, 'a save the person made themselves needs no undo bar');
+  });
+
+  // ---------- Inbox categorization ----------
+
+  const seedInbox = async () => {
+    await page.evaluate(() => {
+      state.items = [
+        { id: 'i1', kind: '', title: 'ring the shop', sub: '', created: 3, done: false },
+        { id: 'i2', kind: '', title: 'waiting on Ravi', sub: '', created: 2, done: false },
+        { id: 'i3', kind: 'task', title: 'already filed', sub: 'Captured task', created: 1, done: false },
+      ];
+      save();
+      renderInbox();
+    });
+    await page.evaluate(() => switchView('inbox'));
+    await page.waitForTimeout(150);
+  };
+
+  await check('sorting proposes before it files, and "Not now" writes nothing', async () => {
+    await seedInbox();
+    await page.evaluate(() => { window.__saved = []; window.__realSave = window.dbSaveItem; window.dbSaveItem = async (i) => { window.__saved.push(i.id); }; });
+    await page.evaluate(() => categorizeInbox());
+    await page.waitForTimeout(300);
+
+    const proposed = await page.evaluate(() => ({
+      shown: !document.getElementById('inboxTidyPanel').hidden,
+      titles: [...document.querySelectorAll('#inboxTidyPanel .task-title')].map((n) => n.textContent),
+      saved: window.__saved.length,
+      kinds: state.items.map((i) => i.kind),
+    }));
+    assert.equal(proposed.shown, true, 'the proposal was not shown before anything was filed');
+    assert.equal(proposed.saved, 0, 'a row was saved before the person accepted');
+    assert.deepEqual(proposed.kinds, ['', '', 'task'], `nothing may be written yet: ${JSON.stringify(proposed.kinds)}`);
+
+    await page.evaluate(() => dismissCategorizePreview());
+    await page.waitForTimeout(200);
+    const after = await page.evaluate(() => ({ saved: window.__saved.length, kinds: state.items.map((i) => i.kind) }));
+    assert.equal(after.saved, 0, 'declining the proposal still wrote to the data');
+    assert.deepEqual(after.kinds, ['', '', 'task'], `declining changed the kinds: ${JSON.stringify(after.kinds)}`);
+    await page.evaluate(() => { window.dbSaveItem = window.__realSave; });
+  });
+
+  await check('accepting files the proposal, by id', async () => {
+    await seedInbox();
+    await page.evaluate(() => { window.__saved = []; window.__realSave = window.dbSaveItem; window.dbSaveItem = async (i) => { window.__saved.push(i.id); }; });
+    await page.evaluate(() => categorizeInbox());
+    await page.waitForTimeout(300);
+    await page.evaluate(() => applyCategorization());
+    await page.waitForTimeout(300);
+
+const r = await page.evaluate(() => ({
+      saved: window.__saved,
+      kinds: state.items.map((i) => i.kind),
+      subs: state.items.map((i) => i.sub),
+      count: state.items.length,
+    }));
+    // Matching is by id, and that is what two of these prove. "ghost" came back in the reply but was
+    // never sent, so there is no row for it to touch at all; and i1's suggestion must not land on i2
+    // just because the rows sit next to each other. i3 IS re-filed: the person asked for the inbox to
+    // be sorted, so a row filed wrongly earlier is exactly what they meant to have looked at again.
+    assert.deepEqual(r.saved, ['i1', 'i2', 'i3'], `the wrong rows were written: ${JSON.stringify(r.saved)}`);
+    assert.deepEqual(r.kinds, ['task', 'waiting', 'memory'], `the kinds are wrong: ${JSON.stringify(r.kinds)}`);
+    assert.equal(r.count, 3, `an extra row was written: ${r.count} rows, expected 3`);
+    // The sub-line must follow the new kind: leaving "Captured task" under a memory would say the
+    // row was filed as something it no longer is.
+    assert.equal(r.subs[2], 'Memory', `the re-filed row kept a sub-line about its old kind: "${r.subs[2]}"`);
+    assert.equal(r.subs[0], 'Captured task', 'a newly filed task lost its sub-line');
+    await page.evaluate(() => { window.dbSaveItem = window.__realSave; });
+  });
+
+  await check('a failed model call leaves the Inbox exactly as it was', async () => {
+    await seedInbox();
+    await page.route('**/api/ask', (r) => r.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: 'busy', reason: 'groq:429' }) }));
+    await page.evaluate(() => categorizeInbox());
+    await page.waitForTimeout(400);
+
+    const r = await page.evaluate(() => ({
+      panelHidden: document.getElementById('inboxTidyPanel').hidden,
+      message: document.getElementById('inboxTidyStatus').textContent,
+      button: document.getElementById('inboxTidyBtn').textContent,
+      disabled: document.getElementById('inboxTidyBtn').disabled,
+      kinds: state.items.map((i) => i.kind),
+    }));
+    assert.equal(r.panelHidden, true, 'a failed call still opened the proposal panel');
+    assert.match(r.message, /busy|unchanged/i, `no explanation was shown: "${r.message}"`);
+    assert.equal(r.button, 'Sort with AI', `the button was left saying "${r.button}"`);
+    assert.equal(r.disabled, false, 'the button was left disabled, so the Inbox could never be sorted');
+    assert.deepEqual(r.kinds, ['', '', 'task'], `a failed call changed the data: ${JSON.stringify(r.kinds)}`);
   });
 } finally {
   await browser.close();

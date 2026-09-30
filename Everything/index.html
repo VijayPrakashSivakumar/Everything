@@ -20,7 +20,7 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-29.1" />
+    <meta name="everything-build" content="2026-09-30.1" />
     <link rel="apple-touch-icon" href="./icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <script>
@@ -749,6 +749,20 @@
               style="margin-bottom: 12px"
             />
             <div class="tabs" id="inboxTabs"></div>
+            <!-- Filing the Inbox one row at a time is a hundred identical decisions. "Sort with AI"
+                 proposes a kind for the lot and shows every change before anything is written, so
+                 nothing is filed behind anyone's back and "Not now" costs nothing. The panel and the
+                 status line are both hidden until they have something to say. -->
+            <div class="field-row" style="margin: 12px 0 0">
+              <span class="field-label">Sort this inbox</span>
+              <button class="btn" id="inboxTidyBtn" onclick="categorizeInbox()">Sort with AI</button>
+            </div>
+            <p
+              id="inboxTidyStatus"
+              hidden
+              style="color: var(--muted); font-size: 12.5px; margin: 8px 0 0"
+            ></p>
+            <div id="inboxTidyPanel" hidden style="margin-top: 10px"></div>
             <!-- The Inbox holds every capture, so it outgrows the Tasks list and needed the same
                  bulk actions. Built from one template in script.js rather than a second copy of
                  the markup: two hand-written bars drift, and the drift is invisible until one of
@@ -1384,6 +1398,31 @@
                         <span>See what it would say</span>
                       </button>
                     </div>
+                  </div>
+
+                  <div class="card" style="margin-top: 14px">
+                    <div class="card-head">
+                      <h3>Birthdays</h3>
+                    </div>
+                    <p class="theme-picker-hint">
+                      One notification on the morning of a birthday, so it reaches you whether or
+                      not you open the app that day. It names the people whose birthday is today,
+                      once each, and says nothing at all on every other day of the year.
+                    </p>
+                    <div class="field-row">
+                      <span class="field-label">Remind me on the day</span>
+                      <button
+                        class="btn"
+                        id="birthdayToggleBtn"
+                        onclick="toggleBirthdayReminder()"
+                      >
+                        <span id="birthdayToggleLabel">Off</span>
+                      </button>
+                    </div>
+                    <p
+                      id="birthdayStatusLine"
+                      style="color: var(--muted); font-size: 12.5px; margin: 10px 0 0"
+                    ></p>
                   </div>
 
                   <div class="card" style="margin-top: 14px">
@@ -2928,6 +2967,16 @@
           <label style="font-size: 12.5px; color: var(--muted)" for="personBirthday">Birthday</label>
           <input class="capture-input" id="personBirthday" type="date" style="margin: 4px 0 0" />
         </div>
+        <label class="switch-row" style="display: flex; gap: 10px; align-items: flex-start; margin: 12px 0 0">
+          <input type="checkbox" id="personOwnBirthday" style="margin-top: 2px" />
+          <span>
+            This is me
+            <span class="field-hint" style="margin-top: 2px">
+              Only on your own record. It is what lets the Coming up card show how old you turn. A
+              family member's age is never shown.
+            </span>
+          </span>
+        </label>
         <div class="card-head" style="margin-top: 14px">
           <h3 style="font-size: 14px">Merge a duplicate</h3>
         </div>

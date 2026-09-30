@@ -569,6 +569,85 @@ export function parseExtractionPlan(raw) {
   return items.length ? items.slice(0, MAX_PLAN_ITEMS) : null;
 }
 
+/* ---------- Inbox categorization ----------
+
+   The Inbox is the one place where the app deliberately knows nothing: everything lands identical
+   and is filed by hand. That is the right default (nothing is guessed at you), but a hundred
+   captures filed one at a time is a hundred decisions, and most of them are the same four again.
+
+   This is the explicit version of that: the person presses one button, sees what the model would
+   do, and accepts or dismisses the whole set. It never files silently, because a misfiled task is
+   far more annoying to find later than one that stayed in the Inbox.
+
+   It lives in this route for the same reason extraction does — the project is already at Vercel
+   Hobby's 12-function limit. The `id` is mandatory on every entry and is echoed back untouched:
+   this route decides nothing about the data, it only proposes, and the browser matches ids against
+   the rows it actually sent so a reply can never reorder or invent items. */
+
+const CATEGORIZATION_KINDS = ['task', 'event', 'memory', 'waiting', 'openloop'];
+
+export function buildCategorizationPrompt(entries, today) {
+  const list = entries
+    .map((entry) => `${entry.id}. ${String(entry.title || '').slice(0, 160)}`)
+    .join('\n');
+  return `You sort uncategorized captures from a personal productivity app called Everything. Today is ${today}.
+
+For each numbered capture, choose ONE kind:
+- task       something to do
+- event      a fixed time with someone, or a dated appointment
+- memory     a fact, a preference, or something to know about a person
+- waiting    something you are waiting on from someone else
+- openloop   an undecided question ("need to decide which laptop")
+
+Rules:
+- Judge each capture on its own text. Do not merge two, and do not drop one.
+- When a capture could reasonably be either a task or a memory, prefer task: an unfinished action is
+  more useful to keep visible than a note.
+- Do not invent dates, people or projects. This is only a kind.
+
+Respond with ONLY raw JSON, no prose and no code fence:
+{"items":[{"id":"the id you were given","kind":"task|event|memory|waiting|openloop"}]}
+
+Captures:
+${list}`;
+}
+
+export function parseCategorization(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced ? fenced[1] : text).trim();
+  const start = candidate.indexOf('{');
+  const end = candidate.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(candidate.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.items) ? parsed.items : [];
+
+  const seen = new Set();
+  const items = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const id = String(entry.id ?? '').trim().slice(0, 64);
+    const kind = oneOf(entry.kind, CATEGORIZATION_KINDS, '');
+    // An entry with no id cannot be matched back to a row, and one with no valid kind has nothing to
+    // propose. Both are dropped rather than applied as a blank, which would overwrite a real kind.
+    if (!id || !kind) continue;
+    // A repeated id is dropped rather than allowed through. Two suggestions for one row means the
+    // model contradicted itself, and applying the later one would silently discard the earlier — so
+    // the row would be filed by whichever happened to come last in the reply.
+    if (seen.has(id)) continue;
+    seen.add(id);
+    items.push({ id, kind });
+  }
+  return items.length ? items : null;
+}
+
 export default async function handler(req, res) {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -606,6 +685,44 @@ export default async function handler(req, res) {
     return res.status(200).json({
       extraction: plan[0],
       items: plan,
+      provider: result.provider,
+      model: result.model,
+    });
+  }
+
+  // Inbox categorization. Proposes only: the response carries ids and kinds, and the browser
+  // decides whether to apply them. A failure is never fatal to the Inbox, which simply stays
+  // untidied and filed by hand exactly as before.
+  if (body.action === 'categorize') {
+    const entries = (Array.isArray(body.entries) ? body.entries : [])
+      .slice(0, MAX_CONTEXT_ITEMS)
+      .map((entry) => ({
+        // The id is echoed back untouched so the browser can match it to a row it really sent.
+        id: String(entry?.id ?? '').trim().slice(0, 64),
+        title: String(entry?.title || '').trim().slice(0, 200),
+      }))
+      .filter((entry) => entry.id && entry.title);
+    if (!entries.length) return res.status(400).json({ error: 'Nothing to categorize' });
+
+    const result = await complete({
+      prompt: buildCategorizationPrompt(entries, currentDate),
+      maxTokens: 600,
+    });
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error, reason: result.reason });
+    }
+    const items = parseCategorization(result.answer);
+    if (!items) {
+      return res.status(502).json({
+        error: 'The model did not return a usable result.',
+        reason: `${result.provider}:unparsable`,
+      });
+    }
+    // Only ids that were actually sent survive. A hallucinated id is dropped rather than matched
+    // against whatever happens to share it.
+    const sent = new Set(entries.map((entry) => entry.id));
+    return res.status(200).json({
+      items: items.filter((entry) => sent.has(entry.id)),
       provider: result.provider,
       model: result.model,
     });

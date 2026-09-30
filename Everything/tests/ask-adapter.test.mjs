@@ -46,7 +46,7 @@ function setEnv(next) {
   Object.assign(process.env, next);
 }
 
-const { complete, aiStatus, probeProvider, parseExtraction, parseExtractionPlan, buildExtractionPrompt, resetFailureMemory } = await import('../api/ask.js');
+const { complete, aiStatus, probeProvider, parseExtraction, parseExtractionPlan, buildExtractionPrompt, parseCategorization, buildCategorizationPrompt, resetFailureMemory } = await import('../api/ask.js');
 
 // Every scenario starts with an empty provider-failure memory. The adapter deliberately remembers
 // which providers just failed so it can skip them, and that memory is module state shared across
@@ -657,6 +657,39 @@ await check('an OpenAI-style reply is never trusted from the Gemini path', async
   handler = () => ({ status: 200, body: { choices: [{ message: { content: 'wrong shape' } }] } });
   const r = await complete({ prompt: 'q' });
   assert.equal(r.answer, undefined, 'a non-Gemini shape must not be read as a Gemini answer');
+});
+
+await check('a categorization reply is read only through the ids that were sent', () => {
+  // The decisive property: a reply that invents an id, or repeats one, cannot be applied to the
+  // wrong row. Without this the model would be writing straight into the Inbox.
+  const parsed = parseCategorization(
+    '{"items":[{"id":"i1","kind":"task"},{"id":"i2","kind":"waiting"},{"id":"i1","kind":"memory"},{"id":"","kind":"task"},{"id":"i3","kind":"not-a-kind"}]}',
+  );
+  assert.ok(parsed, 'a well-formed reply parsed to null');
+  assert.deepEqual(parsed, [
+    { id: 'i1', kind: 'task' },
+    { id: 'i2', kind: 'waiting' },
+  ], `a bad id or kind survived: ${JSON.stringify(parsed)}`);
+});
+
+await check('a categorization reply that is not JSON is refused, not half-applied', () => {
+  for (const bad of ['', 'sorry I cannot help', '{"items":[]}', 'not json at all', null, undefined]) {
+    assert.equal(parseCategorization(bad), null, `must be null for: ${JSON.stringify(bad)}`);
+  }
+});
+
+await check('the categorization prompt carries every id it was given', () => {
+  const prompt = buildCategorizationPrompt(
+    [{ id: 'i1', title: 'ring the shop' }, { id: 'i2', title: 'waiting on Ravi' }],
+    'Saturday, September 26, 2026',
+  );
+  // The id is echoed back untouched, so a row can be matched to its suggestion. A prompt that
+  // dropped it would make every reply unmatchable and the whole feature inert.
+  assert.match(prompt, /i1/, 'the first id is missing from the prompt');
+  assert.match(prompt, /i2/, 'the second id is missing from the prompt');
+  assert.match(prompt, /ring the shop/, 'the title is missing from the prompt');
+  assert.match(prompt, /Saturday, September 26, 2026/, 'the client date must reach the prompt');
+  assert.match(prompt, /Do not merge two, and do not drop one/i, 'the prompt must forbid dropping a row');
 });
 
 for (const k of ENV_KEYS) {

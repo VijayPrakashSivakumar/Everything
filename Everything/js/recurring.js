@@ -883,7 +883,15 @@ function readPersonProfile() {
     const el = document.getElementById(id);
     return el ? el.value.trim() : "";
   };
-  return { phone: read("personPhone"), email: read("personEmail"), birthday: read("personBirthday") };
+  const own = document.getElementById("personOwnBirthday");
+  return {
+    phone: read("personPhone"),
+    email: read("personEmail"),
+    birthday: read("personBirthday"),
+    // A checkbox, not a text field, so it is read as a boolean. `checked` on a missing element
+    // would throw, and this profile is also filled by tests that only mount part of the dialog.
+    ownBirthday: Boolean(own && own.checked),
+  };
 }
 
 function fillPersonProfile(person) {
@@ -891,6 +899,8 @@ function fillPersonProfile(person) {
     const el = document.getElementById(`person${field.charAt(0).toUpperCase()}${field.slice(1)}`);
     if (el) el.value = person && person[field] ? person[field] : "";
   });
+  const own = document.getElementById("personOwnBirthday");
+  if (own) own.checked = Boolean(person && person.ownBirthday);
 }
 
 /* A name is free text, so the list can hold two rows for one human. Offer every other person as a
@@ -922,8 +932,24 @@ async function savePersonNotes() {
     person.notes = notes;
     Object.assign(person, profile);
   }
+  // "This is me" is singular, so claiming it on one record gives it up on any other. Without this
+  // a second tick would show two ages on the Coming up card, and there is no way back to one.
+  if (person.ownBirthday) {
+    const others = state.people.filter((p) => p.id !== person.id && p.ownBirthday);
+    if (others.length) {
+      others.forEach((p) => {
+        p.ownBirthday = false;
+      });
+      // Each is a separate row, so each is a separate write. Awaited so a reload cannot see the new
+      // flag alongside a stale one and put the age back on the wrong card.
+      for (const other of others) await dbSavePerson(other);
+    }
+  }
   await dbSavePerson(person);
   closePersonModal();
+  // The Coming up card reads this flag, so it has to redraw or the age lingers or vanishes until
+  // the next render for some other reason.
+  renderUpcomingDates();
 }
 
 async function addPersonManual() {

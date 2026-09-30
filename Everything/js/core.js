@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-29.1";
+const APP_BUILD = "2026-09-30.1";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -268,6 +268,11 @@ function normaliseStructuredRecord(kind, row) {
     ["phone", "email", "birthday"].forEach((field) => {
       if (!normalized[field] && row.metadata && row.metadata[field]) normalized[field] = row.metadata[field];
     });
+    // ownBirthday is a flag, not a string, so the same copy is written with one difference: an
+    // absent key must not clear a flag the other device set. `in` is the test — a metadata object
+    // that simply predates the flag has no key at all, and a truthiness check would silently reset
+    // "this is me" on the next load of an older row.
+    if (row.metadata && "ownBirthday" in row.metadata) normalized.ownBirthday = Boolean(row.metadata.ownBirthday);
   }
   return normalized;
 }
@@ -437,6 +442,9 @@ function buildStructuredRecordPayload(kind, record) {
       phone: record.phone || "",
       email: record.email || "",
       birthday: record.birthday || "",
+      // Written as a real boolean rather than a string, and always written: an explicit false is
+      // what un-sets it on another device, where omitting the key would leave the old true in place.
+      ownBirthday: Boolean(record.ownBirthday),
     },
   };
 }
@@ -2075,7 +2083,10 @@ function showSettingsTab(tab) {
   });
   panel.scrollIntoView({ block: "nearest" });
   if (tab === "ai") renderLocalModelSettings();
-  if (tab === "notifications") renderMorningDigestSettings();
+  if (tab === "notifications") {
+    renderMorningDigestSettings();
+    renderBirthdayReminderSettings();
+  }
   refreshIcons();
 }
 

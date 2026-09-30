@@ -231,6 +231,65 @@ One detail is worth stating because it made the whole feature silently dead: the
 thousands of days away, and was then dropped by the 30-day window. No error, no empty state — just a
 feature that never appeared.
 
+## "This is me", and why it was missing
+
+The Coming up card renders `turns 30` only when a person record carries `ownBirthday`. That flag was
+read in three places and written in none, so the age could never appear for anyone — and the test
+that covered it passed anyway, because it set the flag directly on the record instead of going
+through the app. It proved the display maths and nothing else.
+
+The person dialog now has a **This is me** tick. Three details are the whole difference between a
+checkbox and a correct one:
+
+- **It is singular.** Claiming it on a second record gives it up on the first. Two "me"s would put
+  two ages on one card, with no way back to one.
+- **It is written as a real boolean, always.** An explicit `false` is what un-sets it on another
+  device; omitting the key would leave the old `true` in place. Reading uses `"ownBirthday" in
+  metadata` rather than a truthiness test, so a row written before the flag existed is left alone
+  instead of being turned into a deliberate `false`.
+- **Merge takes it from either side**, so merging your own record into a duplicate does not leave
+  the survivor showing nobody's age.
+
+## Reminding you about a birthday
+
+Everything else in this app is pull-based: you open it and it tells you what is on. A birthday is
+the one date that arrives whether or not anyone looks, so it gets a notification — opt-in, once a
+year per person, on the morning of the day.
+
+It deliberately follows the three rules the morning digest already follows, because a notification
+people cannot silence is one they turn off entirely, taking the reminders with it: opt in, say
+little, and stay silent when there is nothing to say.
+
+It rides the same beats as the digest (startup, every 30s, wake, network return) instead of
+arming a timer, which a date a year away cannot represent. Each birthday is recorded as sent by
+person and date, so a phone that was asleep at nine catches up on the next beat, and one that was
+online does not repeat it. Nothing today records nothing — deliberately, because an entry written
+for "no birthdays" is indistinguishable from a delivery that happened, and a birthday added at
+ten in the morning would then never be greeted at all.
+
+## Sorting the Inbox
+
+The Inbox deliberately knows nothing: everything lands identical and is filed by hand. That is the
+right default, but a hundred captures filed one at a time is a hundred identical decisions.
+
+**Sort with AI** proposes a kind for the lot and shows every change — `uncategorised → Task` — before
+anything is written. It never files silently, because a task filed wrongly is far more annoying to
+find later than one that stayed in the Inbox.
+
+Three things make that safe:
+
+- **It proposes, it does not file.** "Not now" and ignoring the panel are the same, and cost nothing,
+  because most captures are already right.
+- **Everything matches by id.** An entry with no id, an invalid kind, or a repeated id is dropped, so
+  a reply that contradicts itself or invents a row cannot write to the wrong one. Reading the
+  proposal back out of rendered text would mean matching on a title — and two captures can share a
+  title, which would file the wrong row.
+- **It falls back to nothing.** A failed call leaves the Inbox exactly as it was and says so in one
+  line, carrying the server's reason (`groq:429`) so it can be diagnosed without DevTools.
+
+Media keeps the kind it was captured with (voice/image/file): that records how it arrived, not
+something anybody chose, so re-filing it would contradict the row it sits on.
+
 ## Mobile back navigation
 
 Swipe-back (Android's gesture, and the browser back button on a phone) used to **leave the app**,

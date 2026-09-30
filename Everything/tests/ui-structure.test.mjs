@@ -1453,15 +1453,18 @@ check('contact details survive a sync round trip', () => {
 
 check('the person dialog holds the contact fields and a merge control that reads them back', () => {
   const dialog = html.slice(html.indexOf('id="personModalName"'), html.indexOf('id="personItemsList"'));
+  // personOwnBirthday is the "This is me" tick. It is listed here on purpose: the flag has to exist
+  // in the dialog, because the Coming up card reads ownBirthday and without this control nothing in
+  // the app could ever set it, so an age could never be shown however well the display maths works.
   assert.deepEqual(
     [...dialog.matchAll(/id="(person[A-Za-z]+)"/g)].map((m) => m[1]).sort(),
-    ['personBirthday', 'personEmail', 'personMergeTarget', 'personModalName', 'personNotes', 'personPhone'],
-    'the dialog must offer phone, email, birthday and somewhere to merge to');
+    ['personBirthday', 'personEmail', 'personMergeTarget', 'personModalName', 'personNotes', 'personOwnBirthday', 'personPhone'],
+    'the dialog must offer phone, email, birthday, somewhere to merge to, and a way to claim it is you');
 
   // The fields are read by id string in script.js, so a rename on either side would save a blank
   // value and look like the details had been lost rather than never read.
   const reader = betweenBlock('function readPersonProfile', 'function fillPersonProfile');
-  for (const field of ['personPhone', 'personEmail', 'personBirthday']) {
+  for (const field of ['personPhone', 'personEmail', 'personBirthday', 'personOwnBirthday']) {
     assert.match(reader, new RegExp(`"${field}"`), `${field} must be read by the id the dialog uses`);
   }
 

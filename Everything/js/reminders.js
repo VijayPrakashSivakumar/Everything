@@ -205,6 +205,171 @@ function setMorningDigestHour(hour) {
   renderMorningDigestSettings();
 }
 
+/* ---------- birthday reminders ----------
+
+   A birthday is the one date in the app that arrives whether or not anyone looks. The Coming up
+   card is pull-based like everything else here, so a person who never opens the app on the day
+   simply never finds out. This is the single reminder that earns its place without a due date the
+   person set.
+
+   The same three rules as the digest apply, for the same reason — a notification people cannot
+   silence is one they turn off entirely, taking the reminders with it:
+
+     opt in        off until asked for, and remembered across restarts
+     say little    a name and a date, never a list
+     stay quiet    nothing today means nothing sent
+
+   It rides the same beats as the digest (startup, every 30s, wake, network return) rather than
+   arming a timer that a year-long setTimeout cannot represent. Each birthday is delivered once,
+   keyed by the person and the date it was sent for, so a phone that was asleep at 9am catches up
+   on the next beat and a device that was online does not send it twice. */
+
+const BIRTHDAY_REMINDER_KEY = "everything_birthday_reminders_v1";
+const BIRTHDAY_REMINDER_HOUR = 9;
+const BIRTHDAY_REMINDER_MAX_NAMES = 3;
+
+function readBirthdayReminderSettings() {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(BIRTHDAY_REMINDER_KEY) || "{}") || {};
+  } catch (error) {
+    saved = {};
+  }
+  if (typeof saved !== "object" || Array.isArray(saved)) saved = {};
+  return {
+    enabled: saved.enabled === true,
+    // Which anniversaries have already been delivered. Keyed "personId:YYYY-MM-DD" so the same
+    // person is not greeted twice for one birthday, and is greeted again a year later.
+    sent: saved.sent && typeof saved.sent === "object" && !Array.isArray(saved.sent) ? saved.sent : {},
+  };
+}
+
+function writeBirthdayReminderSettings(patch) {
+  const next = { ...readBirthdayReminderSettings(), ...patch };
+  try {
+    localStorage.setItem(BIRTHDAY_REMINDER_KEY, JSON.stringify(next));
+  } catch (error) {
+    /* Private mode: today's reminder still sends, it just cannot remember that it did. */
+  }
+  return next;
+}
+
+/* Everyone whose birthday is today, oldest record first so the order is stable across reloads.
+   Uses the same daysUntilAnnual the Coming up card uses, so a reminder can never disagree with
+   the card about whose birthday it is — including 29 February, which the card celebrates on the
+   28th in a common year and this must celebrate on exactly the same day. */
+function birthdaysToday(from) {
+  const at = new Date(from || Date.now());
+  return (state.people || [])
+    .filter((person) => {
+      if (!person.birthday) return false;
+      return daysUntilAnnual(person.birthday, at.getTime()) === 0;
+    })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+let birthdayReminderInFlight = false;
+
+async function deliverBirthdayReminder(reason) {
+  const settings = readBirthdayReminderSettings();
+  if (!settings.enabled) return { sent: false, why: "not switched on" };
+  if (birthdayReminderInFlight) return { sent: false, why: "already sending" };
+  if (!notificationSupported() || Notification.permission !== "granted") {
+    return { sent: false, why: "notifications are not permitted on this device" };
+  }
+
+  const today = localDayKey();
+  const due = birthdaysToday().filter((person) => !settings.sent[`${person.id}:${today}`]);
+  // Nothing today is the common case by far, and it is deliberately not recorded: an entry written
+  // for "nothing" would be indistinguishable from a delivery that happened, and a birthday added
+  // at 10am would then never be greeted at all.
+  if (!due.length) return { sent: false, why: "no birthdays today" };
+
+  birthdayReminderInFlight = true;
+  try {
+    const named = due.slice(0, BIRTHDAY_REMINDER_MAX_NAMES);
+    const rest = due.length - named.length;
+    const firstName = String(named[0].name).split(/\s+/)[0];
+    const title = due.length === 1 ? `${firstName}'s birthday is today` : `${due.length} birthdays today`;
+    const body =
+      named.length === 1
+        ? importantDateLabel({ days: 0, years: named[0].ownBirthday ? yearsSinceBirth(named[0].birthday) : null })
+        : named.map((p) => String(p.name).split(/\s+/)[0]).join(" · ") + (rest > 0 ? ` · and ${rest} more` : "");
+
+    const shown = await showLocalNotification(title, {
+      body,
+      tag: "everything-birthday-reminder",
+      renotify: true,
+      requireInteraction: false,
+      timestamp: Date.now(),
+      data: { url: "./?view=people" },
+      actions: [{ action: "open", title: "Open" }],
+    });
+
+    if (shown) {
+      // Only what actually went out is recorded, so a person who dismissed one is not owed it again
+      // on the next 30s tick.
+      const sent = { ...settings.sent };
+      named.forEach((person) => {
+        sent[`${person.id}:${today}`] = Date.now();
+      });
+      writeBirthdayReminderSettings({ sent });
+    }
+    return { sent: shown, why: shown ? "sent" : "the notification could not be shown" };
+  } finally {
+    birthdayReminderInFlight = false;
+  }
+}
+
+/* The catch-up, on the same beats as the digest. Before the chosen hour it stays quiet — unlike the
+   digest, a birthday genuinely does not need catching up at 2am, and the morning is hours away. */
+function checkBirthdayReminder(reason) {
+  const settings = readBirthdayReminderSettings();
+  if (!settings.enabled) return;
+
+  const now = new Date();
+  if (now.getHours() < BIRTHDAY_REMINDER_HOUR) return;
+  const today = localDayKey(now);
+  if (!birthdaysToday(now).some((person) => !settings.sent[`${person.id}:${today}`])) return;
+
+  deliverBirthdayReminder(reason || "check");
+}
+
+function setBirthdayReminderEnabled(enabled) {
+  // Switching on clears the record of what was sent, so a birthday greeted under the old setting is
+  // greeted again under this one rather than being swallowed by stale local state.
+  writeBirthdayReminderSettings({ enabled: !!enabled, sent: {} });
+  renderBirthdayReminderSettings();
+  if (enabled) checkBirthdayReminder("enabled");
+}
+
+function renderBirthdayReminderSettings() {
+  const settings = readBirthdayReminderSettings();
+  const label = document.getElementById("birthdayToggleLabel");
+  if (label) label.textContent = settings.enabled ? "On" : "Off";
+
+  const status = document.getElementById("birthdayStatusLine");
+  if (!status) return;
+
+  if (!settings.enabled) {
+    status.textContent = "Off. Birthdays still appear in Coming up — nothing is sent.";
+    return;
+  }
+  if (!notificationSupported() || Notification.permission !== "granted") {
+    status.textContent =
+      "On, but this device has not allowed notifications, so nothing can be sent. Turn them on above.";
+    return;
+  }
+  const due = birthdaysToday();
+  status.textContent = due.length
+    ? `On. Today it would say: "${due.length === 1 ? "a birthday is today" : due.length + " birthdays today"}". One message per person, once a year.`
+    : "On. No birthday today, so it will stay silent today.";
+}
+
+function toggleBirthdayReminder() {
+  setBirthdayReminderEnabled(!readBirthdayReminderSettings().enabled);
+}
+
 /* The settings copy answers the only two questions that matter — is it on, and what will it
    actually say — because "a daily notification" with no stated content is how a feature gets
    switched off in week one and never turned back on. */
@@ -345,8 +510,10 @@ function cancelReminderFor(id) {
 function runReminderCheck(reason) {
   refreshReminderSchedule();
   // The digest rides on the same beats, so it needs no timer of its own and cannot drift out of
-  // step with the reminders it sits beside.
+  // step with the reminders it sits beside. The birthday reminder rides there too, for the same
+  // reason — it is an annual event, not a date an armed timer can be set for a year ahead.
   checkMorningDigest(reason);
+  checkBirthdayReminder(reason);
 
   const now = Date.now();
 
