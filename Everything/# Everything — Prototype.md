@@ -63,6 +63,22 @@ inbox, calendar, projects, goals, and AI-assisted search.
   *Mobile back navigation*.
 - **Themes** — four looks over one set of design tokens; see *Themes*.
 - **Inline help** — an "i" beside the fields that are not self-explanatory; see *Inline help*.
+- **Documents with expiries** — a warranty, policy, licence or passport is a *kind of item*, not a
+  table, so it inherits sync, search, backup and household sharing rather than reimplementing them.
+  It is grouped by how soon it lapses, and it **reminds 30 days out** — a document you only *list*
+  is a document you forget; see *Documents with expiries*.
+- **Money, in rupees and paise** — an expense is an item carrying an amount, so it syncs, searches
+  and backs up like everything else. Amounts are an **integer count of paise**, never a float, and
+  two currencies are never added together. An expense is reminded about **never** and stays off the
+  Schedule, because the money is already gone; see *Money*.
+- **Bills and subscriptions** — the mirror of an expense: money still **owed**, so it keeps a due
+  date, does reach the Schedule, and does remind. A bill repeats on its own. *"Pay ₹899 for internet
+  on the 10th"* and *"pay the electricity bill on the 5th"* both work; see *Bills and subscriptions*.
+- **Receipt photos** — photograph a receipt and the total, the shop and the date are read off it and
+  **proposed for you to check**, never saved silently. It reads the *total*, not the subtotal, the
+  tax or the change; see *Receipt photos*.
+- **Money owed** — *"Ravi owes me ₹500"* is neither spending nor a bill, so it is a **task** with an
+  amount and a direction, and the two directions are never netted; see *Money owed*.
 
 ## Recurring series
 
@@ -1757,7 +1773,246 @@ both a time **and** an event word (`meeting`, `sync`, `demo`, …). *"design rev
 has the time but not the word, so offline it stays a note until the model reads it. That limit
 predates this work and is unchanged.
 
+## Documents with expiries
+
+A warranty, an insurance policy, a driving licence, a passport — each one has a date after which it
+stops being useful, and each one was nowhere in the app.
+
+**A document is a kind of item, not a table.** That is the whole design decision, and it buys a great
+deal for free: realtime sync, the offline queue, RLS, full-text search, JSON backup and household
+sharing all work because a document *is* an item. The alternative — a `documents` table — means
+reimplementing all of it, and getting the conflict resolution subtly wrong on a second code path.
+
+Documents are grouped by **how soon they lapse** rather than alphabetically, because the only
+question anyone opens this view to answer is *what is about to bite me*:
+
+| Bucket | Meaning |
+| --- | --- |
+| Expired | past its date |
+| Next 7 days | inside the week |
+| Next 30 days | inside the lead time |
+| Later | comfortably ahead |
+| No expiry | a receipt, a manual — real, not broken |
+
+That last bucket exists because **not every document has an expiry**. A receipt does not, and a
+receipt is a perfectly ordinary document rather than a failed one. Treating "no expiry" as *missing
+data* would have put every receipt in a bucket that says something is wrong with it.
+
+### The detail that decides whether the feature is worth having
+
+Storing an expiry is not the point. **Being told before it lapses** is the point, so a document gets
+a reminder `DOCUMENT_EXPIRY_LEAD_DAYS` (30) days ahead, through the same delivery paths as every other
+reminder — push while the app is closed, service worker while offline, replay on return.
+
+Two details make it behave:
+
+- **The expiry is a local calendar day, not an instant.** `new Date('2027-03-04')` is UTC midnight,
+  which in any negative offset is *the 3rd*. The chip would have said a document expired a day before
+  it did. Every date is pinned to local noon for the same reason.
+- **An already-expired document still reminds, but only for a while.** The thing that expired is
+  usually the thing still needing attention — a lapsed policy, a licence that must be renewed. But
+  without a grace window a two-year-old receipt would nag on every single load forever, so an expired
+  document stops reminding after `DOCUMENT_EXPIRY_REMINDER_GRACE_DAYS`.
+
+An expiry *inside* the lead time is clamped to **now**, because the reminder engine treats a time in
+the past as due immediately — without the clamp it would fire on every load until the day arrived.
+
+## Money
+
+Money is three different facts that look alike and behave nothing alike:
+
+| | money **spent** | money **owed** | money **lent** |
+| --- | --- | --- | --- |
+| when | the day it happened | the day it is due | open-ended |
+| repeats | never | yes | no |
+| reminds | never | yes | as a task |
+| on Today | no | yes | yes |
+| in the month total | yes | no | no |
+
+Collapsing them into one "money" kind would have been simpler to write and wrong in four separate
+places, so they are three.
+
+### An expense is an item, and the amount is an integer count of paise
+
+Like documents, an **expense is an item** carrying `amountMinor`, `currency`, `category` and
+`spentOn` in `capture_metadata`. No new table, no migration, and the whole sync/offline/RLS/backup
+machinery applies to it for free.
+
+The amount is **an integer number of paise**, never a float. `parseFloat('450.50')` is
+`450.49999999999994`, and a month total that is off by a paisa is a month total nobody checks again.
+There is no rounding step anywhere in the read path, because there is nothing to round.
+
+**Two currencies are never added together.** Not converted, not approximated — *not added*. A mixed
+total is not a number with an error in it, it is a different and meaningless number, so `sumMoney`
+leaves such rows out rather than printing something plausible.
+
+### An expense with no amount is refused, not saved
+
+*"I spent money"* and *"Spent ₹450 for groceries"* are the same sentence with a number missing from
+one of them. Saving the first as ₹0 is the worst outcome available: the row exists, the list shows a
+figure, and the month is permanently wrong in a way nobody can see. So the save is **refused** and
+the amount is asked for.
+
+The asymmetry with the edit dialog is deliberate and is the one place this rule is not applied:
+clearing an amount on a *saved* item is honoured, because there the person is deliberately emptying
+a field rather than failing to supply one, and a note filed as an expense by mistake has to be
+possible to free.
+
+### An absent amount is absent, not zero
+
+`Number(null)` is `0` and `Number('')` is `0`. Reading a missing amount with `Number()` therefore
+produced a real, confident `₹0` — the exact opposite of the refusal above, reached by the other
+door. `moneyOf` reads an absent amount as `null`, and the list shows a dash.
+
+### Groceries and Food are two categories
+
+Deliberately not one *"Food"* category. Buying vegetables and eating out are different acts with
+different rhythms, and merging them is what makes a spending report useless. The reports and the
+category breakdown keep them apart.
+
+### What it deliberately does not do
+
+- **No bank connection, no auto-import.** Both need credentials, a consent flow and a reconciliation
+  story. Guessing at a bank integration is worse than not having one.
+- **No bill payment.** The app tells you a bill is due. It does not move money.
+- **No AI spending analysis.** "You spent 40% more on eating out" is a judgement, and a wrong one
+  delivered confidently is worse than no insight at all.
+
+## Bills and subscriptions
+
+A bill is the **exact mirror of an expense**: same amount handling, same household, same sync — but
+with a due date and a recurrence instead of a day that already happened.
+
+One kind covers both a bill and a subscription, because mechanically they are identical: an amount,
+a day it is due, and a repeat. The only difference is what the row is called, so that is a label
+(`billType`) rather than a second kind with a second copy of the recurrence plumbing.
+
+### The bug that made a monthly bill a one-time bill
+
+Recurrence was gated on `kind === "task"` in two places. A bill was therefore **given no series
+key**, never joined a series, and never rolled forward — so a monthly bill simply **stopped existing
+after its first date passed**. The rule that fixed it is one predicate:
+
+```js
+function canRepeat(item) {
+  return item?.kind === "task" || isBill(item);
+}
+```
+
+One predicate rather than two inline `kind === "task"` tests, so the two call sites that decide what
+repeats cannot drift apart. An expense and a document never repeat: the money is spent and the
+document expires.
+
+**Yearly recurrence** is now honoured. It was previously a value the capture sheet could offer and
+the engine could not do anything with, and the monthly clamp against a 31st is now shared between the
+two rather than written twice.
+
+### "On the 5th" is a date, and no date parser resolves it
+
+*"Pay the electricity bill on the 5th"* is the commonest way an Indian household states a due date.
+It is also unparseable, because a bare day of the month is not a date until someone supplies the
+month — and nobody said one.
+
+It is resolved **forward**: this month's 5th, or next month's once that has passed. Always forward,
+because a bill said to be payable on the 1st and said on the 3rd means the 1st of *next* month. The
+other reading files it overdue before it was ever due. Months with no 31st clamp to the last day that
+exists.
+
+### The monthly cost divides a yearly charge
+
+*"Every month"* is the number a household actually wants from subscriptions, so a yearly charge is
+**divided by twelve**, not added whole. ₹1,200 a year for cloud storage is ₹100 a month; listing it
+as ₹1,200 would overstate the cost twelve times, which is the difference between a number you check
+and one you believe.
+
+A **weekly** charge is left out of that total rather than approximated, because four weeks is not a
+month and the difference shows up every single time.
+
+## Receipt photos
+
+Photographing a receipt already worked: the image channel runs Tesseract and drops the recognised
+text into the capture box. So the receipt feature **decodes no pixels at all** — it reads the text
+that is already there.
+
+The hard part is not finding a number. A receipt is mostly numbers. It is telling the **total** from
+the subtotal, the tax and the change, and two rules do that without a model:
+
+- **Read the lines from the bottom up.** The total is printed last on almost every receipt, and the
+  itemised list above it is full of numbers that look plausible.
+- **Refuse any line that names something other than the total.** `SUBTOTAL`, `GST`, `CGST`, `TAX`,
+  `DISCOUNT`, `ROUND OFF` and `CHANGE` are all on the same piece of paper, and every one of them is
+  the wrong answer.
+
+A bare number is accepted *only* on a line already confirmed to be the total line, so `TOTAL 240` is
+read as ₹240 while `Colgate 398.00` is never read as anything at all.
+
+### It proposes, and never asserts
+
+Whatever it decides is **proposed**. The amount lands in the box with the line it came from
+(*"Read ₹874 from 'TOTAL 874'. Check it, then save."*), and nothing is saved straight from the read.
+
+This is the part that matters. Tesseract on a crumpled thermal receipt is genuinely unreliable, and a
+wrong amount here is **indistinguishable from a right one on screen** — then it goes into a month
+total the person will trust. So when the total cannot be read confidently, the app says nothing
+rather than guessing.
+
+A receipt with no readable date is still offered, because the amount is printed on the paper and
+there is genuinely nothing to decide — a card that only ever appeared alongside a date would have
+turned a photographed receipt into a wall of text to read.
+
+### The known limit
+
+**The image is not kept.** Only the text it produced is stored. Keeping it means blob storage,
+retention rules and a size problem on every sync, and the paper is in a drawer.
+
+## Money owed
+
+*"Ravi owes me ₹500"* is money that has not moved, in either direction, and it is the one money fact
+with no home among the others. It is not an expense — nothing was spent, and counting it would
+inflate the month with money that never left the account. It is not a bill — nobody has issued
+anything.
+
+It is saved as a **task**, because a task already chases you: it lands on Today, it can be completed
+when the money arrives, and it can be snoozed. A fourth kind would have needed all three built again
+for a row whose only special property is an amount.
+
+### The amount lives under its own key
+
+It is stored as **`owedMinor`, never `amountMinor`**. Not a naming preference: it is what makes it
+impossible for a month total that walks every item to count a debt as spending. The two fields are
+deliberately different keys, and a test asserts that editing a debt never writes into the spending
+fields.
+
+The **direction** is stored too. An amount with no direction is a number nobody can act on, and
+getting it backwards — "they owe me" read as "I owe them" — is the worst possible inversion.
+
+### The two directions are never netted
+
+₹500 owed to you and ₹500 you owe are **two facts, not zero**. The Money view shows both, under their
+own headings, and never a single net figure — which would hide both of them behind a confident ₹0.
+
+### Correcting it later
+
+All three money kinds are editable after saving. That is not a detail: the receipt flow asks you to
+check a number *before* saving, and without an edit path a misread total would have been permanent.
+The one place it could not be undone is the one place a person most needs to be able to undo it.
+
+## The kind picker is one line on a phone
+
+Twelve kinds in a **two-column grid** is six rows — a third of the height of the capture sheet — and
+every kind the app grows makes it worse. Adding bills made it bad enough to matter: the sheet grew by
+roughly its own width, and the **item count on a capture that produces more than one thing fell below
+the fold** on a 390px screen. You could no longer see what you were about to save without scrolling.
+
+It is now a single **horizontally scrolling line** on a phone. The chips are a picker, not something
+to read, so a swipe is the right gesture, and the height is the same whatever the list contains.
+
+This is the kind of change that reads as a regression, because "two neat columns" looks better than
+"a strip you have to scroll". It is not, on a phone, where the strip is one line and the grid was six.
+`plan-visual.mjs` asserts the reach directly, so reverting it fails a test rather than a person.
+
 ## Note on multi-user sync
+
 The app runs as a static site with Supabase for accounts and shared data, Vercel serverless
 functions for the API routes, and any of several model providers for AI. Opened as a plain
 `file://` page it still works, but falls back to local-only storage in that one browser, and AI
