@@ -10,7 +10,7 @@
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4451;
+let PORT = 4451;
 
 const WIDTHS = [
   { w: 320, h: 720, label: 'small phone' },
@@ -28,7 +28,7 @@ function record(ok, name, detail) {
   if (!ok) process.exitCode = 1;
 }
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -52,7 +52,7 @@ try {
     state.goals = [{ id: 'g1', title: 'Run a marathon', note: 'Sub three hours' }];
     /* Money and Documents rows seeded as well, and deliberately with the content that stresses a
        layout: a long merchant name, a four-figure amount, a yearly subscription shown as a monthly
-       figure, and a debt. An empty view measures nothing — every overflow check would pass, and
+       figure, and a debt. An empty view measures nothing Ã¢â‚¬â€ every overflow check would pass, and
        "the Money view fits on a phone" would be a claim about a page with no money on it. */
     const soon = new Date();
     soon.setDate(soon.getDate() + 2);
@@ -71,7 +71,7 @@ try {
 
   /* Derived from the markup rather than written out by hand. The list used to be a literal, and it
      quietly fell behind: Documents and Money were added to the app and this audit went on measuring
-     thirteen views and missing the two newest — so the two views most likely to be laid out freshly
+     thirteen views and missing the two newest Ã¢â‚¬â€ so the two views most likely to be laid out freshly
      (money rows, category bars, a subscription list) were the only ones nobody ever looked at on a
      phone or a tablet. Reading the ids means a new view is covered the day it is written, and an
      audit that needs editing to keep up is an audit that stops being run. */

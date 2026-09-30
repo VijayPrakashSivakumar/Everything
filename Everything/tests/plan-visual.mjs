@@ -11,7 +11,7 @@ import { startTestServer, testUrl } from './test-server.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const OUT = path.resolve(root, '..', 'tmp');
-const PORT = 4402;
+let PORT = 4402;
 
 const PLAN = [
   { kind: 'event', title: 'Design team meeting', dueDate: '2026-09-27T09:00:00.000Z', person: 'Priya', project: '', priority: '', recurrence: 'none', confidence: 'high', ambiguous: '' },
@@ -20,7 +20,7 @@ const PLAN = [
   { kind: 'waiting', title: 'Signed contract from the client', dueDate: '', person: 'Ravi', project: 'Atlas', priority: '', recurrence: 'none', confidence: 'medium', ambiguous: '' },
 ];
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch();
@@ -71,7 +71,7 @@ try {
   const desk = await shoot('plan-desktop', { width: 1280, height: 900 });
   const d = await desk.evaluate(geometry);
   // 4 entries: event (drives the form), agenda (folds into its checklist), task, waiting.
-  // So 2 rows, and 3 saved items — the agenda line is not a fourth item.
+  // So 2 rows, and 3 saved items Ã¢â‚¬â€ the agenda line is not a fourth item.
   record(d.rowCount === 2, 'only the two work items are listed as rows', JSON.stringify(d.rowCount));
   record(/Save 3 items/.test(d.label), 'the save button counts items, not entries', d.label);
   record(d.rows.every((r) => r.left >= d.sheet.left && r.right <= d.sheet.right), 'every row sits inside the sheet', JSON.stringify(d.rows));

@@ -1,22 +1,22 @@
-﻿// Dialog layer probe: semantics, focus in, focus trapped, focus returned, app never left frozen.
+// Dialog layer probe: semantics, focus in, focus trapped, focus returned, app never left frozen.
 //
 //   node Everything/tests/layers-probe.mjs
 //
 // Why this is its own file: four of the five overlays in this app were not marked as dialogs, none of
 // them trapped Tab, and none of them gave focus back on close. Every other suite passed the whole
-// time, because a missing role and an escaping Tab break nothing â€” they just quietly make the app
+// time, because a missing role and an escaping Tab break nothing Ã¢â‚¬â€ they just quietly make the app
 // unusable for anyone not using a mouse with sight. A defect that invisible has to be driven
 // deliberately, so it gets a probe rather than an extra assertion buried in an unrelated one.
 //
 // The last check is the important one. An earlier version kept its own list of open dialogs, and a
-// close path that forgot to remove its entry left the whole app inert â€” frozen, unclickable, gone. It
+// close path that forgot to remove its entry left the whole app inert Ã¢â‚¬â€ frozen, unclickable, gone. It
 // passed four checks and failed one, and that one was the whole ballgame. So the freeze is asserted
 // directly, by closing every dialog without telling anyone and checking the app comes back.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4456;
+let PORT = 4456;
 
 const results = [];
 const check = async (name, fn) => {
@@ -29,7 +29,7 @@ const check = async (name, fn) => {
   }
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -51,7 +51,7 @@ try {
 
   await check('every overlay is a dialog with an accessible name', async () => {
     // Read from the markup rather than from a list kept here, so a sixth modal added later is
-    // covered by not needing to be special-cased â€” and one that forgets fails here.
+    // covered by not needing to be special-cased Ã¢â‚¬â€ and one that forgets fails here.
     const layers = await page.evaluate(() =>
       [...document.querySelectorAll('.modal-overlay, .ask-overlay')]
         .map((el) => ({
@@ -218,7 +218,7 @@ id: document.activeElement?.id || '',
   });
 await check('the app is never left frozen, whichever way every dialog was closed', async () => {
     // The one that matters. The first attempt kept its own list of open layers, and any close path
-    // that forgot to pop froze the whole app permanently — unclickable, no way back. This asserts the
+    // that forgot to pop froze the whole app permanently â€” unclickable, no way back. This asserts the
     // freeze directly rather than trusting that every close path remembered to tidy up after itself.
     for (const id of ['captureModal', 'editModal', 'personModal', 'askOverlay', 'commandPalette']) {
       await page.evaluate((which) => {
@@ -229,7 +229,7 @@ await check('the app is never left frozen, whichever way every dialog was closed
       assert.ok(await page.evaluate(() => document.querySelector('.app').inert === true),
         `opening ${id} did not freeze the background`);
       // Closed the crude way: strip the class and nothing else. No close function runs, nothing is
-      // told, nothing should need to tidy up — the observer reads the DOM and recovers by itself.
+      // told, nothing should need to tidy up â€” the observer reads the DOM and recovers by itself.
       await page.evaluate((which) => {
         document.getElementById(which).classList.remove('open');
       }, id);
@@ -268,7 +268,7 @@ await check('the app is never left frozen, whichever way every dialog was closed
 
 console.log(results.join('\n'));
 /* Either the verdict or the banner, never both. run-all.mjs scores on /ALL (\d+) [A-Z -]*PASSED/, so
-   printing that beside a FAIL records a broken suite as a green one — which is how the first version
+   printing that beside a FAIL records a broken suite as a green one â€” which is how the first version
    of this probe could have hidden the very freeze it was written to catch. */
 console.log(process.exitCode
   ? '\nDIALOG-LAYER CHECKS FAILED'

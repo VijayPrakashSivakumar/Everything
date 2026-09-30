@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4423;
+let PORT = 4423;
 const results = [];
 const check = async (name, fn) => {
   try { await fn(); results.push(`PASS  ${name}`); }
@@ -22,7 +22,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -55,7 +55,7 @@ try {
       text: document.getElementById('commandList').textContent,
     }));
     assert.ok(out.open, 'Ctrl+Shift+K did not open the palette');
-    assert.equal(out.focused, 'commandInput', 'the palette did not take focus — it is unusable by keyboard');
+    assert.equal(out.focused, 'commandInput', 'the palette did not take focus Ã¢â‚¬â€ it is unusable by keyboard');
     assert.ok(out.rows > 5, `the palette showed only ${out.rows} rows`);
     assert.match(out.text, /Tasks/, 'the palette does not list the Tasks page');
     assert.match(out.text, /Capture/, 'the palette does not list the Capture action');
@@ -191,7 +191,7 @@ try {
 
   await check('the task list can be reordered by press-and-hold, not just by mouse', async () => {
     // HTML5 drag does not fire on touch, so a drag built only on dragstart passes every desktop
-    // test and is dead on the phone — which is where this app is used.
+    // test and is dead on the phone Ã¢â‚¬â€ which is where this app is used.
     await page.evaluate(() => {
       switchView('tasks');
       state.items = [
@@ -229,7 +229,7 @@ try {
 
   await check('a native HTML5 drag cannot steal the reorder', async () => {
     /* The subtle one. `draggable = true` starts a native drag, and a native drag cancels the
-       pointer event stream — so the press-and-hold path got exactly one move and then went quiet.
+       pointer event stream Ã¢â‚¬â€ so the press-and-hold path got exactly one move and then went quiet.
        The dashboard hid this because its cards are large; a 45px task row does not. */
     const out = await page.evaluate(() => {
       renderTasks('all');
@@ -271,7 +271,7 @@ try {
     // duplicated one.
     const fs = await import('node:fs');
     // The app logic is fifteen files in Everything/js now. The order they load in is read from
-    // index.html — the one place that order is written — and joined, because this check looks for a
+    // index.html Ã¢â‚¬â€ the one place that order is written Ã¢â‚¬â€ and joined, because this check looks for a
     // function that could be in any of them. Naming script.js here would have made this check pass
     // vacuously on an empty string the moment the file was split.
     const appDir = new URL('../', import.meta.url);
@@ -287,7 +287,7 @@ try {
   });
 
   await check('the inbox can be selected and acted on in bulk', async () => {
-    /* The Inbox holds every capture, so it outgrows the Tasks list — and it is the list people
+    /* The Inbox holds every capture, so it outgrows the Tasks list Ã¢â‚¬â€ and it is the list people
        actually revisit most. It had no bulk actions at all. */
     await page.evaluate(() => {
       state.items = [
@@ -357,7 +357,7 @@ try {
 
   await check('a bulk action can be taken back in one tap', async () => {
     /* A confirm() dialog catches the accidental tap. It cannot catch the person who agreed with the
-       dialog and changed their mind thirty seconds later — which is why the capture flow already
+       dialog and changed their mind thirty seconds later Ã¢â‚¬â€ which is why the capture flow already
        used an undo bar, and why the bulk actions now share it. */
     await page.evaluate(() => {
       state.items = [{ id: 'u1', kind: 'text', title: 'Archivable', done: false, created: 2 }];
@@ -464,7 +464,7 @@ try {
        Asserting a committed transform used to force a design that pushed the row's own content out
        of view. Mid-gesture tracking is checked further down, where it belongs. */
     assert.equal(open.transform, '',
-      'the row content is left translated after the gesture — it should be pinned and revealed over');
+      'the row content is left translated after the gesture Ã¢â‚¬â€ it should be pinned and revealed over');
     assert.equal(open.rowTransform, '',
       'the row itself was translated, which drags the revealed buttons off the edge with it');
     // The two gestures must not both fire: a swipe that also started a drag would have moved the
@@ -491,7 +491,7 @@ try {
 
   await check('only one row can be swiped open at a time', async () => {
     /* `swipeOpenRow` is a single slot. Opening a second row used to overwrite the pointer to the
-       first, which then stayed slid aside with nothing able to close it — two rows of buttons on
+       first, which then stayed slid aside with nothing able to close it Ã¢â‚¬â€ two rows of buttons on
        screen at once, each drawn over the row below. */
     await page.evaluate(() => {
       state.items = [
@@ -615,7 +615,7 @@ try {
       `the revealed buttons sit ${out.inset}px inside the right edge instead of on it`);
     assert.ok(out.childCount > 0, 'the opened row has no content of its own to show');
     assert.ok(out.contentVisible,
-      'opening the row slid its own content out of view — the item being acted on disappeared');
+      'opening the row slid its own content out of view Ã¢â‚¬â€ the item being acted on disappeared');
     assert.ok(Math.abs(out.width - out.travel) <= 2,
       `the buttons are ${out.width}px wide but the row slides ${out.travel}px, `
       + 'so the gap between the text and the first button shows bare row');
@@ -648,7 +648,7 @@ try {
     const box = await (await page.locator('#inboxList .task-row').first()).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    // Mostly vertical, which is a scroll — the same motion a person makes to read further down.
+    // Mostly vertical, which is a scroll Ã¢â‚¬â€ the same motion a person makes to read further down.
     await page.mouse.move(box.x + box.width / 2 - 6, box.y + box.height / 2 + 70, { steps: 10 });
     await page.mouse.up();
     await page.waitForTimeout(300);
@@ -736,14 +736,14 @@ try {
       };
     });
     assert.equal(out.taskReorderable, true, 'precondition: task rows should be reorderable');
-    assert.equal(out.taskSwipeable, false, 'a task row is both swipeable and reorderable — the gestures will fight');
+    assert.equal(out.taskSwipeable, false, 'a task row is both swipeable and reorderable Ã¢â‚¬â€ the gestures will fight');
     assert.equal(out.inboxSwipeable, true, 'precondition: inbox rows should be swipeable');
     assert.equal(out.inboxReorderable, false, 'an inbox row is both swipeable and reorderable');
   });
 
   await check('the palette can be reached by touch, not only by keyboard', async () => {
-    /* The bug this exists for: Ctrl+Shift+K was the *only* way to open the palette, so on a phone —
-       which is where this app is used — the feature did not exist. Fourteen desktop checks passed
+    /* The bug this exists for: Ctrl+Shift+K was the *only* way to open the palette, so on a phone Ã¢â‚¬â€
+       which is where this app is used Ã¢â‚¬â€ the feature did not exist. Fourteen desktop checks passed
        while it was unreachable on the device that matters. */
     // hasTouch, because `tap` is only supported on a touch context. Without it the check died on
     // "The page does not support tap" and proved nothing about the button.
@@ -768,7 +768,7 @@ try {
       });
       assert.ok(seen.exists, 'there is no button to open the palette on a phone');
       assert.ok(seen.width > 0 && seen.height > 0,
-        'the palette button is in the DOM but hidden on a 390px screen — the palette is still unreachable');
+        'the palette button is in the DOM but hidden on a 390px screen Ã¢â‚¬â€ the palette is still unreachable');
       assert.ok(seen.insideScreen, 'the palette button overflows the screen and cannot be tapped');
       assert.match(seen.label, /page|task|person|project/i,
         'the palette button has no label saying what it does');
@@ -882,7 +882,7 @@ try {
     // and the search box disagree about the same word, which is worse than either one alone.
     const out = await page.evaluate(() => {
       // The reorder checks above replaced state.items, so restore something with a typo-able word
-      // first — otherwise this asserts only that two empty lists are equal.
+      // first Ã¢â‚¬â€ otherwise this asserts only that two empty lists are equal.
       state.items = [{ id: 'ty1', kind: 'task', title: 'Call the plumber', done: false, created: 1 }];
       const typed = 'plumbr';
       const palette = commandRecordRows(typed).filter((r) => String(r.id).startsWith('item-')).map((r) => r.label);
@@ -899,7 +899,7 @@ try {
 }
 
 /* The banner wording is load-bearing, and so is the number in it. run-all.mjs matches
-   /ALL (\d+) [A-Z -]*PASSED/ and marks the suite failed when it does not — but it also fails on a
+   /ALL (\d+) [A-Z -]*PASSED/ and marks the suite failed when it does not Ã¢â‚¬â€ but it also fails on a
    non-zero exit code, so printing "ALL 14 ... PASSED" beside two FAILs would be caught only by the
    exit code, and the line directly above it would claim the opposite. The count is the number of
    checks that ran, so the sentence can never contradict the lines above it. */

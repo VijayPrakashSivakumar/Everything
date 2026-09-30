@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4406;
+let PORT = 4406;
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 
 const browser = await chromium.launch();
 const results = [];

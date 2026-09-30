@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4399;
+let PORT = 4399;
 
 const PLAN_REPLY = {
   items: [
@@ -26,7 +26,7 @@ const OTHER_REPLY = {
   ],
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 
 const browser = await chromium.launch();
 const page = await browser.newPage();

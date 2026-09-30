@@ -3,7 +3,7 @@
 //   node Everything/tests/conversation-engine-probe.mjs
 //
 // What this exists for. The question card could only ever offer fixed buttons, so "Remind me to
-// call Arun" could ask *whether* to keep it but never *when* — the only route to a date was the
+// call Arun" could ask *whether* to keep it but never *when* Ã¢â‚¬â€ the only route to a date was the
 // native date picker. This drives the real functions in a real browser, with no model and no
 // network, and checks the exchange the product actually promises:
 //
@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4417;
+let PORT = 4417;
 
 const results = [];
 const check = async (name, fn) => {
@@ -25,7 +25,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -72,7 +72,7 @@ try {
     return eval(a[1]);
   }, [text, CARD]);
 
-  // Say a sentence, then tap a chip — the ordinary path, one tap, no keyboard.
+  // Say a sentence, then tap a chip Ã¢â‚¬â€ the ordinary path, one tap, no keyboard.
   const chip = (text, label) => page.evaluate(async (a) => {
     openCapture();
     await new Promise((r) => setTimeout(r, 120));
@@ -159,9 +159,9 @@ try {
     assert.equal(t.answering, false, 'the conversation should be finished');
   });
 
-  await check('"Other…" reveals the field for anything the chips do not cover', async () => {
+  await check('"OtherÃ¢â‚¬Â¦" reveals the field for anything the chips do not cover', async () => {
     const s = await open('Remind me to call Arun');
-    assert.equal(s.hasInput, true, '"Other…" did not reveal the field');
+    assert.equal(s.hasInput, true, '"OtherÃ¢â‚¬Â¦" did not reveal the field');
     assert.equal(s.hasMic, true, 'the field must be speakable as well as typeable');
   });
 
@@ -182,7 +182,7 @@ try {
   });
 
   await check('the answer becomes words in the sentence, not a side panel', async () => {
-    // "remind me" has to become "remind me tomorrow" in the box itself — that is what makes this one
+    // "remind me" has to become "remind me tomorrow" in the box itself Ã¢â‚¬â€ that is what makes this one
     // growing thought rather than a form with a transcript next to it.
     const s = await chip('Remind me to call Arun', 'Tomorrow');
     assert.match(s.sentence, /tomorrow/i, `the answer never reached the box: "${s.sentence}"`);

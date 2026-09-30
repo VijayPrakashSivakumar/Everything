@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4419;
+let PORT = 4419;
 
 const results = [];
 const check = async (name, fn) => {
@@ -19,11 +19,11 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 /* Matched by path rather than by glob: the request carries a query string and the glob form did
-   not catch it, which left the button stuck on "Sending…" and made two of the checks below fail
+   not catch it, which left the button stuck on "SendingÃ¢â‚¬Â¦" and made two of the checks below fail
    for a reason that had nothing to do with the code under test. */
 const isRecover = (url) => url.pathname.includes('/auth/v1/recover');
 
@@ -84,7 +84,7 @@ try {
 
   await check('a rejected request shows the real reason instead of claiming success', async () => {
     // The exact failure a misconfigured project produces: the reset link's redirect is not on the
-    // allow-list. Saying "check your email" for a request that failed is worse than silence — the
+    // allow-list. Saying "check your email" for a request that failed is worse than silence Ã¢â‚¬â€ the
     // person waits for a mail that is never coming.
     await page.route(isRecover, async (route) => {
       await route.fulfill({
@@ -98,8 +98,8 @@ try {
     });
     await page.fill('#forgotEmail', 'someone@example.com');
     await page.click('text=Send reset link');
-    // Wait for the request to *finish* — the button re-enabling in the finally block. Waiting on
-    // the text instead matched the in-flight "Sending…" line and read it before the answer arrived.
+    // Wait for the request to *finish* Ã¢â‚¬â€ the button re-enabling in the finally block. Waiting on
+    // the text instead matched the in-flight "SendingÃ¢â‚¬Â¦" line and read it before the answer arrived.
     await page.waitForFunction(() => !document.getElementById('forgotSendBtn').disabled,
       null, { timeout: 5000 });
     const s = await screen();

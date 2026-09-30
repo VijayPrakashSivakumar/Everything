@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4418;
+let PORT = 4418;
 
 const results = [];
 const check = async (name, fn) => {
@@ -18,7 +18,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {

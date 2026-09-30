@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4403;
+let PORT = 4403;
 
 const entry = (over = {}) => ({
   kind: 'task', title: 'A thing', dueDate: '', person: '', project: '',
@@ -22,7 +22,7 @@ const CLEAR = [
 // Doubtful: one entry is a question, so the app must ask instead of guessing.
 const DOUBTFUL = [entry({ kind: 'event', title: 'Meet John', ambiguous: 'Which day next week?' })];
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 
 const browser = await chromium.launch();
 const results = [];

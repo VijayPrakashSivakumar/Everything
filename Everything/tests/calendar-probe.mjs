@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4418;
+let PORT = 4418;
 
 const results = [];
 const check = async (name, fn) => {
@@ -19,7 +19,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -45,7 +45,7 @@ try {
     window.fetch = () => Promise.resolve({ ok: false, status: 0, json: async () => ({}) });
     // The calendar only has layout while the Schedule view is the active one: every other view is
     // display:none, so a drag driven by getBoundingClientRect against a hidden grid is measuring
-    // zeros and the drop resolves to whatever is at 0,0 — the sidebar.
+    // zeros and the drop resolves to whatever is at 0,0 Ã¢â‚¬â€ the sidebar.
     switchView('schedule');
     calViewDate = new Date();
     setCalView('week');
@@ -130,7 +130,7 @@ try {
   // started on. A click is left to the browser, so a press with no movement still opens the panel.
   //
   // nth-child is NOT used to pick a day column. The grid is [time column][day] x 7, so nth-child(1)
-  // is the hour gutter and nth-child(4) is the third day, not the fourth — a selector that reads
+  // is the hour gutter and nth-child(4) is the third day, not the fourth Ã¢â‚¬â€ a selector that reads
   // like "the fourth day" and silently is not one.
   const dragToColumn = async (columnIndex, hour) => page.evaluate(async ({ columnIndex, hour }) => {
     const from = document.querySelector('#calWeekView .cal-drag-event');
@@ -160,7 +160,7 @@ try {
       [...document.querySelectorAll('#calWeekView .cal-week-day-col')]
         .findIndex((c) => new Date(c.querySelector('.cal-drop-day').dataset.calDate).toDateString() === new Date().toDateString()));
     // The drop target is a specific HOUR row, not the column body. Dropping on the body lands on
-    // whichever row the pointer happens to be over — the first one, 7am — and a test that asserted
+    // whichever row the pointer happens to be over Ã¢â‚¬â€ the first one, 7am Ã¢â‚¬â€ and a test that asserted
     // "the time of day is unchanged" would then be asserting the first hour, not the original one.
     const r = await dragToColumn(todayColumn + 3, 10);
     assert.ok(!r.error, r.error);
@@ -297,7 +297,7 @@ try {
     assert.equal(r.count, 2, `ten missed days produced ${r.count} rows instead of 2`);
   });
 
-  await check('the sweep is idempotent — running it twice adds nothing', async () => {
+  await check('the sweep is idempotent Ã¢â‚¬â€ running it twice adds nothing', async () => {
     const r = await page.evaluate(async () => {
       const stale = new Date();
       stale.setDate(stale.getDate() - 2);
@@ -421,7 +421,7 @@ try {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const justPassed = `${y}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`;
-      // Yesterday's anniversary must be roughly a year out — not 0 days, and not negative.
+      // Yesterday's anniversary must be roughly a year out Ã¢â‚¬â€ not 0 days, and not negative.
       return { days: daysUntilAnnual(justPassed, Date.now()), justPassed };
     });
     assert.ok(r.days > 360, `yesterday's anniversary (${r.justPassed}) resolved to ${r.days} days away, expected about a year`);
@@ -520,7 +520,7 @@ try {
         client_id: 'p1', name: 'Me', notes: '', metadata: payload.metadata,
       });
       // A record written before the flag existed has no key at all, and must not be turned into an
-      // explicit false by a truthiness check — nor must it clear a true set on another device.
+      // explicit false by a truthiness check Ã¢â‚¬â€ nor must it clear a true set on another device.
       const older = normaliseStructuredRecord('person', {
         client_id: 'p2', name: 'Ann', metadata: { phone: '', email: '', birthday: '1994-03-04' },
       });
@@ -560,7 +560,7 @@ try {
       await checkBirthdayReminder('on');
       const afterFirst = shown.length;
 
-      // The same beat again — a 30s tick, a wake, the network returning — must not repeat it.
+      // The same beat again Ã¢â‚¬â€ a 30s tick, a wake, the network returning Ã¢â‚¬â€ must not repeat it.
       await checkBirthdayReminder('tick');
       await checkBirthdayReminder('again');
       const afterRepeats = shown.length;

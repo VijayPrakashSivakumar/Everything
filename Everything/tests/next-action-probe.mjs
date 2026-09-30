@@ -1,5 +1,5 @@
-// Proves the next-step suggestion appears when it should, applies when tapped, and — the point of
-// the whole thing — stops asking once you have turned it down.
+// Proves the next-step suggestion appears when it should, applies when tapped, and Ã¢â‚¬â€ the point of
+// the whole thing Ã¢â‚¬â€ stops asking once you have turned it down.
 //
 //   node Everything/tests/next-action-probe.mjs
 //
@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4414;
+let PORT = 4414;
 
 const results = [];
 const check = async (name, fn) => {
@@ -19,7 +19,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -78,7 +78,7 @@ try {
   });
 
   await check('a person named but never linked is spotted, on whole words only', async () => {
-    // Given a date, so the date rule does not — correctly — take the card first.
+    // Given a date, so the date rule does not Ã¢â‚¬â€ correctly Ã¢â‚¬â€ take the card first.
     const withPerson = await open([
       { id: 'other', kind: 'task', title: 'Old thing', person: 'Ravi', created: 2 },
       task({ id: 't1', title: 'Call Ravi about the quote', dueDate: '2026-10-01T09:00:00.000Z' }),
@@ -96,7 +96,7 @@ try {
 
   await check('only one suggestion is ever shown, and the more useful one wins', async () => {
     // A stack of cards is just noise. When an undated task also names an unlinked person, the date
-    // comes first — a task with no day is the more urgent gap.
+    // comes first Ã¢â‚¬â€ a task with no day is the more urgent gap.
     const r = await open([
       { id: 'other', kind: 'task', title: 'Old thing', person: 'Ravi', created: 2 },
       task({ id: 't1', title: 'Call Ravi about the quote' }),
@@ -136,7 +136,7 @@ try {
       return { first, afterOne, afterTwo };
     });
     assert.equal(r.first, true, 'it should offer a date the first time');
-    assert.equal(r.afterOne, true, 'one dismissal silenced it — that is far too eager');
+    assert.equal(r.afterOne, true, 'one dismissal silenced it Ã¢â‚¬â€ that is far too eager');
     assert.equal(r.afterTwo, false, 'two dismissals and it is still asking');
   });
 

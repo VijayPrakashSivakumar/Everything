@@ -3,8 +3,8 @@
 //   node Everything/tests/voice-understanding-probe.mjs
 //
 // The complaint this exists for: dictation recorded a voice note and stopped there. The transcript
-// reached the database, but the item stayed kind "voice" forever — never a task, never an event,
-// never on a schedule — because the channel and the kind were the same variable, so every rule in
+// reached the database, but the item stayed kind "voice" forever Ã¢â‚¬â€ never a task, never an event,
+// never on a schedule Ã¢â‚¬â€ because the channel and the kind were the same variable, so every rule in
 // the smart-capture path had to skip media captures entirely.
 //
 // These drive the real functions with a real transcript, with no model and no network: the local
@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4413;
+let PORT = 4413;
 
 const results = [];
 const check = async (name, fn) => {
@@ -22,7 +22,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -51,7 +51,7 @@ try {
     return {
       channel: captureChannel,
       type: captureType,
-      // The panel the person can still see — a re-typed capture must not hide the recorder.
+      // The panel the person can still see Ã¢â‚¬â€ a re-typed capture must not hide the recorder.
       voicePanel: getComputedStyle(document.getElementById('voiceCaptureUI')).display,
       person: document.getElementById('capturePerson').value,
       due: document.getElementById('captureDueDate').value,
@@ -74,8 +74,8 @@ try {
 
   await check('a dictated date reads as an event', async () => {
     // The local rules call something an event only when it carries both a time and an event word
-    // ("meeting", "sync", …). This sentence has both. A phrase with only a time falls through to a
-    // plain note until the model reads it — that is the local rule's job, and it is unchanged.
+    // ("meeting", "sync", Ã¢â‚¬Â¦). This sentence has both. A phrase with only a time falls through to a
+    // plain note until the model reads it Ã¢â‚¬â€ that is the local rule's job, and it is unchanged.
     const r = await dictate('design meeting tomorrow at 3pm');
     assert.equal(r.channel, 'voice', 'the capture must still be a voice capture');
     assert.equal(r.type, 'event', `expected an event, got ${r.type}`);

@@ -1,18 +1,18 @@
-﻿// Motion probe. Measures what the transitions and animations actually do in a running browser, and
+// Motion probe. Measures what the transitions and animations actually do in a running browser, and
 // what they do when the reader has asked for none.
 //
 //   node Everything/tests/motion-probe.mjs
 //
 // Why this exists: motion is the one thing in this app that no existing suite looked at, and every
 // other suite passed while navigation was a hard cut from one page to another. A feel problem cannot
-// be caught by asking whether a layout overflows, so it has to be measured directly â€” and asserted,
+// be caught by asking whether a layout overflows, so it has to be measured directly Ã¢â‚¬â€ and asserted,
 // because the failure mode is silence: removing an animation breaks nothing and fails nothing, it
 // just makes the app flat again and nobody notices for a month.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4455;
+let PORT = 4455;
 
 const results = [];
 const check = async (name, fn) => {
@@ -25,7 +25,7 @@ const check = async (name, fn) => {
   }
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 /* Stated, not inherited: a machine with reduced motion turned on at the OS level would otherwise
@@ -68,7 +68,7 @@ try {
 
   await check('the arrival animation ends at rest, not part-way', async () => {
     // `both` fill mode is what guarantees this. Without it the view would keep the `from` frame's
-    // opacity and sit at 0 forever â€” which looks like the page failed to load.
+    // opacity and sit at 0 forever Ã¢â‚¬â€ which looks like the page failed to load.
     await page.waitForTimeout(400);
     const resting = await page.evaluate(() => {
       const cs = getComputedStyle(document.querySelector('.view.active'));
@@ -147,9 +147,9 @@ try {
   await loaderPage.evaluate(() => {
     document.getElementById('authScreen').style.display = 'none';
     // Mounted deliberately. The loader only exists in the document while a wait is in progress, and
-    // every check below measures the rendered thing — computed style, animation state, ARIA — rather
+    // every check below measures the rendered thing â€” computed style, animation state, ARIA â€” rather
     // than the string the function returned, which would prove only that a template works.
-    document.body.insertAdjacentHTML('beforeend', brandLoaderHTML({ label: 'Thinking…' }));
+    document.body.insertAdjacentHTML('beforeend', brandLoaderHTML({ label: 'Thinkingâ€¦' }));
   });
 
   await check('the loader is the brand mark, path for path', async () => {
@@ -185,7 +185,7 @@ try {
       return { a, b: read() };
     });
     assert.notEqual(moved.a, moved.b,
-      `the loader dash never moved (${moved.a} → ${moved.b}); a still mark reads as a hung app`);
+      `the loader dash never moved (${moved.a} â†’ ${moved.b}); a still mark reads as a hung app`);
   });
 
   await check('the loader announces itself without announcing every frame', async () => {
@@ -233,7 +233,7 @@ await check('every motion keyframe uses tokens, not literal durations', async ()
 
   await check('keyboard focus is visible, and a mouse click is not ringed', async () => {
     // Driven with a real Tab rather than el.focus(). :focus-visible deliberately does not match a
-    // programmatic focus, and it deliberately does not match a mouse click — so calling focus() in
+    // programmatic focus, and it deliberately does not match a mouse click â€” so calling focus() in
     // a test proves nothing and would have passed a stylesheet with no focus ring at all.
     await page.evaluate(() => { document.body.focus(); });
     let ringed = null;
@@ -272,7 +272,7 @@ await check('every motion keyframe uses tokens, not literal durations', async ()
   });
 
   await check('reduced motion also beats the theme concepts', async () => {
-    // The specificity trap. Every concept sets --motion-scale on `:root[data-concept="â€¦"]`, which is
+    // The specificity trap. Every concept sets --motion-scale on `:root[data-concept="Ã¢â‚¬Â¦"]`, which is
     // (0,2,0); a plain `:root` override is (0,1,0) and loses. If this fails, motion is switched off
     // for the default theme only and every other concept keeps moving the reader.
     const concepts = await still.evaluate(() => APP_THEMES.map((t) => t.id));
@@ -314,4 +314,4 @@ await check('every motion keyframe uses tokens, not literal durations', async ()
 
 console.log(results.join('\n'));
 const failed = results.filter((r) => r.startsWith('FAIL')).length;
-console.log(`\n${failed ? `${failed} FAILED â€” ` : ''}ALL ${results.length} MOTION CHECKS PASSED`);
+console.log(`\n${failed ? `${failed} FAILED Ã¢â‚¬â€ ` : ''}ALL ${results.length} MOTION CHECKS PASSED`);

@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4420;
+let PORT = 4420;
 
 const results = [];
 const check = async (name, fn) => {
@@ -21,7 +21,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -34,7 +34,7 @@ try {
     window.fetch = () => Promise.resolve({ ok: false, status: 0, json: async () => ({}) });
   });
 
-  // A date `offset` days from today, as YYYY-MM-DD — the form the app actually stores.
+  // A date `offset` days from today, as YYYY-MM-DD Ã¢â‚¬â€ the form the app actually stores.
   const inDays = (offset) => page.evaluate((n) => {
     const d = new Date();
     d.setDate(d.getDate() + n);
@@ -43,7 +43,7 @@ try {
   }, offset);
 
   /* `doc()` builds a document row, and every check that uses it runs inside the page, so the helper
-     is defined there. A version out here would be a Node closure that page.evaluate cannot see —
+     is defined there. A version out here would be a Node closure that page.evaluate cannot see Ã¢â‚¬â€
      which is exactly the "doc is not defined" the first run of this probe produced. */
   await page.evaluate(() => {
     window.doc = (over = {}) => ({
@@ -65,7 +65,7 @@ try {
 
   await check('a date that does not exist is refused rather than rolled forward', async () => {
     // Date would quietly make 2027-02-30 the 2nd of March, which reads as a real expiry on the
-    // wrong day — and a document can lose a whole month of warning that way.
+    // wrong day Ã¢â‚¬â€ and a document can lose a whole month of warning that way.
     const r = await run(() => [parseIsoDate('2027-02-30'), parseIsoDate('2027-13-01'), parseIsoDate('')]);
     assert.deepEqual(r, [null, null, null], `expected all three refused, got ${JSON.stringify(r)}`);
   });
@@ -114,7 +114,7 @@ try {
   // ---------- The reminder ----------
   await check('the reminder fires before the expiry, not on it', async () => {
     // 45 days out, so the lead time is genuinely in the future and the clamp below does not move
-    // it — a shorter expiry would be inside the window, and then "now" would be the right answer.
+    // it Ã¢â‚¬â€ a shorter expiry would be inside the window, and then "now" would be the right answer.
     const r = await run((iso) => {
       const fire = documentReminderTime(doc({ expiresOn: iso }));
       const expiry = parseIsoDate(iso).getTime();
@@ -162,7 +162,7 @@ try {
   // ---------- The capture path ----------
   await check('a photographed warranty is offered the document option', async () => {
     // The builder reads captureChannel and imageOcrText as globals, so they have to be set to what a
-    // real read would have left behind — otherwise this passes for the wrong reason (no question at
+    // real read would have left behind Ã¢â‚¬â€ otherwise this passes for the wrong reason (no question at
     // all) or fails for the wrong one (a question it would never have asked).
     const r = await run((text) => {
       captureChannel = 'image';
@@ -213,7 +213,7 @@ try {
 
   await check('a saved document is not filed as a task due that day', async () => {
     // The date was read as a due date, and if that survived the save it would nag on the day it was
-    // photographed — a warranty is not something you do today.
+    // photographed Ã¢â‚¬â€ a warranty is not something you do today.
     const r = await run(async () => {
       state.items = [];
       openCapture();
@@ -252,7 +252,7 @@ try {
         chips: [...document.querySelectorAll('#documentsList .doc-chip')].map((c) => c.className),
       };
     }, { past: await inDays(-5), week: await inDays(4), later: await inDays(300) });
-    assert.equal(r.rows, 3, `expected the three documents, saw ${r.rows} rows — a task leaked in`);
+    assert.equal(r.rows, 3, `expected the three documents, saw ${r.rows} rows Ã¢â‚¬â€ a task leaked in`);
     assert.ok(!r.heads.some((h) => /no expiry/i.test(h)),
       `an empty group was rendered: ${JSON.stringify(r.heads)}`);
     assert.ok(r.heads.some((h) => /expired/i.test(h)), 'the expired group is missing');

@@ -1,6 +1,6 @@
 // Real-browser check for the theme system. Proves each concept actually changes the design
-// tokens, that the rendered result differs in typography, shape, density, elevation and motion —
-// not only in colour — that both schemes resolve, that the choice survives a reload without a
+// tokens, that the rendered result differs in typography, shape, density, elevation and motion Ã¢â‚¬â€
+// not only in colour Ã¢â‚¬â€ that both schemes resolve, that the choice survives a reload without a
 // flash of the wrong theme, and that `default` is still the original look.
 //   node Everything/tests/theme-probe.mjs
 import assert from 'node:assert/strict';
@@ -13,11 +13,11 @@ import { startTestServer, testUrl } from './test-server.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const OUT = path.resolve(root, '..', 'tmp');
-const PORT = 4404;
+let PORT = 4404;
 
-// Fails here, loudly, if the server cannot be reached — instead of letting Playwright report a
+// Fails here, loudly, if the server cannot be reached Ã¢â‚¬â€ instead of letting Playwright report a
 // connection error against a server that never started, several steps from the real cause.
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch();

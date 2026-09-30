@@ -5,7 +5,7 @@
 // What this exists for. A picture with a date on it used to be read and then left to the silent
 // auto-create, which filed a photographed appointment card as whatever the reading happened to
 // call it. A date says when; it does not say whether the thing is an event, a reminder or a record.
-// That one decision is offered instead — and until it is answered, nothing is created.
+// That one decision is offered instead Ã¢â‚¬â€ and until it is answered, nothing is created.
 //
 // Tesseract is never loaded. The card is built from the text a real read would have left behind, so
 // the probe tests the decision, not the OCR.
@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4418;
+let PORT = 4418;
 
 const results = [];
 const check = async (name, fn) => {
@@ -22,7 +22,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -35,7 +35,7 @@ try {
 
   /* Exactly what runImageOcr() leaves behind after a real read: the text in the box, the channel
      set to "image", and the recognised text kept for the audit trail. A one-byte PNG stands in for
-     the photograph — nothing here decodes it. */
+     the photograph Ã¢â‚¬â€ nothing here decodes it. */
   const shoot = (ocrText) => page.evaluate(async (t) => {
     openCapture();
     await new Promise((r) => setTimeout(r, 120));
@@ -118,7 +118,7 @@ try {
 
   await check('a receipt with no date is still offered, because its total is enough to decide', async () => {
     // The rule above used to cover this case, and it was wrong for it. A receipt answers its own
-    // question — the amount is printed on the paper — so not offering "Record as expense" would mean
+    // question Ã¢â‚¬â€ the amount is printed on the paper Ã¢â‚¬â€ so not offering "Record as expense" would mean
     // photographing a receipt got you nothing but a wall of text to read.
     const s = await shoot('receipt\nApollo Pharmacy\nTOTAL 240');
     assert.equal(s.pending, true, 'a readable receipt was not offered the expense option');

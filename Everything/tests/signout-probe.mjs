@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4421;
+let PORT = 4421;
 const results = [];
 const check = async (name, fn) => {
   try { await fn(); results.push(`PASS  ${name}`); }
@@ -19,7 +19,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -80,7 +80,7 @@ try {
       return { ok, kept: JSON.parse(after || '{}').items?.length ?? 0 };
     });
     assert.equal(out.ok, false, 'a failed sign-out reported success');
-    assert.equal(out.kept, 1, 'a failed sign-out wiped the data anyway — the person is now locked out of it');
+    assert.equal(out.kept, 1, 'a failed sign-out wiped the data anyway Ã¢â‚¬â€ the person is now locked out of it');
   });
 
   await check('the sign-in page explains how to get in', async () => {
@@ -159,11 +159,11 @@ try {
 }
 
 /* The banner wording is load-bearing: run-all.mjs scores a suite with
-   /ALL (\d+) [A-Z -]*PASSED/ and marks it failed when that does not match — even when every check
+   /ALL (\d+) [A-Z -]*PASSED/ and marks it failed when that does not match Ã¢â‚¬â€ even when every check
    passed and the exit code is 0. It was "4 of 4 sign-out checks passed" here, which read as a
    failure in the summary while the output directly above it said otherwise. */
 /* The banner wording is load-bearing, and so is the number in it. run-all.mjs scores a suite with
-   /ALL (\d+) [A-Z -]*PASSED/ and marks it failed when that does not match — but it also fails on a
+   /ALL (\d+) [A-Z -]*PASSED/ and marks it failed when that does not match Ã¢â‚¬â€ but it also fails on a
    non-zero exit code, so "ALL 2 SIGN-OUT CHECKS PASSED" beside four FAILs would be caught only by
    the exit code, and the line directly above it would claim the opposite. Counting results.length
    means the sentence can never contradict the lines above it. */

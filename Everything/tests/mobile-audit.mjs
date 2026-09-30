@@ -16,7 +16,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const CHROME = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const VIEWPORT = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
-const PORT = 8731;
+let PORT = 8731;
 const DEBUG_PORT = PORT + 1;
 
 const results = [];
@@ -129,7 +129,7 @@ async function main() {
      "does the placeholder still fit".
 
      Two earlier versions of this check silently reported every string as fitting, because one of
-     them measured a detached probe node — always 0 wide, so it could not fail. The probe therefore
+     them measured a detached probe node â€” always 0 wide, so it could not fail. The probe therefore
      has to be in the document before it is measured, and has to carry the input's font longhands
      rather than the `font` shorthand. */
   const measureSearchField = () => evaluate(`(() => {
@@ -194,7 +194,7 @@ async function main() {
 
   // No topbar control may be hidden to make room: the theme toggle once was, and it is the only
   // one-tap route back from a dark choice. Asserted with the search floor above so neither can be
-  // traded for the other. Controls only — `.theme-dot` is an unread badge, hidden on a clean inbox.
+  // traded for the other. Controls only â€” `.theme-dot` is an unread badge, hidden on a clean inbox.
   const reach = await evaluate(`(() => {
     const wanted = ['#paletteBtn', '.theme-toggle', '.mobile-capture-btn', '.topbar-menu-wrap .icon-btn', '.avatar'];
     return wanted.map((sel) => {
@@ -239,7 +239,7 @@ async function main() {
   // A placeholder that does not fit is truncated by the browser mid-word, and "Search an" reads as
   // a bug rather than as a hint. It is not a horizontal-overflow failure, so nothing above catches
   // it: the field is the right width and the text is simply too long for it. Measured by comparing
-  // the placeholder against the space actually available inside the input — the how lives in
+  // the placeholder against the space actually available inside the input â€” the how lives in
   // measureSearchField above, so this pass and the narrow-phone pass below cannot drift apart.
   const placeholder = await measureSearchField();
   record(!placeholder.missing && placeholder.avail >= placeholder.needed,
@@ -362,7 +362,7 @@ async function main() {
   /* ---------- The same topbar on a narrower phone ----------
 
      390px is not the only phone. It is the width this audit was written at, and the 120px search
-     floor above was only ever asserted there — so a topbar that just fits at 390 can collapse a few
+     floor above was only ever asserted there â€” so a topbar that just fits at 390 can collapse a few
      pixels narrower and nothing here says so.
 
      It collapses on the search field, because the field is the only child of the topbar allowed to
@@ -371,7 +371,7 @@ async function main() {
      theme toggle restored: 128px at 390px, 98px at 360px and 58px at 320px, with the placeholder
      cut to "Searc" and then to a single character.
 
-     360px is a 1080px screen at DPR 3 — most Android phones — and 375px is every iPhone from the
+     360px is a 1080px screen at DPR 3 â€” most Android phones â€” and 375px is every iPhone from the
      SE2 to the 13 mini, so the two widths below are the range that matters. The floor is asserted
      where it can hold. At 320px seven controls and a 120px field cannot coexist, and this repo has
      already ruled that hiding a control to make a row fit is the worse trade, so what is checked

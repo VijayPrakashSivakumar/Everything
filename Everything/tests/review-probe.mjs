@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startTestServer, testUrl } from './test-server.mjs';
 
-const PORT = 4417;
+let PORT = 4417;
 
 const results = [];
 const check = async (name, fn) => {
@@ -18,7 +18,7 @@ const check = async (name, fn) => {
   console.log(results[results.length - 1]);
 };
 
-const server = await startTestServer(PORT);
+const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
 try {
@@ -75,7 +75,7 @@ try {
       open({ id: 'b', title: 'Also fine', recurrence: 'weekly' }),
     ]);
     /* Matched loosely on purpose. These two used to pin the exact phrase, so improving the wording of a
-   clean week — which is a good thing — broke a test whose actual subject is whether a clean week is
+   clean week Ã¢â‚¬â€ which is a good thing Ã¢â‚¬â€ broke a test whose actual subject is whether a clean week is
    *reassured*, not which three words were chosen. `nothing.?s stuck` survives "Nothing is stuck" and
    "Nothing's stuck" alike, so the copy can keep improving without the safety check moving with it. */
     assert.match(r.stuck, /nothing.?s stuck/i, `a clean week still produced findings: "${r.stuck}"`);
