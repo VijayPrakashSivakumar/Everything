@@ -2770,6 +2770,91 @@
           </select>
         </div>
 
+          <!-- Money fields. Shown only for an expense, a bill, or a debt — the three kinds that carry
+               an amount. Without these, a misread receipt or a mistyped bill could be corrected
+               before saving and never after, which is the one place the money module is genuinely
+               unsafe. Each row is hidden on its own rather than the whole block, so a bill is never
+               shown a "spent on" date that means nothing for it. -->
+          <div id="editMoneyFields" style="display: none; margin-top: 10px">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+              <div>
+                <label style="font-size: 12.5px; color: var(--muted)" for="editAmount">Amount (₹)</label>
+                <input
+                  class="capture-input"
+                  id="editAmount"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="e.g. 450"
+                  style="margin: 4px 0 0"
+                />
+              </div>
+              <div id="editSpentOnRow">
+                <label style="font-size: 12.5px; color: var(--muted)" for="editSpentOn">Spent on</label>
+                <input type="date" id="editSpentOn" class="capture-input" style="margin: 4px 0 0" />
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+              <div id="editCategoryRow">
+                <label style="font-size: 12.5px; color: var(--muted)" for="editCategory">Category</label>
+                <input
+                  class="capture-input"
+                  id="editCategory"
+                  placeholder="e.g. Groceries"
+                  style="margin: 4px 0 0"
+                />
+              </div>
+              <div>
+                <label style="font-size: 12.5px; color: var(--muted)" for="editMerchant">Paid to</label>
+                <input
+                  class="capture-input"
+                  id="editMerchant"
+                  placeholder="e.g. D-Mart"
+                  style="margin: 4px 0 0"
+                />
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+              <div id="editBillTypeRow">
+                <label style="font-size: 12.5px; color: var(--muted)" for="editBillType">Type</label>
+                <select
+                  id="editBillType"
+                  style="
+                    width: 100%;
+                    padding: 9px;
+                    border-radius: 8px;
+                    border: 1px solid var(--border);
+                    background: var(--bg);
+                    color: var(--text);
+                    margin-top: 4px;
+                  "
+                >
+                  <option value="bill">Bill</option>
+                  <option value="subscription">Subscription</option>
+                </select>
+              </div>
+              <div id="editOwedRow">
+                <label style="font-size: 12.5px; color: var(--muted)" for="editOwedDirection">
+                  Which way
+                </label>
+                <select
+                  id="editOwedDirection"
+                  style="
+                    width: 100%;
+                    padding: 9px;
+                    border-radius: 8px;
+                    border: 1px solid var(--border);
+                    background: var(--bg);
+                    color: var(--text);
+                    margin-top: 4px;
+                  "
+                >
+                  <option value="in">They owe me</option>
+                  <option value="out">I owe them</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
         <!-- Edit actions -->
         <div class="modal-actions">
           <button class="btn" onclick="closeEditModal()">Cancel</button>

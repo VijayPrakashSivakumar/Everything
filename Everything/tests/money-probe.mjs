@@ -659,6 +659,120 @@ try {
       `31 January + 1 month gave ${r.monthly}, expected ${r.expected} — it overflowed into March`);
   });
 
+  // ---------- Editing a saved amount ----------
+  await check('a saved expense can have its amount corrected', async () => {
+    // The gap that made the receipt feature unsafe: it invites you to check the number before
+    // saving, and then gave you no way to change it afterwards. A misread total was permanent.
+    const r = await run(async () => {
+      state.items = [{
+        id: 'e1', kind: 'expense', title: 'D-Mart', done: false, created: 1,
+        captureMetadata: { amountMinor: 87400, currency: 'INR', category: 'Groceries', merchant: 'D-Mart', spentOn: '2026-03-04' },
+      }];
+      currentItemId = 'e1';
+      openEditModal();
+      return {
+        shown: document.getElementById('editMoneyFields').style.display !== 'none',
+        amount: document.getElementById('editAmount').value,
+        category: document.getElementById('editCategory').value,
+        spentOn: document.getElementById('editSpentOn').value,
+        // A bill row must not appear on an expense.
+        billRow: document.getElementById('editBillTypeRow').hidden,
+        owedRow: document.getElementById('editOwedRow').hidden,
+      };
+    });
+    assert.ok(r.shown, 'the money fields are hidden on a saved expense');
+    assert.equal(r.amount, '874', `the amount box shows "${r.amount}" — paise leaked into a rupee box`);
+    assert.equal(r.category, 'Groceries', 'the category was not shown');
+    assert.equal(r.spentOn, '2026-03-04', 'the spent-on date was not shown');
+    assert.ok(r.billRow, 'a bill type picker was offered on an expense');
+    assert.ok(r.owedRow, 'a debt direction was offered on an expense');
+  });
+
+  await check('a corrected amount reaches the month total', async () => {
+    const r = await run(async () => {
+      state.items = [{
+        id: 'e1', kind: 'expense', title: 'D-Mart', done: false, created: 1,
+        captureMetadata: { amountMinor: 87400, currency: 'INR', spentOn: isoDateString(new Date()) },
+      }];
+      const before = sumMoney(expensesThisMonth());
+      currentItemId = 'e1';
+      openEditModal();
+      document.getElementById('editAmount').value = '499';
+      await saveEdit();
+      renderMoney();
+      return { before, after: sumMoney(expensesThisMonth()), stored: moneyOf(state.items[0]).amountMinor };
+    });
+    assert.equal(r.before, 87400, 'the total did not start at the saved amount');
+    assert.equal(r.stored, 49900, `the corrected amount stored as ${r.stored}`);
+    assert.equal(r.after, 49900, `the month total reads ${r.after} — the correction did not reach it`);
+  });
+  // PLACEHOLDER_EDIT_DEBT
+
+  await check('a debt shows its amount and its direction, and can be turned around', async () => {
+    // A debt is a task, so the kind says nothing — only owedMinor does. Getting the direction wrong
+    // turns "they owe me" into "I owe them", which is the worst possible inversion of a number.
+    const r = await run(async () => {
+      state.items = [{
+        id: 'o1', kind: 'task', title: 'Owes me', person: 'Ravi', done: false, created: 1,
+        captureMetadata: { owedMinor: 50000, currency: 'INR', owedDirection: 'in' },
+      }];
+      currentItemId = 'o1';
+      openEditModal();
+      const opened = {
+        amount: document.getElementById('editAmount').value,
+        direction: document.getElementById('editOwedDirection').value,
+        shown: document.getElementById('editMoneyFields').style.display !== 'none',
+        owedRow: !document.getElementById('editOwedRow').hidden,
+        spentRow: document.getElementById('editSpentOnRow').hidden,
+      };
+      document.getElementById('editAmount').value = '750';
+      document.getElementById('editOwedDirection').value = 'out';
+      await saveEdit();
+      return { opened, after: moneyOwedOf(state.items[0]), spent: moneyOf(state.items[0]).amountMinor };
+    });
+    assert.ok(r.opened.shown, 'a debt showed no amount at all');
+    assert.equal(r.opened.amount, '500', `the debt box shows "${r.opened.amount}"`);
+    assert.equal(r.opened.direction, 'in', 'the direction did not open on "they owe me"');
+    assert.ok(r.opened.owedRow, 'the direction picker is missing');
+    assert.ok(r.opened.spentRow, 'a spent-on date was offered on a debt');
+    assert.equal(r.after.amountMinor, 75000, `the corrected debt stored as ${r.after.amountMinor}`);
+    assert.equal(r.after.direction, 'out', `the direction is "${r.after.direction}"`);
+    // Turning a debt around must not make it an expense.
+    assert.equal(r.spent, null, 'editing a debt wrote into the spending fields');
+  });
+
+  await check('an item with no money shows no money fields', async () => {
+    const r = await run(() => {
+      state.items = [{ id: 'p1', kind: 'task', title: 'Call Ravi', done: false, created: 1 }];
+      currentItemId = 'p1';
+      openEditModal();
+      return { shown: document.getElementById('editMoneyFields').style.display !== 'none' };
+    });
+    assert.ok(!r.shown, 'an ordinary task was shown an amount box');
+  });
+
+  await check('a cleared amount is honoured, and the row drops out of the total', async () => {
+    // Capture refuses an amountless expense, because "I spent money" with no number is a question
+    // it should have asked. Here the person is deliberately emptying the box, which has to work —
+    // otherwise a note filed as an expense by mistake can never be freed.
+    const r = await run(async () => {
+      state.items = [{
+        id: 'e1', kind: 'expense', title: 'Something', done: false, created: 1,
+        captureMetadata: { amountMinor: 87400, currency: 'INR', spentOn: isoDateString(new Date()) },
+      }];
+      const before = sumMoney(expensesThisMonth());
+      currentItemId = 'e1';
+      openEditModal();
+      document.getElementById('editAmount').value = '';
+      await saveEdit();
+      return { before, after: sumMoney(expensesThisMonth()), stored: moneyOf(state.items[0]).amountMinor, kept: state.items.length };
+    });
+    assert.equal(r.before, 87400, 'the total did not start at the saved amount');
+    assert.equal(r.stored, null, `the amount is still ${r.stored} — the box could not be cleared`);
+    assert.equal(r.after, 0, `the month total is ${r.after} — a cleared row is still being counted`);
+    assert.equal(r.kept, 1, 'clearing the amount deleted the item');
+  });
+
 } finally {
   await browser.close();
   server.kill();

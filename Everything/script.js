@@ -2672,7 +2672,12 @@ function moneyOwedDirection(text) {
    that loops over every row without checking what kind it is. */
 function moneyOwedOf(item) {
   const meta = normaliseCaptureMetadata(item?.captureMetadata);
-  const minor = Number(meta.owedMinor);
+  // Same rule as moneyOf: an absent debt is null, not ₹0. See there for why Number() cannot be used
+  // straight on a value that is allowed to be missing.
+  const minor =
+    meta.owedMinor === null || meta.owedMinor === undefined || meta.owedMinor === ""
+      ? NaN
+      : Number(meta.owedMinor);
   return {
     amountMinor: Number.isFinite(minor) ? Math.round(minor) : null,
     currency: String(meta.currency || MONEY_CURRENCY).toUpperCase(),
@@ -2701,7 +2706,13 @@ function textLooksLikeExpense(text) {
    reaches into capture_metadata directly and two places cannot disagree about what a total is. */
 function moneyOf(item) {
   const meta = normaliseCaptureMetadata(item?.captureMetadata);
-  const minor = Number(meta.amountMinor);
+  // An absent amount has to read as null, not as 0. Number(null) is 0 and Number("") is 0, so the
+  // naive read turned a deliberately cleared amount into a real zero — which then rendered as ₹0 in
+  // a list and looked like the most confident number on the page. Absent is its own state.
+  const minor =
+    meta.amountMinor === null || meta.amountMinor === undefined || meta.amountMinor === ""
+      ? NaN
+      : Number(meta.amountMinor);
   return {
     amountMinor: Number.isFinite(minor) ? Math.round(minor) : null,
     currency: String(meta.currency || MONEY_CURRENCY).toUpperCase(),
@@ -7282,8 +7293,88 @@ function openEditModal() {
       )
       .join("");
   goalSel.value = item.goal || "";
+  fillEditMoneyFields(item);
   document.getElementById("editModal").classList.add("open");
   lockPageScroll(true);
+}
+
+/* The money half of the item dialog. Three kinds carry an amount — an expense, a bill, and a debt —
+   and each gets a different subset of the same block, because a bill has no "spent on" day and a
+   debt has no category. A debt is detected by its amount rather than its kind: it is saved as a
+   task, so kind tells you nothing and only owedMinor does. */
+function fillEditMoneyFields(item) {
+  const block = document.getElementById("editMoneyFields");
+  if (!block) return;
+  const money = moneyOf(item);
+  const owed = moneyOwedOf(item);
+  const isExpenseRow = isExpense(item);
+  const isBillRow = isBill(item);
+  const isOwedRow = owed.amountMinor !== null && owed.amountMinor > 0;
+  const anyMoney = isExpenseRow || isBillRow || isOwedRow;
+  block.style.display = anyMoney ? "block" : "none";
+
+  const row = (id, show) => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = !show;
+  };
+  row("editSpentOnRow", isExpenseRow);
+  row("editCategoryRow", isExpenseRow);
+  row("editBillTypeRow", isBillRow);
+  row("editOwedRow", isOwedRow);
+  if (!anyMoney) return;
+
+  // The amount field takes plain rupees, not paise, because that is what a person edits and what is
+  // printed on the paper. A debt with paise is divided out and shown whole: a debt is rounded money.
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+  const minor = isOwedRow ? owed.amountMinor : money.amountMinor;
+  set("editAmount", minor === null ? "" : String(Math.floor(minor / PAISE_PER_RUPEE)));
+  set("editSpentOn", money.spentOn || "");
+  set("editCategory", money.category || "");
+  set("editMerchant", money.merchant || "");
+  set("editBillType", billTypeOf(item));
+  set("editOwedDirection", owed.direction);
+}
+
+/* Write the money fields back. A cleared box is honoured rather than refused: capture refuses an
+   amountless expense because "I spent money" with no number is a question it should have asked, but
+   here the person is deliberately emptying a field, and someone who filed a note as an expense by
+   mistake has to be able to take the amount back out. The item survives with no amount, and the
+   month total drops the row instead of counting it as zero. */
+function applyEditMoneyFields(item) {
+  const block = document.getElementById("editMoneyFields");
+  if (!block || block.style.display === "none") return;
+  const owed = moneyOwedOf(item);
+  const isOwedRow = owed.amountMinor !== null && owed.amountMinor > 0;
+  const raw = (document.getElementById("editAmount")?.value || "").trim();
+  const minor = raw === "" ? null : parseMoneyToMinor(raw);
+  if (minor !== null && !(minor > 0)) return; // unparseable text: leave the amount as it was
+  // Spread onto the existing object, never replaced, so imageText and the receipt line stay on it.
+  const meta = { ...normaliseCaptureMetadata(item.captureMetadata) };
+  const value = (id) => (document.getElementById(id)?.value || "").trim();
+
+  if (isOwedRow) {
+    meta.currency = MONEY_CURRENCY;
+    meta.owedMinor = minor;
+    meta.owedDirection = value("editOwedDirection") === "out" ? "out" : "in";
+  } else {
+    meta.currency = MONEY_CURRENCY;
+    meta.amountMinor = minor;
+    if (isExpense(item)) {
+      meta.spentOn = value("editSpentOn");
+      meta.category = value("editCategory");
+    }
+    meta.merchant = value("editMerchant");
+    if (isBill(item)) {
+      meta.billType = value("editBillType") === "subscription" ? "subscription" : "bill";
+    }
+  }
+  item.captureMetadata = meta;
+  // The sub-line shows the amount on a bill row, so it must follow the correction rather than keep
+  // repeating a number the person has just changed.
+  if (isBill(item)) item.sub = minor === null ? "" : formatMoney(minor);
 }
 function closeEditModal() {
   document.getElementById("editModal").classList.remove("open");
@@ -7316,6 +7407,7 @@ async function saveEdit() {
   item.dueDate = newDueDate;
   item.recurrence = document.getElementById("editRecurrence").value;
   if (item.dueDate) item.due = formatDueDisplay(item.dueDate);
+  applyEditMoneyFields(item);
 
   closeEditModal();
   closePanel();
