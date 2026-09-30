@@ -45,7 +45,7 @@ try {
     window.fetch = () => Promise.resolve({ ok: false, status: 0, json: async () => ({}) });
     // The calendar only has layout while the Schedule view is the active one: every other view is
     // display:none, so a drag driven by getBoundingClientRect against a hidden grid is measuring
-    // zeros and the drop resolves to whatever is at 0,0 Ã¢â‚¬â€ the sidebar.
+    // zeros and the drop resolves to whatever is at 0,0 — the sidebar.
     switchView('schedule');
     calViewDate = new Date();
     setCalView('week');
@@ -130,7 +130,7 @@ try {
   // started on. A click is left to the browser, so a press with no movement still opens the panel.
   //
   // nth-child is NOT used to pick a day column. The grid is [time column][day] x 7, so nth-child(1)
-  // is the hour gutter and nth-child(4) is the third day, not the fourth Ã¢â‚¬â€ a selector that reads
+  // is the hour gutter and nth-child(4) is the third day, not the fourth — a selector that reads
   // like "the fourth day" and silently is not one.
   const dragToColumn = async (columnIndex, hour) => page.evaluate(async ({ columnIndex, hour }) => {
     const from = document.querySelector('#calWeekView .cal-drag-event');
@@ -160,17 +160,29 @@ try {
       [...document.querySelectorAll('#calWeekView .cal-week-day-col')]
         .findIndex((c) => new Date(c.querySelector('.cal-drop-day').dataset.calDate).toDateString() === new Date().toDateString()));
     // The drop target is a specific HOUR row, not the column body. Dropping on the body lands on
-    // whichever row the pointer happens to be over Ã¢â‚¬â€ the first one, 7am Ã¢â‚¬â€ and a test that asserted
+    // whichever row the pointer happens to be over — the first one, 7am — and a test that asserted
     // "the time of day is unchanged" would then be asserting the first hour, not the original one.
-    const r = await dragToColumn(todayColumn + 3, 10);
+    // The week always starts on Sunday, so today's column is getDay(): 0-6. Three days on is
+    // therefore column getDay()+3, which runs past the last column whenever the week ends late in
+    // the month: Thursday gives column 6, Friday gives 7, and there is no column 7 to drop on. The
+    // check then failed with "no day column 7 (found 7)" while the feature was working perfectly.
+    // Wrapping keeps the intent, three days on, testable on any weekday of any month.
+    const offset = (todayColumn + 3) % 7;
+    const r = await dragToColumn(offset, 10);
     assert.ok(!r.error, r.error);
     const got = await page.evaluate(() => state.items[0].dueDate);
-    const expected = await page.evaluate(() => {
-      const d = new Date();
-      d.setDate(d.getDate() + 3);
-      d.setHours(10, 0, 0, 0);
-      return d.toISOString();
-    });
+    // toISOString() is right here, and deliberately: the app stores dueDate as an ISO instant, so the
+    // expected value has to be built the same way.
+    //
+    // Read from the column that was actually dropped on rather than assuming today+3. Once the index
+    // has wrapped, the drop lands on a day in the following week, and asserting today+3 would fail
+    // on exactly the days the wrap was added to protect.
+    const expected = await page.evaluate((columnIndex) => {
+      const column = document.querySelectorAll('#calWeekView .cal-week-day-col')[columnIndex];
+      const day = new Date(column.querySelector('.cal-drop-day').dataset.calDate);
+      day.setHours(10, 0, 0, 0);
+      return day.toISOString();
+    }, offset);
     assert.equal(got, expected, 'the event was not written to the day and hour it was dropped on');
   });
 
@@ -297,7 +309,7 @@ try {
     assert.equal(r.count, 2, `ten missed days produced ${r.count} rows instead of 2`);
   });
 
-  await check('the sweep is idempotent Ã¢â‚¬â€ running it twice adds nothing', async () => {
+  await check('the sweep is idempotent — running it twice adds nothing', async () => {
     const r = await page.evaluate(async () => {
       const stale = new Date();
       stale.setDate(stale.getDate() - 2);
@@ -421,7 +433,7 @@ try {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const justPassed = `${y}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`;
-      // Yesterday's anniversary must be roughly a year out Ã¢â‚¬â€ not 0 days, and not negative.
+      // Yesterday's anniversary must be roughly a year out — not 0 days, and not negative.
       return { days: daysUntilAnnual(justPassed, Date.now()), justPassed };
     });
     assert.ok(r.days > 360, `yesterday's anniversary (${r.justPassed}) resolved to ${r.days} days away, expected about a year`);
@@ -520,7 +532,7 @@ try {
         client_id: 'p1', name: 'Me', notes: '', metadata: payload.metadata,
       });
       // A record written before the flag existed has no key at all, and must not be turned into an
-      // explicit false by a truthiness check Ã¢â‚¬â€ nor must it clear a true set on another device.
+      // explicit false by a truthiness check — nor must it clear a true set on another device.
       const older = normaliseStructuredRecord('person', {
         client_id: 'p2', name: 'Ann', metadata: { phone: '', email: '', birthday: '1994-03-04' },
       });
@@ -549,6 +561,11 @@ try {
       // and the delivery path stays shut. defineProperty is what actually replaces it.
       Object.defineProperty(Notification, 'permission', { get: () => 'granted', configurable: true });
 
+      // The catch-up is deliberately quiet before BIRTHDAY_REMINDER_HOUR; delivery itself is not. The
+      // first version of this check drove the catch-up and so only passed when the suite happened to
+      // run after 9am, a test that quietly depends on the time of day and that fails at midnight while
+      // the feature is behaving exactly as designed. Delivery is exercised directly here, and the
+      // hourly gate is asserted separately, so both halves are covered at any hour.
       localStorage.removeItem('everything_birthday_reminders_v1');
       state.people = [{ id: 'p1', name: 'Ann', birthday: b, notes: '' }];
 
@@ -557,29 +574,37 @@ try {
       const whileOff = shown.length;
 
       setBirthdayReminderEnabled(true);
-      await checkBirthdayReminder('on');
+      await deliverBirthdayReminder('on');
       const afterFirst = shown.length;
 
-      // The same beat again Ã¢â‚¬â€ a 30s tick, a wake, the network returning Ã¢â‚¬â€ must not repeat it.
-      await checkBirthdayReminder('tick');
-      await checkBirthdayReminder('again');
+      // The same beat again — a 30s tick, a wake, the network returning — must not repeat it.
+      await deliverBirthdayReminder('tick');
+      await deliverBirthdayReminder('again');
       const afterRepeats = shown.length;
 
       // Tomorrow the anniversary is a year away, so it goes quiet again.
       const tomorrow = new Date(Date.now() + 86400000);
       const pad = (v) => String(v).padStart(2, '0');
       const tKey = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
-      localStorage.setItem('everything_birthday_reminders_v1', JSON.stringify({ enabled: true, sent: {} }));
       state.people = [{ id: 'p1', name: 'Ann', birthday: tKey, notes: '' }];
-      await checkBirthdayReminder('tomorrow');
+      await deliverBirthdayReminder('tomorrow');
       const nextDay = shown.length;
+
+      // And the gate itself: before the chosen hour the catch-up says nothing, however overdue the
+      // birthday is. A birthday at 2am is not a reason to wake anybody.
+      const wasQuiet = new Date().getHours() < BIRTHDAY_REMINDER_HOUR;
+      localStorage.setItem('everything_birthday_reminders_v1', JSON.stringify({ enabled: true, sent: {} }));
+      state.people = [{ id: 'p1', name: 'Ann', birthday: b, notes: '' }];
+      const quietMark = shown.length;
+      await checkBirthdayReminder('early');
+      const early = wasQuiet ? shown.length - quietMark : 0;
 
       window.showLocalNotification = realShow;
       window.notificationSupported = realSupported;
       if (realPermission) Object.defineProperty(Notification, 'permission', realPermission);
       localStorage.removeItem('everything_birthday_reminders_v1');
       return {
-        whileOff, afterFirst, afterRepeats, nextDay,
+        whileOff, afterFirst, afterRepeats, nextDay, early, wasQuiet,
         title: shown[0]?.title || '',
       };
     }, birthday);
@@ -588,6 +613,11 @@ try {
     assert.equal(r.afterFirst, 1, `the birthday was sent ${r.afterFirst} times, expected once`);
     assert.equal(r.afterRepeats, 1, `the same birthday was sent ${r.afterRepeats} times across repeated beats`);
     assert.equal(r.nextDay, 1, 'a birthday that is not today was still sent');
+    // Only meaningful while it is genuinely before the hour; at 10am the gate has opened and the
+    // catch-up is supposed to send.
+    if (r.wasQuiet) {
+      assert.equal(r.early, 0, 'the catch-up sent a birthday before the chosen hour');
+    }
     assert.match(r.title, /Ann/, `the notification did not name the person: "${r.title}"`);
   });
 

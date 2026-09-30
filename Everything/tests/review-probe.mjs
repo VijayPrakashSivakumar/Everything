@@ -75,7 +75,7 @@ try {
       open({ id: 'b', title: 'Also fine', recurrence: 'weekly' }),
     ]);
     /* Matched loosely on purpose. These two used to pin the exact phrase, so improving the wording of a
-   clean week Ã¢â‚¬â€ which is a good thing Ã¢â‚¬â€ broke a test whose actual subject is whether a clean week is
+   clean week — which is a good thing — broke a test whose actual subject is whether a clean week is
    *reassured*, not which three words were chosen. `nothing.?s stuck` survives "Nothing is stuck" and
    "Nothing's stuck" alike, so the copy can keep improving without the safety check moving with it. */
     assert.match(r.stuck, /nothing.?s stuck/i, `a clean week still produced findings: "${r.stuck}"`);

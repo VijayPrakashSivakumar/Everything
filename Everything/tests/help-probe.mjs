@@ -1,6 +1,6 @@
 // Proves the inline-help tooltips really open and close, in a real browser, on the places a first
 // time user gets stuck. A tooltip that only exists as CSS is exactly the thing that silently
-// stops working Ã¢â‚¬â€ the class is still on the element, nothing is ever seen.
+// stops working — the class is still on the element, nothing is ever seen.
 //
 //   node Everything/tests/help-probe.mjs
 //
@@ -125,7 +125,7 @@ try {
   });
 
   // Escape is the app's own "close the top layer" key, and while the capture sheet is open that
-  // layer is the sheet. So every test after the Escape one has to open it again Ã¢â‚¬â€ otherwise it is
+  // layer is the sheet. So every test after the Escape one has to open it again — otherwise it is
   // not testing the note, it is testing a closed dialog.
   const openSheet = async (p) => {
     await p.evaluate(() => openCapture());
@@ -142,7 +142,7 @@ try {
     assert.equal(openCount, 1, `expected one open note, got ${openCount}`);
 
     // Inside the sheet, because the sheet covers the page and a tap outside it would be swallowed
-    // by the overlay first Ã¢â‚¬â€ which would prove nothing about the note.
+    // by the overlay first — which would prove nothing about the note.
     await page.click('#captureText');
     await page.waitForTimeout(220);
     const after = await page.evaluate(() => document.querySelectorAll('.info-tip.is-open').length);
@@ -162,7 +162,7 @@ try {
 
     const tip = 'label[for="captureRecurrence"] .info-tip';
     // tap(), not click(): this context has a real touch pointer, and tapping is what a finger does.
-    // The field also has to be scrolled into view first Ã¢â‚¬â€ on a 390px sheet it starts below the fold.
+    // The field also has to be scrolled into view first — on a 390px sheet it starts below the fold.
     await phone.locator(tip).scrollIntoViewIfNeeded();
     await phone.locator(tip).tap();
     await phone.waitForTimeout(260);

@@ -163,7 +163,7 @@ try {
   });
 
   await check('a day with nothing to do is not marked as delivered', async () => {
-    // Nothing was sent, so nothing may be recorded as sent Ã¢â‚¬â€ otherwise tomorrow's real digest
+    // Nothing was sent, so nothing may be recorded as sent — otherwise tomorrow's real digest
     // would be suppressed by a day that never had one.
     const r = await page.evaluate(async () => {
       state.items = [{ id: 'a', kind: 'task', title: 'Someday', done: false, created: Date.now(), dueDate: new Date(Date.now() + 86400000 * 30).toISOString() }];
@@ -177,7 +177,7 @@ try {
 
   await check('the settings panel offers the choice and previews it honestly', async () => {
     const r = await page.evaluate(() => {
-      // Earlier checks left the digest switched on, so this one starts from a clean slate Ã¢â‚¬â€ it is
+      // Earlier checks left the digest switched on, so this one starts from a clean slate — it is
       // checking what a first-time visitor sees, which is the state that matters.
       localStorage.removeItem('everything_morning_digest_v1');
       showSettingsTab('notifications');
@@ -190,7 +190,7 @@ try {
     });
     assert.equal(r.hours, 24, 'the arrival hour is not fully selectable');
     assert.equal(r.label, 'Off', 'the toggle does not show the digest is off');
-    // Before anyone has opted in, the panel must say what turning it on would do Ã¢â‚¬â€ not just "On".
+    // Before anyone has opted in, the panel must say what turning it on would do — not just "On".
     assert.match(r.status, /nothing is sent/i, `the off state is not explained: "${r.status}"`);
   });
 } finally {

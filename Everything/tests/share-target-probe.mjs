@@ -28,7 +28,7 @@ try {
   await page.goto(testUrl(PORT), { waitUntil: 'commit' });
   await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
   await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
-  // Real writes are stubbed out so nothing reaches an account Ã¢â‚¬â€ but the share POST below must
+  // Real writes are stubbed out so nothing reaches an account — but the share POST below must
   // genuinely reach the service worker, so the real fetch is kept under a separate name.
   await page.evaluate(() => {
     window.__realFetch = window.fetch.bind(window);
@@ -41,7 +41,7 @@ try {
   // A real share is a TOP-LEVEL NAVIGATION, not a fetch: the OS opens the app at the share target.
   // Submitting an actual form is the only faithful reproduction, and it is what the worker's 303
   // redirect is written for. Using fetch() here would follow the redirect silently, leave the page
-  // on its old URL, and never run the collection code Ã¢â‚¬â€ a green test for a broken feature.
+  // on its old URL, and never run the collection code — a green test for a broken feature.
   const share = async (fields) => {
     await page.evaluate((fields) => {
       const form = document.createElement('form');
@@ -59,16 +59,14 @@ try {
       form.submit();
     }, fields);
 
-    /* Wait for the app that the redirect actually lands on, not merely for a load to begin.
+    /* Wait for the app the redirect actually lands on, not merely for a load to begin.
 
-       A share is two navigations: the POST, then the worker's 303 to ?share=1. waitForLoadState
-       ('commit') returns at the end of the first, and the very next evaluate() lands in the window
-       between them Ã¢â‚¬â€ the execution context is being torn down, so the document is still the old one
-       or an empty one. Every check below then read `null` for #captureText, and reported the share
-       feature as broken when the share had worked perfectly.
-
-       Waiting on the app itself is both the fix and the honest signal: if the sheet never opens,
-       that is a real failure and the wait says so. */
+       A share is two navigations: the POST, then the worker's 303 to ?share=1.
+       waitForLoadState('commit') returns at the end of the first, so the next evaluate() lands in
+       the gap while the execution context is being torn down, and the document is still the old one
+       or an empty one. Every check below then read null for #captureText and reported the shared
+       words as lost, when the share had worked perfectly. Waiting on the app itself is both the fix
+       and the honest signal: if the sheet never opens, that is a real failure and the wait says so. */
     await page.waitForURL(/\?share=1/, { timeout: 15000 });
     await page.waitForFunction(() => typeof window.setThemeConcept === 'function', null, {
       timeout: 15000,
@@ -80,7 +78,7 @@ try {
     // stop real writes reaching an account, and that stub would hand back an empty object here.
     const response = await page.request.get(testUrl(PORT, 'manifest.json'));
     const manifest = await response.json();
-    assert.ok(manifest.share_target, 'no share_target in the manifest Ã¢â‚¬â€ the OS will never offer it');
+    assert.ok(manifest.share_target, 'no share_target in the manifest — the OS will never offer it');
     assert.equal(manifest.share_target.method, 'POST', 'a GET share target would drop the shared text');
     assert.ok(manifest.share_target.params.text, 'shared text is not requested');
     assert.ok(manifest.share_target.params.url, 'a shared link is not requested');

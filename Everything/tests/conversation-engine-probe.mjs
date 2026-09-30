@@ -3,7 +3,7 @@
 //   node Everything/tests/conversation-engine-probe.mjs
 //
 // What this exists for. The question card could only ever offer fixed buttons, so "Remind me to
-// call Arun" could ask *whether* to keep it but never *when* Ã¢â‚¬â€ the only route to a date was the
+// call Arun" could ask *whether* to keep it but never *when* — the only route to a date was the
 // native date picker. This drives the real functions in a real browser, with no model and no
 // network, and checks the exchange the product actually promises:
 //
@@ -72,7 +72,7 @@ try {
     return eval(a[1]);
   }, [text, CARD]);
 
-  // Say a sentence, then tap a chip Ã¢â‚¬â€ the ordinary path, one tap, no keyboard.
+  // Say a sentence, then tap a chip — the ordinary path, one tap, no keyboard.
   const chip = (text, label) => page.evaluate(async (a) => {
     openCapture();
     await new Promise((r) => setTimeout(r, 120));
@@ -131,10 +131,23 @@ try {
     assert.equal(s.hasInput, false, 'the free-text field must be folded away until it is asked for');
   });
 
+  /* "Tomorrow" means tomorrow where the person is, not tomorrow in UTC.
+
+     new Date(Date.now() + 864e5).toISOString() is UTC midnight, so between local midnight and
+     04:30 in IST the two disagree by a day: the test expected 1 October while the app, correctly
+     reading the clock the person can see, produced 2 October. That is a test that fails only late at
+     night and passes the rest of the day, which is the shape of a bug nobody can reproduce on demand.
+     Built from local parts instead, so it asks the question it means to ask. */
+  const localTomorrowKey = () => {
+    const d = new Date(Date.now() + 864e5);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+
   await check('tapping "Tomorrow" fills the date and moves on to the time', async () => {
     const s = await chip('Remind me to call Arun', 'Tomorrow');
     assert.ok(s.due, 'the date field was left empty after tapping Tomorrow');
-    assert.equal(s.due.slice(0, 10), new Date(Date.now() + 864e5).toISOString().slice(0, 10),
+    assert.equal(s.due.slice(0, 10), localTomorrowKey(),
       `"Tomorrow" became ${s.due}`);
     assert.match(s.question, /what time/i, `expected a time question, got "${s.question}"`);
     assert.equal(s.required.length, 1, 'only the time should still be outstanding');
@@ -159,16 +172,16 @@ try {
     assert.equal(t.answering, false, 'the conversation should be finished');
   });
 
-  await check('"OtherÃ¢â‚¬Â¦" reveals the field for anything the chips do not cover', async () => {
+  await check('"Other…" reveals the field for anything the chips do not cover', async () => {
     const s = await open('Remind me to call Arun');
-    assert.equal(s.hasInput, true, '"OtherÃ¢â‚¬Â¦" did not reveal the field');
+    assert.equal(s.hasInput, true, '"Other…" did not reveal the field');
     assert.equal(s.hasMic, true, 'the field must be speakable as well as typeable');
   });
 
   await check('"Tomorrow" fills the date and moves on to the time', async () => {
     const s = await answer('Remind me to call Arun', 'Tomorrow');
     assert.ok(s.due, 'the date field was left empty after answering "Tomorrow"');
-    assert.equal(s.due.slice(0, 10), new Date(Date.now() + 864e5).toISOString().slice(0, 10),
+    assert.equal(s.due.slice(0, 10), localTomorrowKey(),
       `"Tomorrow" became ${s.due}`);
     assert.match(s.question, /what time/i, `expected a time question, got "${s.question}"`);
     assert.equal(s.required.length, 1, 'only the time should still be outstanding');
@@ -182,7 +195,7 @@ try {
   });
 
   await check('the answer becomes words in the sentence, not a side panel', async () => {
-    // "remind me" has to become "remind me tomorrow" in the box itself Ã¢â‚¬â€ that is what makes this one
+    // "remind me" has to become "remind me tomorrow" in the box itself — that is what makes this one
     // growing thought rather than a form with a transcript next to it.
     const s = await chip('Remind me to call Arun', 'Tomorrow');
     assert.match(s.sentence, /tomorrow/i, `the answer never reached the box: "${s.sentence}"`);
