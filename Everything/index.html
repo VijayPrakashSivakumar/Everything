@@ -3008,5 +3008,39 @@
     <script src="js/utils.js"></script>
     <script src="js/reminders.js"></script>
     <script src="js/init.js"></script>
+  <!-- Confirm dialog. The app used to call the browser's own confirm() in seven places, which rendered
+         as flat grey chrome in the middle of a considered interface. It also blocked the thread, so it
+         could not be styled, focused or animated at all.
+
+         One dialog, built from the same .modal and .modal-actions the rest of the app already uses, so
+         it looks like the app rather than something the browser drew. It goes through enterDialog and
+         leaveDialog, which means Tab is trapped, Escape dismisses, and focus returns to the button that
+         opened it — all of which confirm() could not do.
+
+         One instance only: two on screen at once would mean two answers to the same question. -->
+    <div
+      class="modal-overlay"
+      id="confirmDialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirmDialogTitle"
+      aria-describedby="confirmDialogBody"
+      onclick="if (event.target === this) settleConfirmDialog(false);"
+    >
+      <div class="modal modal-confirm">
+        <div class="modal-head">
+          <h3 id="confirmDialogTitle"></h3>
+          <button class="close-x modal-close" onclick="settleConfirmDialog(false)" aria-label="Cancel">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
+        <p id="confirmDialogBody" class="confirm-body"></p>
+        <div class="modal-actions">
+          <button class="btn" id="confirmCancelBtn" onclick="settleConfirmDialog(false)">Cancel</button>
+          <button class="btn primary" id="confirmOkBtn" onclick="settleConfirmDialog(true)">Confirm</button>
+        </div>
+      </div>
+    </div>
+
   </body>
 </html>

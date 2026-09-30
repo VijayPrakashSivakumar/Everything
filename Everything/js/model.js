@@ -1442,19 +1442,21 @@ function lockPageScroll(locked) {
   );
   document.body.classList.toggle("overlay-open", !!hasOpenLayer);
 }
-function resetData() {
+async function resetData() {
   if (db) {
-    alert(
-      "Reset is disabled in multi-user mode — delete items individually instead.",
-    );
+    await alertDialog({
+      title: "Reset is off in multi-user mode",
+      body: "Resetting would delete the shared household's data, not just yours. Delete items individually instead.",
+    });
     return;
   }
-  if (
-    !confirm(
-      "Reset all local Everything data to the empty demo state?\n\nThis cannot be undone.",
-    )
-  )
-    return;
+  const ok = await confirmDialog({
+    title: "Reset everything?",
+    body: "Every task, person, project, goal and note on this device goes back to the empty demo state. This cannot be undone.",
+    confirmLabel: "Reset everything",
+    danger: true,
+  });
+  if (!ok) return;
   state = seedData();
 
   save();

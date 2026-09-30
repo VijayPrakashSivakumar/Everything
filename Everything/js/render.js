@@ -718,7 +718,15 @@ async function unarchiveItems(items) {
 async function bulkDelete() {
   const items = bulkSelectedItems();
   if (!items.length) return;
-  if (!confirm(`Delete ${items.length} item${items.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+  const ok = await confirmDialog({
+    title: `Delete ${items.length} item${items.length === 1 ? "" : "s"}?`,
+    // The dialog catches the slip; the undo bar below catches the regret. Naming which is which here,
+    // because a reader seeing both will reasonably ask why a reversible action needs a confirmation.
+    body: "This cannot be undone, though you will get a chance to undo it straight afterwards.",
+    confirmLabel: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
   const removed = items.map((item) => ({ ...item }));
   for (const item of items) {
     state.items = state.items.filter((i) => i.id !== item.id);

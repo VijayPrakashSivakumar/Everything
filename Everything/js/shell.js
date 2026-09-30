@@ -269,6 +269,16 @@ function isBlockingOverlayOpen() {
 
 /* Closes the top-most thing that is open. Returns true if it closed something. */
 function closeTopmostOverlay() {
+  // The confirm dialog is above everything, because it is the thing you were asked to decide. Escape
+  // and the hardware back button both land here, so it has to be first: settleConfirmDialog() both
+  // removes the .open class and resolves the promise, and without this branch the generic modal
+  // checks below would never run — but a caller awaiting a promise that nothing settles hangs forever,
+  // and a delete that hangs halfway through is worse than one that never started.
+  if (document.getElementById("confirmDialog")?.classList.contains("open")) {
+    settleConfirmDialog(false);
+    return true;
+  }
+
   const notif = document.getElementById("notifPanel");
   if (notif && notif.style.display === "block") {
     notif.style.display = "none";
@@ -436,11 +446,13 @@ async function importData(input) {
     return;
   }
 
-  if (
-    !confirm(
-      `Import ${incomingItems.length} item(s)? Existing records with the same id will be replaced.`,
-    )
-  ) {
+  const ok = await confirmDialog({
+    title: `Import ${incomingItems.length} item${incomingItems.length === 1 ? "" : "s"}?`,
+    body: "Anything already here with the same id is replaced, not merged. Export first if you might want the current version back.",
+    confirmLabel: "Import",
+    danger: true,
+  });
+  if (!ok) {
     input.value = "";
     return;
   }

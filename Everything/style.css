@@ -2054,6 +2054,27 @@ h1.page-title,
    the one place in the stylesheet where a rule is allowed to insist, because losing this one is
    invisible and the consequence is a motion-sensitive reader being moved whether they asked to be or
    not. */
+/* ---------- Confirm dialog ----------
+   Narrower than a form dialog and without the close X crowding the title, because there is only ever
+   one question here and the buttons are the content. The danger tint comes from the tokens rather
+   than a fixed red, so it follows the theme instead of fighting it. */
+.modal-confirm {
+  width: min(400px, 100%);
+}
+
+.confirm-body {
+  margin: 0;
+  font-size: var(--fs-ui);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* The consequence is the part people skip, so it is allowed more weight than usual and is never
+   truncated — a half-read consequence is the whole failure this dialog exists to prevent. */
+.modal-confirm .confirm-body {
+  color: var(--fg);
+}
+
 /* ---------- Empty views ----------
    The old treatment was four lines of CSS: muted grey, body size, centred, some padding. Applied to
    about thirty places. A line of grey text in the middle of a white page is indistinguishable from a

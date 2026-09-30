@@ -29,6 +29,88 @@ function brandLoaderHTML(options = {}) {
   );
 }
 
+/* ---------- Confirm dialog ----------
+   Seven places used the browser's confirm(). That is a flat grey box in the middle of a considered
+   interface, and it blocks the thread — so it cannot be styled, focused, animated, or made to return
+   focus. Worse, it is a single yes/no with no room for the consequence, and the consequences here are
+   the whole point: "Items linked to it will keep their project tag but the project itself will be
+   removed" does not fit in a browser alert without looking like an error.
+
+   Awaiting a promise is the only way to keep the call sites readable. The alternative — a callback
+   wrapper — turns every call site into a nested closure and makes the destructive path the hardest
+   one to read, which is exactly backwards.
+
+   Deliberately a *confirm* and not an undo. Every caller here destroys something irreversible, and the
+   design doc's own rule is that those get a dialog; bulk delete additionally gets the undo bar, so the
+   person who agreed and changed their mind is still covered. This does not weaken that, it replaces the
+   worst-looking half of it.
+
+   One instance, because two dialogs on screen would be two answers to one question. `open` is a guard
+   rather than a queue: a second request while one is open cannot be answered out of order, so it is
+   refused rather than silently queued behind a decision the person has not read yet. */
+let confirmResolver = null;
+
+/* `danger` tints the confirm button. Only set for something that cannot be undone — using it
+   everywhere would be a red button that means nothing. */
+function confirmDialog(options) {
+  const dialog = document.getElementById("confirmDialog");
+  if (!dialog) return Promise.resolve(window.confirm(options.body || "Are you sure?"));
+  // Already open. Resolving true would delete something on a decision nobody was shown.
+  if (confirmResolver) return Promise.resolve(false);
+
+  document.getElementById("confirmDialogTitle").textContent = options.title || "Are you sure?";
+  document.getElementById("confirmDialogBody").textContent = options.body || "";
+  const ok = document.getElementById("confirmOkBtn");
+  // A null confirmLabel is the one-button form (alertDialog): the row is hidden entirely rather than
+  // left empty, because an empty .modal-actions row still reserves its flex gap and reads as a dialog
+  // with a button that failed to render.
+  ok.textContent = options.confirmLabel || "";
+  ok.hidden = !options.confirmLabel;
+  ok.classList.toggle("danger", Boolean(options.danger));
+  const cancel = document.getElementById("confirmCancelBtn");
+  if (cancel) cancel.textContent = options.cancelLabel || "Cancel";
+
+  dialog.classList.add("open");
+  lockPageScroll(true);
+  // Focus lands on Cancel, never on the destructive button. Enter then means "go back", which is the
+  // safe default for something irreversible, and the person has to reach across for Delete on purpose.
+  if (ok.hidden) enterDialog(dialog, "confirmCancelBtn");
+  else enterDialog(dialog, options.danger ? "confirmCancelBtn" : "confirmOkBtn");
+
+  return new Promise((resolve) => {
+    confirmResolver = resolve;
+  });
+}
+
+/* The single exit. Every route out of the dialog goes through here — the buttons, the X, the backdrop
+   and Escape — so the promise cannot be settled twice, and focus is handed back exactly once. If two
+   calls raced, the second would see a null resolver and settle null, which is not a valid answer, so it
+   is dropped instead. */
+function settleConfirmDialog(value) {
+  const resolve = confirmResolver;
+  confirmResolver = null;
+  const dialog = document.getElementById("confirmDialog");
+  if (dialog) {
+    dialog.classList.remove("open");
+    if (!document.querySelector(".modal-overlay.open, .ask-overlay.open, #panel.open"))
+      lockPageScroll(false);
+    leaveDialog(dialog);
+  }
+  if (resolve) resolve(Boolean(value));
+}
+
+/* Escape is the keyboard route out, and it has to mean Cancel. closeTopmostOverlay() runs first and
+   finds this dialog by the same .modal-overlay.open selector as every other sheet, so without this it
+   would remove the class and never settle the promise — the caller would hang forever, which is how a
+   dismissed confirm() could leave a delete half-done. Guarded on the resolver so it cannot double-settle
+   when Escape arrives after a click already answered it. */
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && confirmResolver
+    && document.getElementById("confirmDialog")?.classList.contains("open")) {
+    settleConfirmDialog(false);
+  }
+});
+
 /* An empty view. Three jobs, in this order, and the order is the design:
 
    Say *why* it is empty. "You have not added anything" and "your filter matched nothing" are

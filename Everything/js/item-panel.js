@@ -769,16 +769,34 @@ async function dbDeleteGoal(id) {
   renderReports();
 }
 async function deleteGoal(id) {
-  if (!confirm("Delete this goal?")) return;
+  const goal = state.goals.find((g) => g.id === id);
+  const linked = goal
+    ? state.items.filter((i) => sameName(i.goal, goal.title) && !isArchived(i)).length
+    : 0;
+  const ok = await confirmDialog({
+    title: goal ? `Delete "${goal.title}"?` : "Delete this goal?",
+    // The count is the whole reason to confirm. "Delete this goal?" reads as tidying up; "4 tasks will
+    // lose their link" reads as a decision, which is the only thing a confirmation is for.
+    body: linked
+      ? `${linked} task${linked === 1 ? "" : "s"} will lose their link to it. The tasks themselves are kept.`
+      : "Nothing is linked to it yet.",
+    confirmLabel: "Delete goal",
+    danger: true,
+  });
+  if (!ok) return;
   await dbDeleteGoal(id);
 }
 
 async function deleteProject(id, name) {
-  if (
-    !confirm(
-      `Delete "${name}"? Items linked to it will keep their project tag but the project itself will be removed.`,
-    )
-  )
-    return;
+  const linked = state.items.filter((i) => sameName(i.project, name) && !isArchived(i)).length;
+  const ok = await confirmDialog({
+    title: `Delete "${name}"?`,
+    body: linked
+      ? `${linked} task${linked === 1 ? "" : "s"} will keep the project name but lose the link. The tasks themselves are kept.`
+      : "Nothing is linked to it yet.",
+    confirmLabel: "Delete project",
+    danger: true,
+  });
+  if (!ok) return;
   await dbDeleteProject(id);
 }

@@ -397,7 +397,13 @@ try {
     });
     await page.waitForTimeout(250);
     // The app's real confirm dialog, stubbed so the test can answer "yes" without a modal.
-    await page.evaluate(() => { window.confirm = () => true; });
+    // Both names are set: confirmDialog is what the app calls now, and window.confirm is left
+    // stubbed too so a path that still reached the browser dialog cannot hang the suite waiting for
+    // a click on a native box that is never drawn in headless.
+    await page.evaluate(() => {
+      window.confirm = () => true;
+      window.confirmDialog = () => Promise.resolve(true);
+    });
     await page.evaluate(() => {
       enterBulkScope('inbox');
       toggleSelected('d1');

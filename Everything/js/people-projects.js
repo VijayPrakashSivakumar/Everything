@@ -59,12 +59,13 @@ function startRenamePerson() {
 async function deletePerson(name) {
   const linked = state.items.filter((i) => sameName(i.person, name) && !isArchived(i));
   const many = linked.length !== 1;
-  if (
-    !confirm(
-      `Remove "${name}"? ${linked.length} linked item${many ? "s" : ""} will no longer be tagged with them. The items themselves are kept.`,
-    )
-  )
-    return;
+  const ok = await confirmDialog({
+    title: "Remove this person?",
+    body: `${linked.length} item${many ? "s" : ""} will no longer be tagged with "${name}". The items themselves are kept.`,
+    confirmLabel: "Remove",
+    danger: true,
+  });
+  if (!ok) return;
   closePersonModal();
   const person = state.people.find((p) => sameName(p.name, name));
   if (person) await dbDeletePerson(person.id);
@@ -94,12 +95,13 @@ async function mergePerson(sourceName, targetName) {
   const source = state.people.find((p) => sameName(p.name, from));
   const linked = state.items.filter((i) => sameName(i.person, from) && !isArchived(i));
   const many = linked.length !== 1;
-  if (
-    !confirm(
-      `Merge "${from}" into "${into}"? ${linked.length} linked item${many ? "s" : ""} will move onto "${into}", and the "${from}" record is deleted.`,
-    )
-  )
-    return;
+  const ok = await confirmDialog({
+    title: `Merge "${from}" into "${into}"?`,
+    body: `${linked.length} item${many ? "s" : ""} will move onto "${into}", and the "${from}" record is deleted. Their notes are combined.`,
+    confirmLabel: "Merge",
+    danger: true,
+  });
+  if (!ok) return;
   closePersonModal();
   // Notes are kept from both sides, de-duplicated so merging twice cannot duplicate the text.
   const notes = [...new Set([target.notes, source?.notes].map((n) => (n || "").trim()).filter(Boolean))];

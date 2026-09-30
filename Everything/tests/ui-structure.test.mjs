@@ -590,7 +590,10 @@ check('bulk actions gate on a selection and never touch the unselected', () => {
   assert.match(bar, /btn\.disabled = count === 0/, 'an action is live with nothing selected');
   // Delete is the only irreversible one here, so it has to ask and say how many.
   const del = between('async function bulkDelete', 'function bulkSelectedItems');
-  assert.match(del, /confirm\(/, 'bulk delete does not ask for confirmation');
+  // The app's own dialog rather than the browser's confirm(): the count belongs in a title, and
+  // confirm() renders a bare string with nowhere to put one.
+  assert.match(del, /await confirmDialog\(\{/, 'bulk delete does not ask for confirmation');
+  assert.match(del, /items\.length/, 'the dialog does not say how many items are at stake');
   assert.match(del, /deleteItem|dbDeleteItem/, 'bulk delete does not actually delete');
 });
 
@@ -1231,7 +1234,7 @@ const renameSource = [
 ].join('\n');
 // sameName is declared inside renameSource, so it must not also be injected as a parameter.
 const renameDeps = ['state', 'isArchived', 'dbSaveItem', 'dbSavePerson', 'dbSaveProject',
-  'renderAll', 'renderProjects', 'closePersonModal', 'alert', 'confirm', 'prompt',
+  'renderAll', 'renderProjects', 'closePersonModal', 'alert', 'confirmDialog', 'prompt',
   'currentPersonName', 'syncReadyPromise', 'db', 'sbUser', 'deleteStructuredRecord',
   'save', 'renderNav', 'renderPeople'];
 const runRename = (deps, expr) =>
@@ -1268,7 +1271,10 @@ const makeWorld = () => {
     renderNav: () => {},
     renderPeople: () => {},
     alert: (m) => { world.alerted = m; },
-    confirm: () => { world.confirmed = true; return true; },
+    // The app's own dialog replaced the browser's confirm(). Async and object-shaped now, so the
+    // stub has to match: a plain `confirm: () => true` would leave `await confirmDialog(...)`
+    // undefined and fail every delete path in here with a confusing "not defined".
+    confirmDialog: (o) => { world.confirmed = o; return Promise.resolve(true); },
     prompt: () => { throw new Error('prompt should not be reached in these tests'); },
     currentPersonName: null,
   };
@@ -1339,7 +1345,12 @@ check('deleting a person untags their items so they stop reappearing', async () 
 
 check('cancelling the confirm keeps the person, the record and every tag', async () => {
   const { world, saved } = makeWorld();
-  world.confirm = () => false;
+  // Assigns confirmDialog, not confirm. The old line read `world.confirm = () => false` and kept
+  // passing after the app moved to confirmDialog — because nothing was reading world.confirm any
+  // more, the stub was dead, the real confirmDialog still returned true, and the person was deleted
+  // in a test whose whole subject is the person surviving. A property assignment is invisible to any
+  // search for the identifier it looks like.
+  world.confirmDialog = () => Promise.resolve(false);
   const api = runRename(world, '({ deletePerson })');
   await api.deletePerson('Ravi');
   assert.deepEqual(world.state.people.map((p) => p.name), ['Ravi']);
@@ -1397,7 +1408,7 @@ check('a merge refuses a self-merge, an unknown target, or a cancelled confirm',
   world.state.people.push({ id: 'p2', name: 'Ravi Kumar', created: 2 });
   // runRename() binds its dependencies when it builds the function, so a later world.confirm swap
   // would never be seen — the cancelled case needs its own instance.
-  const cancelled = runRename({ ...world, confirm: () => false }, '({ mergePerson })');
+  const cancelled = runRename({ ...world, confirmDialog: () => Promise.resolve(false) }, '({ mergePerson })');
   await cancelled.mergePerson('Ravi', 'Ravi Kumar');
   assert.deepEqual(world.state.people.map((p) => p.name), ['Ravi', 'Ravi Kumar'],
     'a cancelled merge must leave both records alone');
@@ -1721,7 +1732,7 @@ check('renaming a goal carries its linked items and refuses a title already in u
     renderGoals: () => {},
     closePersonModal: () => {},
     alert: (m) => { world.alerted = m; },
-    confirm: () => true,
+    confirmDialog: () => Promise.resolve(true),
     prompt: () => { throw new Error('the prompt is not reached when setGoalDate is called directly'); },
     currentPersonName: null,
     syncReadyPromise: null,

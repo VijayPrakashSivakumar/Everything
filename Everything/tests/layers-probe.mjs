@@ -61,9 +61,13 @@ try {
           labelledby: el.getAttribute('aria-labelledby') || '',
           label: el.getAttribute('aria-label') || '',
         })));
-    assert.ok(layers.length >= 5, `expected five overlays, found ${layers.length}`);
+    assert.ok(layers.length >= 6, `expected six overlays, found ${layers.length}`);
     for (const l of layers) {
-      assert.equal(l.role, 'dialog', `${l.id} is not marked as a dialog`);
+      // alertdialog is accepted, and is in fact correct for the confirm dialog: it is interruptive
+      // and destructive, so a screen reader should announce it more urgently than an ordinary sheet.
+      // A plain dialog would be the weaker choice, not the stricter one.
+      assert.ok(l.role === 'dialog' || l.role === 'alertdialog',
+        `${l.id} is not marked as a dialog (role is "${l.role}")`);
       assert.equal(l.modal, 'true', `${l.id} is not aria-modal`);
       assert.ok(l.labelledby || l.label, `${l.id} has no accessible name`);
       if (l.labelledby) {
