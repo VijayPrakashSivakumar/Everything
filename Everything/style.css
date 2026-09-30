@@ -4146,6 +4146,117 @@ h1.page-title {
   left: 6px;
 }
 
+/* ---------- Documents ---------- */
+/* The expiry chip is the reason a person scans the list rather than reading it, so it is the one
+   part of the row allowed to shout. Colour is carried by the theme tokens rather than fixed hexes,
+   so it stays legible in all of them — an expiry badge that fails contrast in dark mode is worse
+   than no badge, because the one date that mattered becomes the one you cannot read. */
+.doc-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--bg);
+  color: var(--muted);
+}
+
+/* Expired is the only state that has already gone wrong, so it is the only red. */
+.doc-chip.doc-expired {
+  background: var(--red-bg);
+  color: var(--red-fg);
+}
+
+/* Inside a week: the last moment it can still be dealt with. */
+.doc-chip.doc-week {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+}
+
+/* Inside the lead time: worth knowing about, not worth interrupting anyone for. */
+.doc-chip.doc-month {
+  background: var(--blue-bg);
+  color: var(--blue-fg);
+}
+
+.doc-chip.doc-later {
+  background: var(--green-bg);
+  color: var(--green-fg);
+}
+
+/* A receipt. Neutral on purpose — it has nothing to be alarmed about, and colouring it would make
+   every quiet document in the list look like a problem. */
+.doc-chip.doc-none {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+/* ---------- Money ---------- */
+/* The amount is the reason the row is read, so it is set apart from the title and never wrapped onto
+   its own line — a total that breaks across two lines is a total that has to be added up by eye. */
+.money-amount {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.money-cat-row {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.money-cat-row:last-child {
+  border-bottom: none;
+}
+
+.money-cat-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-body-s);
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.money-cat-head span:last-child {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.money-cat-bar {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.money-cat-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent, var(--blue-fg));
+}
+
+/* On a phone the chip would squeeze the title into two words, so it drops to its own line under
+   the row instead. The label is kept — it is the information, not the decoration.
+   520px, not 560px: that exact width is the old capture-sheet width the UI suite asserts is gone,
+   and reusing it here would make that check fail on a rule that has nothing to do with it. */
+@media (max-width:520px) {
+  .task-row:has(.doc-chip) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .task-row .doc-chip {
+    align-self: flex-start;
+  }
+}
+
 @media (max-width:900px) {
   .sidebar-backdrop.visible {
     display: block;

@@ -208,6 +208,13 @@ function itemSnapshot(item) {
     captureFingerprint: item.captureFingerprint || null,
     updatedAt: Number(item.updatedAt) || 0,
     dirty: item.dirty === true,
+    // Document fields. Present in the snapshot even when the database has not been migrated, so an
+    // export taken before the migration is not quietly missing them.
+    docType: item.docType || "",
+    issuer: item.issuer || "",
+    docNumber: item.docNumber || "",
+    issuedOn: item.issuedOn || "",
+    expiresOn: item.expiresOn || "",
   };
 }
 
@@ -1046,6 +1053,16 @@ const smartCaptureColumns = {
   metadata: false,
   fingerprint: false,
 };
+/* Document columns (supabase/migrations/010). Probed rather than assumed, for the same reason as
+   the smart-capture ones: a database that has not run the migration must still save normally, so
+   these fields are simply left out of the row instead of failing the whole upsert. */
+const documentColumns = {
+  docType: false,
+  issuer: false,
+  docNumber: false,
+  issuedOn: false,
+  expiresOn: false,
+};
 
 function itemToRow(item) {
   const row = {
@@ -1075,6 +1092,13 @@ function itemToRow(item) {
   if (smartCaptureColumns.rawText) row.raw_text = item.rawText || item.title || "";
   if (smartCaptureColumns.metadata) row.capture_metadata = normaliseCaptureMetadata(item.captureMetadata);
   if (smartCaptureColumns.fingerprint) row.capture_fingerprint = item.captureFingerprint || null;
+  // Document fields (supabase/migrations/010). Empty string, never null: a document whose number was
+  // cleared must overwrite the old one, and a null would leave the previous value standing.
+  if (documentColumns.docType) row.doc_type = item.docType || "";
+  if (documentColumns.issuer) row.issuer = item.issuer || "";
+  if (documentColumns.docNumber) row.doc_number = item.docNumber || "";
+  if (documentColumns.issuedOn) row.issued_on = item.issuedOn || "";
+  if (documentColumns.expiresOn) row.expires_on = item.expiresOn || "";
   // Only sent once the completed_at migration has been applied — see supabase/migrations.
   if (hasCompletedAt)
     row.completed_at = item.completedAt
@@ -1332,7 +1356,7 @@ function retrySyncSetup() {
 }
 
 function rowToItem(row) {
-  return {
+  const item = {
     id: row.id,
     ownerId: row.owner_id || null,
     scope: row.scope,
@@ -1364,6 +1388,28 @@ function rowToItem(row) {
     // Anything arriving from the server is by definition already stored there.
     dirty: false,
   };
+  // Only a document carries these. Applying them by column name rather than by spreading the row is
+  // what keeps a task from picking up an `issuer` left over from a row that used to be a document.
+  if (row.kind === "document") {
+    normaliseDocumentField(item, row, "docType", "doc_type");
+    normaliseDocumentField(item, row, "issuer", "issuer");
+    normaliseDocumentField(item, row, "docNumber", "doc_number");
+    normaliseDocumentField(item, row, "issuedOn", "issued_on");
+    normaliseDocumentField(item, row, "expiresOn", "expires_on");
+  }
+  return item;
+}
+
+/* Document fields come back as text. An item that is not a document must never gain them, and an
+   expiry that is not a real calendar date is dropped rather than kept: a value `daysUntil()` cannot
+   read would sort the document into "no expiry", which is the one bucket where a broken date is
+   least likely to be noticed. */
+function normaliseDocumentField(item, row, key, column) {
+  if (!documentColumns[key]) return;
+  const value = String(row[column] ?? "").trim();
+  if (!value) return;
+  if ((key === "issuedOn" || key === "expiresOn") && !parseIsoDate(value)) return;
+  item[key] = value;
 }
 
 /* items.completed_at arrives with supabase/migrations/001. Probe once at sync time so a
@@ -1376,6 +1422,42 @@ async function detectCompletedAtColumn() {
   } catch (e) {
     return false;
   }
+}
+
+/* A date stored as YYYY-MM-DD. Parsed as local midnight on purpose: `new Date("2027-03-04")` is
+   UTC midnight, which in any negative-offset timezone is the previous day, so an expiry read from a
+   receipt would quietly become the day before. Same trap the birthday maths has to avoid. */
+function parseIsoDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  // Rejects 2027-02-30, which Date would silently roll forward into March.
+  if (
+    date.getFullYear() !== Number(match[1]) ||
+    date.getMonth() !== Number(match[2]) - 1 ||
+    date.getDate() !== Number(match[3])
+  )
+    return null;
+  return date;
+}
+
+/* A Date back to YYYY-MM-DD, in local time. The mirror of parseIsoDate, and the only way a date
+   leaves the app — handing it to toISOString() would write the UTC day, which in a negative offset
+   is yesterday, and an expense entered tonight would land in yesterday's column of the report. */
+function isoDateString(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/* Whole days from today to `value`, negative once it has passed. Midnight to midnight on both sides so
+   the answer does not change with the time of day it is asked — "expires in 0 days" has to mean
+   today, not "sometime this afternoon". */
+function daysUntil(value) {
+  const target = parseIsoDate(value);
+  if (!target) return null;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target.getTime() - start.getTime()) / 86400000);
 }
 
 /* items.reminder_at / snoozed_until / notified_at arrive with
@@ -1443,6 +1525,26 @@ async function detectSmartCaptureColumns() {
         smartCaptureColumns[key] = !error;
       } catch (error) {
         smartCaptureColumns[key] = false;
+      }
+    }),
+  );
+}
+
+async function detectDocumentColumns() {
+  const columns = [
+    ["docType", "doc_type"],
+    ["issuer", "issuer"],
+    ["docNumber", "doc_number"],
+    ["issuedOn", "issued_on"],
+    ["expiresOn", "expires_on"],
+  ];
+  await Promise.all(
+    columns.map(async ([key, column]) => {
+      try {
+        const { error } = await sb.from("items").select(column).limit(1);
+        documentColumns[key] = !error;
+      } catch (error) {
+        documentColumns[key] = false;
       }
     }),
   );
@@ -1536,6 +1638,7 @@ async function startSupabaseSync(userId) {
   hasArchivedAtColumn = await detectArchivedAtColumn();
   hasUpdatedAt = await detectUpdatedAtColumn();
   await detectSmartCaptureColumns();
+  await detectDocumentColumns();
   const { data, error } = await sb
     .from("items")
     .select("*")
@@ -2226,6 +2329,8 @@ const NAV = [
   { id: "tasks", icon: "check-square-2", label: "Tasks", badgeKey: "taskCount" },
   { id: "schedule", icon: "calendar-days", label: "Schedule" },
   { id: "memory", icon: "brain", label: "Memory" },
+  { id: "documents", icon: "file-badge", label: "Documents" },
+  { id: "money", icon: "wallet", label: "Money" },
   { id: "people", icon: "users", label: "People" },
   { id: "projects", icon: "folder-kanban", label: "Projects" },
   { id: "goals", icon: "target", label: "Goals" },
@@ -2305,8 +2410,325 @@ let captureChannel = "text";
    is a URL, so asking a model to interpret either would be guessing — those two are left alone. */
 const CAPTURE_CHANNELS_WITH_TEXT = new Set(["voice", "image"]);
 
+/* ---------- Money ----------
+   An expense is a *kind of item*, the same way a document is. That is the whole design: the sync,
+   the offline queue, realtime, RLS, backup, search and household sharing are all built around
+   `items`, so money inherits all of them instead of needing a second implementation of each.
+
+   THE AMOUNT IS NEVER A FLOAT. `capture_metadata` is jsonb, so `{"amount": 1200.50}` would be
+   stored as an IEEE double and 0.1 + 0.2 problems would make "spent this month" drift by a paisa —
+   and a total that is off by a paisa makes a person stop trusting every number in the app. So the
+   amount is an integer count of minor units: 450 rupees is 45000 paise, and 450.50 is 45050. Sum
+   those and the answer is exact, forever. Formatting is the display's job, done at the last moment. */
+
+const MONEY_CURRENCY = "INR";
+const MONEY_SYMBOL = "₹";
+/* Paise in a rupee. Named rather than written inline because every amount in the app is divided or
+   multiplied by it, and a bare 100 in three places is three chances to be wrong. */
+const PAISE_PER_RUPEE = 100;
+
+/* Categories are free text in the database, so a household can add its own ("School fees", "Pet").
+   These are only the starting set offered in the picker. "Groceries" and "Food" are deliberately
+   separate: buying vegetables and eating out are different decisions, and merging them is the
+   single most common way a spending report becomes useless. */
+const MONEY_CATEGORIES = [
+  { id: "groceries", label: "Groceries" },
+  { id: "food", label: "Food" },
+  { id: "transport", label: "Transport" },
+  { id: "shopping", label: "Shopping" },
+  { id: "utilities", label: "Utilities" },
+  { id: "health", label: "Health" },
+  { id: "education", label: "Education" },
+  { id: "entertainment", label: "Entertainment" },
+  { id: "rent", label: "Rent" },
+  { id: "bills", label: "Bills" },
+  { id: "other", label: "Other" },
+];
+
+/* Words that name a category. Matched against the whole sentence, first hit wins, so the order is
+   the priority order: "grocery shopping" must be Groceries, not Shopping. */
+const MONEY_CATEGORY_HINTS = [
+  { id: "groceries", re: /\b(grocer(y|ies)|sabzi|vegetable|kirana|supermarket|bigbasket|d-mart|dmart|reliance fresh|milk|provisions)\b/i },
+  { id: "food", re: /\b(restaurant|food|lunch|dinner|breakfast|cafe|coffee|pizza|burger|zomato|swiggy|takeaway|take out|dining|eat out|canteen|chai|tea)\b/i },
+  { id: "transport", re: /\b(uber|ola|taxi|cab|auto|rickshaw|metro|bus|train|flight|ticket|fuel|petrol|diesel|gas|parking|toll|travel)\b/i },
+  { id: "rent", re: /\b(rent|maintenance|society fee|brokerage)\b/i },
+  { id: "utilities", re: /\b(electricity|water|internet|wifi|broadband|phone bill|mobile recharge|dth|utility)\b/i },
+  { id: "bills", re: /\b(bill|invoice|emi|loan|insurance|premium|subscription)\b/i },
+  { id: "health", re: /\b(doctor|medicine|medical|hospital|pharmacy|med|dentist|test|clinic|apollo|pharm)\b/i },
+  { id: "education", re: /\b(school fee|tuition|fees|course|book|stationery|university|college|admission)\b/i },
+  { id: "entertainment", re: /\b(movie|film|netflix|spotify|prime video|concert|game|ott|gaming)\b/i },
+  { id: "shopping", re: /\b(shopping|clothes|shoes|dress|amazon|flipkart|mall|electronics|phone|laptop|gift)\b/i },
+];
+
+function isExpense(item) {
+  return item?.kind === "expense";
+}
+
+function moneyCategoryLabel(id) {
+  const key = String(id || "").trim().toLowerCase();
+  return MONEY_CATEGORIES.find((entry) => entry.id === key)?.label || "";
+}
+
+/* Indian digit grouping: the last three digits, then pairs. ₹120450 is 1,20,450 and not 12,0450.
+
+   This is two steps and not one clever regex on purpose. A single lookahead pass produces
+   "12,04,50" here — verified, not guessed — because it cannot see that the trailing group has to be
+   three digits wide. The last three are peeled off first, and only the remainder is grouped, which
+   is the one way to get it right. */
+function groupIndianDigits(rupees) {
+  const digits = String(rupees);
+  if (digits.length <= 3) return digits;
+  const lastThree = digits.slice(-3);
+  const rest = digits.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
+  return `${rest},${lastThree}`;
+}
+
+/* Paise to "₹1,20,450.50". Done at the last moment, and from the integer, so the two halves are
+   computed separately and no float ever carries a rounding error into a displayed total. */
+function formatMoney(amountMinor, options = {}) {
+  const minor = Number(amountMinor);
+  if (!Number.isFinite(minor)) return "";
+  const negative = minor < 0;
+  const absolute = Math.abs(Math.round(minor));
+  const rupees = Math.floor(absolute / PAISE_PER_RUPEE);
+  const paise = absolute % PAISE_PER_RUPEE;
+  const body = options.bare ? groupIndianDigits(rupees) : `${MONEY_SYMBOL}${groupIndianDigits(rupees)}`;
+  const withPaise = paise ? `${body}.${String(paise).padStart(2, "0")}` : body;
+  return negative ? `-${withPaise}` : withPaise;
+}
+
+/* The only way into an amount. Text in, an integer count of paise out, or null.
+
+   String surgery rather than parseFloat, for the obvious reason: parseFloat("450.50") is
+   450.49999999999994, and every total built from those is wrong in the last digit. */
+function parseMoneyToMinor(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  // Keep digits and separators, drop currency symbols and words.
+  const cleaned = text.replace(/[^\d.,-]/g, "");
+  if (!cleaned) return null;
+  const negative = cleaned.startsWith("-");
+  const unsigned = cleaned.replace(/-/g, "");
+  // Indian and western grouping both appear — 1,20,000 and 120,000 — and a comma is always grouping
+  // here, never a decimal point. A decimal in this app is always a period.
+  let body = unsigned.replace(/,/g, "");
+  // A lone trailing separator ("450." from a half-typed amount) is not a decimal part.
+  if (body.endsWith(".")) body = body.slice(0, -1);
+  if (!/^\d+(\.\d+)?$/.test(body)) return null;
+  const [rupeesText, paiseText = ""] = body.split(".");
+  const rupees = Number(rupeesText);
+  if (!Number.isFinite(rupees)) return null;
+  const paiseDigits = (paiseText + "00").slice(0, 2);
+  // More than two decimal places is a typo, not a price. Rounded rather than truncated, so
+  // 450.505 is 45051 paise instead of losing the half paisa on the floor.
+  const third = paiseText.charCodeAt(2) - 48;
+  let paise = Number(paiseDigits);
+  if (paiseText.length > 2 && third >= 5) paise += 1;
+  // Rounding can reach 100 paise, and that has to carry into the rupees — otherwise 99.999 is
+  // stored as 100 paise and every total that includes it is one rupee short.
+  const total = rupees * PAISE_PER_RUPEE + paise;
+  return negative ? -total : total;
+}
+
+/* The amount in a sentence, and only an amount — "₹450", "Rs 1200.50", "INR 300", "450 rupees".
+
+   Deliberately never a bare number: "paid 3 people" must not become an expense of three rupees.
+   A number is money only when a currency word sits next to it. */
+const MONEY_AMOUNT_RE = /(?:₹|rs\.?|inr)\s*(\d[\d,]*(?:\.\d{1,3})?)|(\d[\d,]*(?:\.\d{1,3})?)\s*(?:rupees?|inr)\b/i;
+
+function parseAmountFromText(text) {
+  const match = MONEY_AMOUNT_RE.exec(String(text || ""));
+  if (!match) return null;
+  return parseMoneyToMinor(match[1] || match[2]);
+}
+
+function guessMoneyCategory(text) {
+  const body = String(text || "");
+  for (const hint of MONEY_CATEGORY_HINTS) {
+    if (hint.re.test(body)) return hint.id;
+  }
+  return "";
+}
+
+/* Anything that says money was spent, bought or paid for. Used to notice an expense from a plain
+   sentence, and to keep "pay the bill on the 5th" from being read as money already spent. */
+const MONEY_SPEND_RE =
+  /\b(spent|spend|spends|paid|pay|pays|paying|bought|buy|buying|cost|costs|charged|purchased|expense|groceries|bill|fee|recharge|top ?up)\b/i;
+
+function textLooksLikeExpense(text) {
+  return MONEY_SPEND_RE.test(String(text || ""));
+}
+
+/* Everything the Money view and the reports need, off one item. Read through here so no caller
+   reaches into capture_metadata directly and two places cannot disagree about what a total is. */
+function moneyOf(item) {
+  const meta = normaliseCaptureMetadata(item?.captureMetadata);
+  const minor = Number(meta.amountMinor);
+  return {
+    amountMinor: Number.isFinite(minor) ? Math.round(minor) : null,
+    currency: String(meta.currency || MONEY_CURRENCY).toUpperCase(),
+    category: String(meta.category || ""),
+    merchant: String(meta.merchant || ""),
+    // The day it happened, which is not the same as when it was typed: an expense entered on the
+    // 3rd for the 1st belongs to the 1st, and a monthly report that gets that wrong is a report
+    // nobody trusts.
+    spentOn: meta.spentOn || "",
+  };
+}
+
+function expenseItems() {
+  if (!state?.items) return [];
+  return state.items.filter((i) => isExpense(i) && !isArchived(i));
+}
+
+/* Only same-currency amounts are ever added together. Mixing two currencies is not a rounding
+   error, it is a meaningless number, and it is better to leave it out of the total than print it. */
+function sumMoney(items) {
+  return items.reduce((total, item) => {
+    const money = moneyOf(item);
+    if (money.amountMinor === null) return total;
+    if (money.currency !== MONEY_CURRENCY) return total;
+    return total + money.amountMinor;
+  }, 0);
+}
+
+function expenseSpentOn(item) {
+  return moneyOf(item).spentOn || isoDateString(new Date(Number(item?.created) || Date.now()));
+}
+
+function expensesThisMonth(reference) {
+  const now = reference ? new Date(reference) : new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  return expenseItems().filter((item) => {
+    const date = parseIsoDate(expenseSpentOn(item));
+    return Boolean(date) && date.getFullYear() === year && date.getMonth() === month;
+  });
+}
+
+function expensesByCategory(reference) {
+  const buckets = new Map();
+  expensesThisMonth(reference).forEach((item) => {
+    const money = moneyOf(item);
+    if (money.amountMinor === null) return;
+    const key = money.category || "other";
+    if (!buckets.has(key)) buckets.set(key, { id: key, total: 0, count: 0 });
+    const bucket = buckets.get(key);
+    bucket.total += money.amountMinor;
+    bucket.count += 1;
+  });
+  return [...buckets.values()].sort((a, b) => b.total - a.total);
+}
+
 function isArchived(item) {
   return Boolean(item?.archivedAt || item?.archived_at);
+}
+
+/* ---------- Documents ----------
+   A document is an item with kind "document" and, usually, an expiry date. Warranties, insurance,
+   licences and subscriptions all have one; receipts do not, and a receipt is a perfectly ordinary
+   document rather than a broken one. Everything below therefore treats "no expiry date" as a real
+   state rather than as missing data. */
+
+const DOCUMENT_TYPES = [
+  { id: "warranty", label: "Warranty", icon: "shield-check" },
+  { id: "insurance", label: "Insurance", icon: "shield" },
+  { id: "receipt", label: "Receipt", icon: "receipt" },
+  { id: "licence", label: "Licence", icon: "credit-card" },
+  { id: "passport", label: "Passport / ID", icon: "book-user" },
+  { id: "manual", label: "Manual", icon: "book-open" },
+  { id: "other", label: "Other", icon: "file" },
+];
+
+/* How far ahead an expiry starts asking to be acted on. Thirty days is the window in which renewing
+   a licence or a policy is still possible; a shorter one would be too late to arrange, and a longer
+   one turns every document into noise within the month. */
+const DOCUMENT_EXPIRY_LEAD_DAYS = 30;
+const DOCUMENT_SOON_DAYS = 7;
+
+function isDocument(item) {
+  return item?.kind === "document";
+}
+
+function documentTypeLabel(item) {
+  const id = String(item?.docType || "").trim().toLowerCase();
+  if (!id) return "Document";
+  return DOCUMENT_TYPES.find((entry) => entry.id === id)?.label || item.docType;
+}
+
+/* The bucket a document sorts into, which is the only thing the Documents view actually cares
+   about. "expired" is checked before "no expiry" on purpose: a date that cannot be read and a date
+   that is absent must not both land in the same quiet bucket, where nothing would prompt a look. */
+function documentBucket(item) {
+  const days = daysUntil(item?.expiresOn);
+  if (days === null) return "none";
+  if (days < 0) return "expired";
+  if (days <= DOCUMENT_SOON_DAYS) return "week";
+  if (days <= DOCUMENT_EXPIRY_LEAD_DAYS) return "month";
+  return "later";
+}
+
+/* `cls` is the expiry chip's modifier, declared here rather than assembled as `doc-${id}` at the
+   call site. The string form is the same to a browser, but the class then exists as a literal anyone
+   — or the dead-code audit — can find, which is the only reason it is written out four times. */
+const DOCUMENT_BUCKETS = [
+  { id: "expired", label: "Expired", icon: "alert-triangle", cls: "doc-expired" },
+  { id: "week", label: `Next ${DOCUMENT_SOON_DAYS} days`, icon: "clock", cls: "doc-week" },
+  { id: "month", label: `Next ${DOCUMENT_EXPIRY_LEAD_DAYS} days`, icon: "calendar-clock", cls: "doc-month" },
+  { id: "later", label: "Later", icon: "calendar", cls: "doc-later" },
+  { id: "none", label: "No expiry", icon: "inbox", cls: "doc-none" },
+];
+
+function documentBucketClass(item) {
+  return DOCUMENT_BUCKETS.find((entry) => entry.id === documentBucket(item))?.cls || "doc-none";
+}
+
+function documentLabel(item) {
+  const days = daysUntil(item?.expiresOn);
+  if (days === null) return "No expiry date";
+  if (days < -1) return `Expired ${Math.abs(days)} days ago`;
+  if (days === -1) return "Expired yesterday";
+  if (days === 0) return "Expires today";
+  if (days === 1) return "Expires tomorrow";
+  if (days <= 30) return `Expires in ${days} days`;
+  return `Expires ${fmtDate(item.expiresOn)}`;
+}
+
+/* When a document should be reminded, in epoch ms, or null when it should not.
+
+   This is the whole point of storing an expiry: not "show it in a list", but "tell me before it
+   lapses". An already-expired document still gets a reminder, because the thing that expired is
+   usually the thing still needing attention (a lapsed policy, a licence that must be renewed) — but
+   only within a grace window, or a two-year-old receipt would nag forever on every single load. */
+function documentReminderTime(item) {
+  if (!isDocument(item)) return null;
+  const days = daysUntil(item?.expiresOn);
+  if (days === null) return null;
+  const expiredGraceDays = 7;
+  if (days < -expiredGraceDays) return null;
+  const now = new Date();
+  const fire = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  fire.setDate(fire.getDate() + (days - DOCUMENT_EXPIRY_LEAD_DAYS));
+  // 9am local, so an expiry notice is something you read with a coffee rather than in the dark.
+  fire.setHours(9, 0, 0, 0);
+  // Clamped to now. A document already inside the lead time would otherwise schedule its reminder
+  // in the past, and the reminder engine treats a past time as due immediately — so it would fire
+  // again on every single load, for as long as the document stayed in the window. One notice, once.
+  return Math.max(fire.getTime(), now.getTime());
+}
+
+function documentItems() {
+  if (!state?.items) return [];
+  return state.items.filter((i) => isDocument(i) && !isArchived(i));
+}
+
+/* The ones that need something done about them, worst first. An expired document outranks one that
+   expires next month regardless of the date it was captured, because that is the order a person
+   would triage them in. */
+function documentsNeedingAttention() {
+  return documentItems()
+    .filter((i) => ["expired", "week"].includes(documentBucket(i)))
+    .sort((a, b) => String(a.expiresOn || "").localeCompare(String(b.expiresOn || "")));
 }
 
 const TASK_STATUS_OPTIONS = [
@@ -3073,6 +3495,8 @@ function switchView(id, options = {}) {
   if (id === "tasks") renderTasks();
   if (id === "inbox") renderInbox();
   if (id === "memory") renderMemory();
+  if (id === "documents") renderDocuments();
+  if (id === "money") renderMoney();
   if (id === "people") renderPeople();
   if (id === "insights") renderInsights();
   if (id === "settings") renderSettings();
@@ -3231,6 +3655,8 @@ function kindColor(kind) {
       voice: ["var(--red-bg)", "var(--red-fg)"],
       image: ["var(--green-bg)", "var(--green-fg)"],
       link: ["var(--blue-bg)", "var(--blue-fg)"],
+      document: ["var(--blue-bg)", "var(--blue-fg)"],
+      expense: ["var(--green-bg)", "var(--green-fg)"],
     }[kind] || ["var(--bg)", "var(--text)"]
   );
 }
@@ -3313,6 +3739,7 @@ function renderToday() {
     .join("");
 
   renderUpcomingDates();
+  renderExpiringDocuments();
 }
 
 /* Renders the Insights view. This was the tail of renderToday(), so Insights was only ever populated
@@ -4293,6 +4720,142 @@ function renderTasks(filter) {
     tasks.forEach((t) => list.appendChild(taskRow(t)));
   }
   renderBulkBar();
+}
+
+/* The same row shape Memory uses, so a document is recognisable as a saved thing rather than as a
+   special case. `doc-chip` carries the bucket so the styling can colour it without a second lookup. */
+function documentRow(item) {
+  const meta = [documentTypeLabel(item), item.issuer, item.docNumber].filter(Boolean).join(" · ");
+  return `<div class="task-row" onclick="openPanel(${jsStr(item.id)})">
+    <div class="task-meta">
+      <div class="task-title">${item.scope === "private" ? icon("lock") + " " : ""}${escapeHtml(item.title)}</div>
+      <div class="task-sub">${escapeHtml(meta)}${item.person ? " · " + icon("user") + " " + escapeHtml(item.person) : ""}</div>
+    </div>
+    <span class="doc-chip ${documentBucketClass(item)}">${escapeHtml(documentLabel(item))}</span>
+  </div>`;
+}
+
+/* Grouped by how soon the expiry bites, not by when it was captured. A person opening Documents is
+   asking "what is about to lapse?", and answering that with a reverse-chronological list of things
+   filed six months ago is the one ordering that cannot answer it. */
+function expenseRow(item) {
+  const money = moneyOf(item);
+  const when = expenseSpentOn(item);
+  const category = moneyCategoryLabel(money.category);
+  return `<div class="task-row" onclick="openPanel(${jsStr(item.id)})">
+    <div class="task-meta">
+      <div class="task-title">${escapeHtml(item.title || category || "Expense")}</div>
+      <div class="task-sub">${escapeHtml([category, money.merchant, fmtDate(when)].filter(Boolean).join(" · "))}</div>
+    </div>
+    <span class="money-amount">${escapeHtml(formatMoney(money.amountMinor) || "—")}</span>
+  </div>`;
+}
+
+/* The Money view. Phase 1 is deliberately read-only — a total, a category breakdown and the list.
+
+   There is no editing and no charts here, and that is the point: the part that is easy to get
+   subtly wrong (an amount, a currency, a month boundary) is done and tested before anything is
+   built on top of it. */
+function renderMoney() {
+  const listEl = document.getElementById("moneyList");
+  if (!listEl) return;
+  const thisMonth = expensesThisMonth();
+  const total = sumMoney(thisMonth);
+  const byCategory = expensesByCategory();
+
+  const monthLabel = document.getElementById("moneyMonthLabel");
+  if (monthLabel) {
+    monthLabel.textContent = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  }
+
+  const statsEl = document.getElementById("moneyStats");
+  if (statsEl) {
+    statsEl.innerHTML = [
+      { label: "Spent this month", value: formatMoney(total) || `${MONEY_SYMBOL}0` },
+      { label: "Expenses", value: String(thisMonth.length) },
+      { label: "Categories", value: String(byCategory.length) },
+    ]
+      .map(
+        (stat) =>
+          `<div class="stat"><div class="stat-value">${escapeHtml(stat.value)}</div><div class="stat-label">${escapeHtml(stat.label)}</div></div>`,
+      )
+      .join("");
+  }
+
+  const categoriesEl = document.getElementById("moneyCategories");
+  if (categoriesEl) {
+    // A bar scaled against the biggest category, so the shape of the month is readable at a glance
+    // without a chart library. `width` is a number this module computed, never a captured value.
+    const max = byCategory.reduce((peak, bucket) => Math.max(peak, bucket.total), 0);
+    categoriesEl.innerHTML = byCategory.length
+      ? byCategory
+          .map(
+            (bucket) => `<div class="money-cat-row">
+              <div class="money-cat-head">
+                <span>${escapeHtml(moneyCategoryLabel(bucket.id) || bucket.id)}</span>
+                <span>${escapeHtml(formatMoney(bucket.total))}</span>
+              </div>
+              <div class="money-cat-bar"><div class="money-cat-fill" style="width:${max ? Math.round((bucket.total / max) * 100) : 0}%"></div></div>
+            </div>`,
+          )
+          .join("")
+      : `<p class="empty">Nothing recorded this month yet.</p>`;
+  }
+
+  const searchInput = document.getElementById("moneySearchInput");
+  const query = searchInput ? searchInput.value.trim() : "";
+  const all = expenseItems();
+  const matched = query ? searchMatches(query).filter((i) => isExpense(i) && !isArchived(i)) : all;
+  const sorted = [...matched].sort((a, b) => String(expenseSpentOn(b)).localeCompare(String(expenseSpentOn(a))) || (b.created || 0) - (a.created || 0));
+
+  listEl.innerHTML = sorted.length
+    ? sorted.slice(0, 50).map(expenseRow).join("")
+    : `<p class="empty">${
+        query ? "No expenses match that search." : "No expenses yet. Capture one to start tracking."
+      }</p>`;
+}
+
+function renderDocuments() {
+  const container = document.getElementById("documentsList");
+  if (!container) return;
+  const searchInput = document.getElementById("documentsSearchInput");
+  const query = searchInput ? searchInput.value.trim() : "";
+
+  const all = documentItems();
+  // searchMatches is the shared matcher, so a document is found the same way in the header search,
+  // in Ask, and here. Searching "warranty" has to reach a document whose title is "Sony TV".
+  const matched = query ? searchMatches(query).filter((i) => isDocument(i) && !isArchived(i)) : all;
+
+  if (!matched.length) {
+    container.innerHTML = `<div class="card"><p class="empty">${
+      query ? "No documents match that search." : "No documents yet. Capture one to keep track of it."
+    }</p></div>`;
+    return;
+  }
+
+  const groups = new Map();
+  DOCUMENT_BUCKETS.forEach((bucket) => groups.set(bucket.id, []));
+  matched.forEach((item) => {
+    const bucket = documentBucket(item);
+    groups.get(bucket).push(item);
+  });
+
+  container.innerHTML = DOCUMENT_BUCKETS.map((bucket) => {
+    const items = groups.get(bucket.id);
+    // An empty group is left out entirely rather than shown as an empty heading.
+    if (!items.length) return "";
+    // Within a bucket, soonest expiry first, and then newest first — the two orders a person
+    // actually wants, and the tie-break has to be stable or rows would shuffle on every render.
+    items.sort((a, b) => {
+      const byExpiry = String(a.expiresOn || "9999").localeCompare(String(b.expiresOn || "9999"));
+      if (byExpiry) return byExpiry;
+      return (b.created || 0) - (a.created || 0);
+    });
+    return `<div class="card">
+      <div class="card-head"><h3>${icon(bucket.icon)} ${escapeHtml(bucket.label)} <span class="count">${items.length}</span></h3></div>
+      <div>${items.map(documentRow).join("")}</div>
+    </div>`;
+  }).join("");
 }
 
 function renderMemory() {
@@ -5286,6 +5849,36 @@ function renderUpcomingDates() {
             <span class="upcoming-date-icon">${icon("cake")}</span>
             <div><div class="upcoming-date-name">${escapeHtml(entry.name)}</div>
             <div class="upcoming-date-when">${escapeHtml(importantDateLabel(entry))}</div></div>
+          </div>`,
+      )
+      .join("");
+}
+
+/* What has lapsed, or lapses within the week, on the Dashboard.
+
+   A reminder only helps if the thing is still there when it arrives, and a lapsed warranty that
+   quietly disappeared behind a notification is the case where the reminder has already failed.
+   Same rule as the birthdays card above: hidden when there is nothing, never an empty box. */
+function renderExpiringDocuments() {
+  const host = document.getElementById("expiringDocuments");
+  if (!host) return;
+  const items = documentsNeedingAttention();
+  if (!items.length) {
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML =
+    `<div class="card-head"><h3>Expiring soon</h3><button class="link-btn" onclick="switchView('documents')">All documents →</button></div>` +
+    items
+      .slice(0, 4)
+      .map(
+        (item) =>
+          `<div class="upcoming-date-row" onclick="openPanel(${jsStr(item.id)})">
+            <span class="upcoming-date-icon">${icon(documentBucket(item) === "expired" ? "alert-triangle" : "file-badge")}</span>
+            <div><div class="upcoming-date-name">${escapeHtml(item.title)}</div>
+            <div class="upcoming-date-when">${escapeHtml(documentLabel(item))}</div></div>
           </div>`,
       )
       .join("");
@@ -6440,6 +7033,8 @@ const CAPTURE_TYPES = [
   { id: "memory", icon: "brain", label: "Memory" },
   { id: "waiting", icon: "hourglass", label: "Waiting for" },
   { id: "openloop", icon: "circle-help", label: "Open loop" },
+  { id: "document", icon: "file-badge", label: "Document" },
+  { id: "expense", icon: "receipt-indian-rupee", label: "Expense" },
   { id: "voice", icon: "mic", label: "Voice" },
   { id: "image", icon: "image", label: "Image" },
   { id: "file", icon: "paperclip", label: "File" },
@@ -6845,6 +7440,9 @@ let captureImageChoicePending = false;
 /* Whether the free-text answer field is showing. Closed by default: the chips cover the ordinary
    case in one tap, and a permanently open field made the sheet look like a form again. */
 let captureAnswerOpen = false;
+/* The expiry read off a photographed document. Held separately from the field so "Clear suggestions"
+   can restore the capture to how it was found, exactly as it does for the due date. */
+let captureDocExpiry = "";
 let capturePlan = []; // Extra items from the same sentence. See setCapturePlan.
 let captureAgenda = []; // Agenda lines, saved as the main item's checklist steps.
 let captureMainAsk = ""; // A question the model raised about the main item.
@@ -7036,6 +7634,16 @@ function openCapture() {
     (t) =>
       `<div class="type-chip ${t.id === captureType ? "active" : ""}" data-type="${t.id}" onclick="pickType(${jsStr(t.id)}, true)"><i data-lucide="${t.icon}"></i><span>${t.label}</span></div>`,
   ).join("");
+  // Built from MONEY_CATEGORIES rather than typed into the markup, so the picker and the labels used
+  // by the list and the report can never drift — one list, three readers.
+  const categorySelect = document.getElementById("captureCategory");
+  if (categorySelect) {
+    categorySelect.innerHTML =
+      '<option value="">Not specified</option>' +
+      MONEY_CATEGORIES.map(
+        (c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}</option>`,
+      ).join("");
+  }
   refreshIcons();
   document.getElementById("captureText").value = "";
   document.getElementById("captureText").placeholder = "What's on your mind?";
@@ -7071,6 +7679,23 @@ function openCapture() {
   setOcrButtonBusy(false);
   imageOcrText = "";
   renderOcrLanguages();
+  // Document fields reset with everything else, or the previous capture's expiry would be waiting
+  // under the next one — and it would be indistinguishable from a value the person had typed.
+  captureDocExpiry = "";
+  ["captureDocType", "captureDocExpires", "captureDocIssuer", "captureDocNumber", "captureIssuedOn"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const docFieldsReset = document.getElementById("captureDocFields");
+  if (docFieldsReset) docFieldsReset.style.display = "none";
+  ["captureAmount", "captureSpentOn", "captureMerchant"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const categoryReset = document.getElementById("captureCategory");
+  if (categoryReset) categoryReset.value = "";
+  const moneyFieldsReset = document.getElementById("captureMoneyFields");
+  if (moneyFieldsReset) moneyFieldsReset.style.display = "none";
   document.getElementById("fileNamePreview").textContent = "";
   document.getElementById("linkUrlInput").value = "";
   document.getElementById("imageFileInput").value = "";
@@ -7132,6 +7757,14 @@ function pickType(id, manual) {
   } else {
     document.getElementById("captureText").placeholder = "What's on your mind?";
   }
+  // The document fields follow the *kind*, the way the other panels follow the channel. A document
+  // chosen while a voice note is still attached keeps the recorder, and gains these.
+  const docFields = document.getElementById("captureDocFields");
+  if (docFields) docFields.style.display = id === "document" ? "block" : "none";
+  // Same for money. Both panels follow the kind, so a dictated expense keeps its transcript and
+  // gains the amount box, and a photograph keeps its image.
+  const moneyFields = document.getElementById("captureMoneyFields");
+  if (moneyFields) moneyFields.style.display = id === "expense" ? "block" : "none";
   if (manual) updateCaptureDuplicate(id, captureInputValue());
 }
 function detectType(text) {
@@ -7638,17 +8271,37 @@ function buildCaptureQuestions(text, data) {
     // Set here rather than where the card renders, because this is the moment the app knows it is
     // in doubt, and the auto-create gate has to see it from that moment on.
     captureImageChoicePending = true;
+    // A photographed warranty, insurance policy or licence is the fourth thing a date-bearing
+    // picture can be, and filing one as a task loses the only field that mattered — the expiry.
+    // Offered only when the text actually reads like a document, so an appointment card is not
+    // asked a question about documents it has nothing to do with.
+    const options = [
+      { label: "Create event", value: "event" },
+      { label: "Set reminder", value: "reminder" },
+      { label: "Save as note", value: "note" },
+    ];
+    if (textLooksLikeDocument(imageOcrText)) {
+      options.push({ label: "Keep as document", value: "document" });
+    }
     questions.push({
       id: "image-choice",
       question: `I found a date on ${escapeHtml(formatDueDisplay(data.dueDate))}: ${escapeHtml(
         String(data.title || body).trim().slice(0, 80) || "an appointment",
       )}. What would you like me to do?`,
-      options: [
-        { label: "Create event", value: "event" },
-        { label: "Set reminder", value: "reminder" },
-        { label: "Save as note", value: "note" },
-      ],
+      options,
     });
+  }
+
+  // A sentence about money. "Spent ₹450 for groceries" is an expense, and the local rules below can
+  // say so from the words alone — but only when the amount is actually in the sentence, because
+  // "pay the electricity bill on the 5th" is money *and a date* and is a reminder, not a spend.
+  // With both an amount and spend wording, the kind is settled and nothing is asked.
+  const amountMinor = parseAmountFromText(body);
+  if (!questions.length && amountMinor !== null && amountMinor > 0 && textLooksLikeExpense(body)) {
+    if (!captureAutoDetected && !["file", "link"].includes(captureChannel) && captureType === "text") {
+      captureSuggestionFields.kind = { appliedKind: "expense", previous: captureType };
+      pickType("expense", false);
+    }
   }
 
   // A promise the person made. Worth one tap: a reminder for it is the difference between
@@ -7819,7 +8472,14 @@ function answerCaptureQuestion(value) {
     captureImageChoicePending = false;
     // Never override a kind the person chose themselves.
     if (!captureAutoDetected && !["file", "link"].includes(captureChannel)) {
-      const wanted = value === "event" ? "event" : value === "note" ? "memory" : "task";
+      const wanted =
+        value === "event"
+          ? "event"
+          : value === "note"
+            ? "memory"
+            : value === "document"
+              ? "document"
+              : "task";
       if (wanted !== captureType) {
         captureSuggestionFields.kind = { appliedKind: wanted, previous: captureType };
         pickType(wanted, false);
@@ -7829,6 +8489,24 @@ function answerCaptureQuestion(value) {
     if (value === "reminder") {
       const field = document.getElementById("captureDueDate");
       if (field?.value) captureSuggestionFields.captureDueDate = null;
+    }
+    // A document is not *due* on its expiry, it *expires* on it. The date that was read has to move
+    // out of the due field and into the expiry field, or it would both nag as a task due today and
+    // leave the expiry — the only field a document has — empty. Nothing is cleared from the due
+    // field, so "Clear suggestions" can still put it back the way it was found.
+    if (value === "document") {
+      const field = document.getElementById("captureDueDate");
+      const read = field?.value ? field.value.slice(0, 10) : "";
+      if (read) {
+        captureDocExpiry = read;
+        const expiryField = document.getElementById("captureDocExpires");
+        if (expiryField) expiryField.value = read;
+        if (field.value) captureSuggestionFields.captureDueDate = null;
+      }
+      if (!captureType || captureType === "text") {
+        captureSuggestionFields.kind = { appliedKind: "document", previous: captureType };
+        pickType("document", false);
+      }
     }
   }
 
@@ -8310,6 +8988,22 @@ const VAGUE_TIME_RE =
 const COMMITMENT_RE =
   /\b(i'?ll|i will|i promise|i said i'?d|we'?ll|we will|remind me to|don'?t forget to|i need to remember to)\b/i;
 
+/* Does this read as a document rather than as an appointment?
+
+   Keywords only, and only the words that appear on the actual paper. An appointment card says
+   "Dr", "Room", "Appointment"; a warranty says "Warranty", "Valid till", "Model". Matching on the
+   expiry wording in particular is what makes this reliable, because "valid till" and "expires on"
+   are near-universal on the documents this is for and essentially absent on a clinic slip.
+
+   Deliberately not a model call: this runs on the OCR result of every photographed image, and
+   guessing "document" for a photo of a birthday card would be worse than not offering the option. */
+const DOCUMENT_TEXT_RE =
+  /\b(warranty|guarantee|receipt|invoice|policy|insurance|premium|licen[cs]e|passport|visa card|aadhaar|pan card|valid (?:till|until|upto|up to)|expire[sd]? on|expiry|coverage|policy no|serial no|bill no|model no|manufacturer|shopkeeper|bill to|invoice no)\b/i;
+
+function textLooksLikeDocument(text) {
+  return DOCUMENT_TEXT_RE.test(String(text || ""));
+}
+
 /* Splits a sentence into clauses. More than one clause usually means more than one thing — a
    task plus a promise, a date plus a follow-up — and the single-value local rules can only
    ever report the first match. That is the main reason to call the model. */
@@ -8382,7 +9076,14 @@ function extractLocally(text) {
 
   // Kind
   result.kind = detectType(text);
-  if (/\bwaiting (on|for)\b/i.test(text)) result.kind = "waiting";
+  // An expense is money already spent, so it is read before anything else here. "Spent ₹450 for
+  // groceries" contains no task verb, so without this it fell through to detectType and became a
+  // memory — a spending record filed as a note, which is the one thing this module must never do.
+  // It needs an amount as well as the wording: "pay the bill on the 5th" is money, but the money has
+  // not been spent yet and that is a reminder, not an expense.
+  if (parseAmountFromText(text) !== null && textLooksLikeExpense(text)) {
+    result.kind = "expense";
+  } else if (/\bwaiting (on|for)\b/i.test(text)) result.kind = "waiting";
   else if (/\b(need to decide|undecided|not sure yet)\b/i.test(text))
     result.kind = "openloop";
   // A stated preference or fact about someone is knowledge, not work: "Ravi prefers WhatsApp".
@@ -8687,6 +9388,73 @@ async function saveCapture(forceSave = false, options = {}) {
       captureMetadata,
       captureFingerprint: CAPTURE_GENERIC_TITLES.has(normaliseCaptureFingerprint(title)) ? null : captureFingerprintFor(realKind, title),
     };
+
+    // Document fields. Read only for a document, and the expiry falls back to the value the image
+    // choice read out of the picture, so "Keep as document" on a photographed warranty saves with
+    // its expiry without anyone touching a field.
+    if (realKind === "document") {
+      const read = (id) => (document.getElementById(id)?.value || "").trim();
+      const expires = read("captureDocExpires") || captureDocExpiry;
+      newItem.docType = read("captureDocType");
+      newItem.issuer = read("captureDocIssuer");
+      newItem.docNumber = read("captureDocNumber");
+      newItem.issuedOn = read("captureIssuedOn");
+      // Validated here as well as on read: an expiry the browser's date input cannot produce could
+      // still arrive from an imported backup, and it would sort as "no expiry" without complaint.
+      newItem.expiresOn = parseIsoDate(expires) ? expires : "";
+      // A document is not a task, so it must not nag as one on the day it was captured.
+      newItem.dueDate = "";
+      newItem.due = "";
+      newItem.status = "inbox";
+    }
+
+    // Money fields. The amount is parsed to integer paise here and nowhere else, so there is exactly
+    // one place a float could ever enter the app — and it does not.
+    if (realKind === "expense") {
+      const read = (id) => (document.getElementById(id)?.value || "").trim();
+      // Falls back to the sentence, so "Spent ₹450 for groceries" saves its amount without anyone
+      // touching the box. The typed value wins when both are present: a correction is a decision.
+      const typed = read("captureAmount");
+      const minor = parseMoneyToMinor(typed) ?? parseAmountFromText(text);
+      const spentOn = read("captureSpentOn");
+      const category = read("captureCategory") || guessMoneyCategory(text || title);
+      if (minor !== null && minor > 0) {
+        captureMetadata.amountMinor = minor;
+        captureMetadata.currency = MONEY_CURRENCY;
+        captureMetadata.category = category;
+        captureMetadata.merchant = read("captureMerchant");
+        // A date the picker cannot produce is dropped rather than stored; the report falls back to
+        // the created timestamp, which is what it would have used anyway.
+        // A date the *reader* found is the day the money was spent, so it is taken from the due date
+        // the parse already produced. "Spent ₹450 on Monday" belongs to Monday, and it must not then
+        // be left on the Schedule as something to do on Monday.
+        const fromPicker = parseIsoDate(spentOn) ? spentOn : "";
+        const fromSentence = dueISO && !isNaN(new Date(dueISO).getTime()) ? isoDateString(new Date(dueISO)) : "";
+        captureMetadata.spentOn = fromPicker || fromSentence || "";
+      }
+      // An expense is money already spent. It has no due date, so it must never appear on the
+      // Schedule as something to do, and must never fire a reminder.
+      newItem.dueDate = "";
+      newItem.due = "";
+      newItem.status = "inbox";
+      newItem.sub = newItem.sub || (minor !== null && minor > 0 ? formatMoney(minor) : "");
+    }
+
+    // An expense without an amount is a capture that says "I spent money" and records how much:
+    // unknown. The Money view shows a dash and the month total silently under-counts, which is the
+    // one failure in this module that nobody would notice. So it is refused here, before the item is
+    // created. The sheet deliberately stays open with the sentence intact, because the answer is one
+    // number and closing would make the person type the whole thing again.
+    if (realKind === "expense" && !newItem.captureMetadata.amountMinor) {
+      const amountField = document.getElementById("captureAmount");
+      const hint = document.getElementById("captureHint");
+      if (hint) hint.textContent = "Enter how much was spent, e.g. 450 or ₹450.";
+      if (amountField) {
+        amountField.focus();
+        amountField.select?.();
+      }
+      return false;
+    }
 
     // Agenda lines ride along as the main item's checklist, not as extra rows to triage.
     if (captureAgenda.length) {
@@ -10893,6 +11661,8 @@ function renderAll() {
   renderInbox();
   renderTasks();
   renderMemory();
+  renderDocuments();
+  renderMoney();
   renderPeople();
   renderProjects();
   renderGoals();
@@ -10947,6 +11717,14 @@ function itemReminderTime(item) {
   if (!item || item.done || isArchived(item)) return null;
   if (item.snoozedUntil) return item.snoozedUntil;
   if (item.notified || notifiedIds.has(item.id)) return null;
+  // A document is reminded by its expiry, not by a due date it was never given. Checked before the
+  // dueDate branch so a document that happens to carry both is reminded about the one that matters,
+  // and a document without a dueDate is still reminded at all — which is the whole feature.
+  if (isDocument(item)) return documentReminderTime(item);
+  // An expense is the mirror image: the money is already gone, so there is nothing to be reminded
+  // of. Without this an expense carrying a parsed date would fire a notification about spending that
+  // has already happened — and it would do it every time the app was opened.
+  if (isExpense(item)) return null;
   if (!item.dueDate) return null;
   const time = new Date(item.dueDate).getTime();
   return Number.isFinite(time) ? time : null;
@@ -11292,7 +12070,11 @@ function reminderPayload(item) {
   return {
     id: item.id,
     title: item.title || "Reminder",
-    body: item.sub || item.due || "Tap to open Everything",
+    // A document's own `due` is empty — it was never given a due date — so the fallback text would
+    // have been the generic "Tap to open Everything". The expiry is the reason to tap, so it says so.
+    body: isDocument(item)
+      ? item.sub || documentLabel(item)
+      : item.sub || item.due || "Tap to open Everything",
     url: `./?item=${item.id}`,
     priority: item.priority || "",
     time,

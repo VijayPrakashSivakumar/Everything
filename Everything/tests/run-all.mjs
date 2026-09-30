@@ -64,6 +64,13 @@ const SUITES = [
 // itself forward. They share one probe because they share one file — a drag writes through the same
 // occurrence rules a completion does, and splitting them would let the two halves disagree.
 { name: 'calendar', file: 'calendar-probe.mjs', timeoutMs: 180000 },
+  // A document is reminded by its expiry, which means a date has to survive a round trip through
+  // JSON, a jsonb column and a timezone without moving by a day. Every one of those failure modes
+  // looks like a working feature and quietly lies about when something lapses.
+  { name: 'documents', file: 'documents-probe.mjs', timeoutMs: 180000 },
+  // Money rests on one number. A float creeps in, a total is off by a paisa, and nobody notices for
+  // a month. Every check here is one of the ways that happens.
+  { name: 'money', file: 'money-probe.mjs', timeoutMs: 180000 },
   // A collection written to but never subscribed to survived for a long time, and so can anything
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },

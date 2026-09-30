@@ -2402,11 +2402,17 @@ check('a picture with a date is offered a choice instead of a silent guess', () 
   // Only when the text really came out of a picture, and there is a date to be uncertain about.
   assert.match(js, /captureChannel === "image" && imageOcrText && data\.dueDate/,
     'the choice must require a real read, on the image channel, with a date');
-  // The three answers have to reach real kinds, not just dismiss themselves.
-  const answer = js.match(/if \(question\.id === "image-choice"\)[\s\S]{0,900}?\n  }/);
+  // The answers have to reach real kinds, not just dismiss themselves. Matched value-by-value
+  // rather than as one ternary: the original assertion pinned the exact line the ternary was
+  // written on, so reformatting it — or adding the fourth option — failed a check about behaviour.
+  const answer = js.match(/if \(question\.id === "image-choice"\)[\s\S]{0,2000}?\n  }/);
   assert.ok(answer, 'the image choice is never answered');
-  assert.match(answer[0], /"event" \? "event" : value === "note" \? "memory" : "task"/,
-    'the three options must map onto three different kinds');
+  for (const [value, kind] of [['event', 'event'], ['note', 'memory'], ['document', 'document']]) {
+    assert.match(answer[0], new RegExp(`value === "${value}"[\\s\\S]{0,80}?\\?\\s*"${kind}"`),
+      `"${value}" must produce a ${kind}`);
+  }
+  // The fallback is still a task, and it is the one a reminder takes.
+  assert.match(answer[0], /:\s*"task"/, 'the remaining option must still produce a task');
   // A manual choice outranks the card, exactly as everywhere else in capture.
   assert.match(answer[0], /!captureAutoDetected/, 'the card must not override a manual choice');
   // And the silent auto-create has to wait, or the card is decorative.
@@ -2447,6 +2453,46 @@ check('the reset path always ends in something the person can read', () => {
   assert.match(forgot[0], /allowed redirect list|URL Configuration/,
     'the one cause the owner can actually fix is not named');
   assert.match(forgot[0], /spam folder/i, 'the mail lands in spam more often than not');
+});
+
+check('documents are a kind of item, and the columns are probed rather than assumed', () => {
+  /* A document could have been a table of its own. It is not, and that is the whole design: the
+     reminder engine, the offline queue, realtime sync, RLS, search, backup and household sharing
+     are all built around `items`, so reusing it is what makes documents work on a phone with no
+     network and cost nothing to sync. A new table would have needed every one of those again. */
+  assert.match(js, /function isDocument\(item\)/, 'there is no document predicate');
+  assert.match(js, /item\?\.kind === "document"/, 'a document is not identified by its kind');
+  // The view, the nav entry and the kind chip all have to exist, or the feature exists nowhere.
+  assert.match(html, /id="view-documents"/, 'the Documents view has no markup');
+  assert.match(js, /id: "documents", icon:/, 'Documents is not in the navigation');
+  assert.match(js, /if \(id === "documents"\) renderDocuments\(\);/,
+    'opening the view does not render it');
+  // The reminder is the feature. A document is never given a due date, so a path that required one
+  // would show a list of things and never once say anything.
+  const reminder = between('function itemReminderTime', 'function rememberNotified');
+  assert.match(reminder, /if \(isDocument\(item\)\) return documentReminderTime\(item\);/,
+    'a document is not reminded by its expiry');
+  // And the reminder must never be scheduled in the past, or it fires again on every single load.
+  const fire = between('function documentReminderTime', 'function documentItems');
+  assert.match(fire, /Math\.max\(fire\.getTime\(\), now\.getTime\(\)\)/,
+    'an expiry inside the lead time schedules a reminder in the past, so it re-fires every load');
+  // The row is read as a local day. `new Date('2027-03-04')` is UTC midnight, which in a negative
+  // offset is the 3rd, and the chip would then say a document expired a day before it did.
+  assert.match(js, /function parseIsoDate/, 'the expiry is not parsed defensively');
+  const parse = between('function parseIsoDate', 'function daysUntil');
+  assert.match(parse, /new Date\(Number\(match\[1\]\), Number\(match\[2\]\) - 1, Number\(match\[3\]\)\)/,
+    'the date is parsed by the Date constructor, which is UTC');
+  // A date the browser's own date input cannot produce must be refused, not rolled forward.
+  assert.match(parse, /date\.getDate\(\) !== Number\(match\[3\]\)/, '2027-02-30 is not refused');
+  // Document fields only go to the server when the database has them: PostgREST rejects an entire
+  // upsert over a single unknown column, which would break saving for everyone pre-migration.
+  for (const column of ['doc_type', 'issuer', 'doc_number', 'issued_on', 'expires_on']) {
+    assert.match(js, new RegExp(`if \\(documentColumns\\.\\w+\\) row\\.${column} =`),
+      `${column} is sent whether or not the database has it`);
+  }
+  // And only a document may carry them, or a task re-typed from a document keeps an issuer.
+  assert.match(between('function rowToItem', 'function normaliseDocumentField'),
+    /if \(row\.kind === "document"\)/, 'document fields are applied to every kind of item');
 });
 
 check('a sync that never ran is never mistaken for an empty account', () => {

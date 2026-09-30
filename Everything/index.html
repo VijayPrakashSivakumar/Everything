@@ -651,6 +651,10 @@
                      start and never shown anywhere. Hidden when there is nothing within the lead
                      window, rather than rendered as a permanently empty card. -->
                 <div class="card" id="upcomingDates" hidden></div>
+                <!-- Documents that have lapsed or lapse within the week. The reminder is the feature,
+                     but a reminder only helps if the thing is still there when it arrives; this is
+                     the same "not an empty card" rule as the birthdays above. -->
+                <div class="card" id="expiringDocuments" hidden></div>
                 <div class="nudge dashboard-movable" id="nudgeCard" data-dashboard-section="nudge">
                   <div class="nudge-text">
                     <b>One thing to consider</b>
@@ -890,6 +894,50 @@
               style="margin-bottom: 14px"
             />
             <div id="memoryGrouped"></div>
+          </div>
+
+          <!-- DOCUMENTS VIEW -->
+          <div class="view" id="view-documents">
+            <h1 class="page-title">Documents</h1>
+            <p class="page-sub">
+              Warranties, insurance, licences and receipts. Anything with an expiry date is
+              reminded before it lapses.
+            </p>
+            <input
+              class="capture-input"
+              id="documentsSearchInput"
+              placeholder="Search your documents…"
+              oninput="renderDocuments()"
+              style="margin-bottom: 14px"
+            />
+            <div id="documentsList"></div>
+          </div>
+
+          <!-- MONEY VIEW -->
+          <div class="view" id="view-money">
+            <h1 class="page-title">Money</h1>
+            <p class="page-sub">What has been spent, and where it went.</p>
+            <div class="stat-row" id="moneyStats"></div>
+            <div class="card">
+              <div class="card-head">
+                <h3>This month by category</h3>
+                <span style="font-size: 12px; color: var(--muted)" id="moneyMonthLabel"></span>
+              </div>
+              <div id="moneyCategories"></div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <h3>Recent expenses</h3>
+                <input
+                  class="capture-input"
+                  id="moneySearchInput"
+                  placeholder="Search expenses…"
+                  oninput="renderMoney()"
+                  style="max-width: 220px; padding: 6px 10px; font-size: 13px"
+                />
+              </div>
+              <div id="moneyList"></div>
+            </div>
           </div>
 
           <!-- Simple placeholder views -->
@@ -2228,6 +2276,67 @@
           </div>
         </div>
 
+        <!-- Money fields. Shown only for an expense, for the same reason the document fields are:
+             a capture sheet covered in boxes is a form, and a form is what this is trying not to be. -->
+        <div id="captureMoneyFields" style="display: none; margin-top: 10px">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureAmount">Amount (₹)</label>
+              <input
+                class="capture-input"
+                id="captureAmount"
+                inputmode="decimal"
+                autocomplete="off"
+                placeholder="e.g. 450"
+                style="margin: 4px 0 0"
+              />
+            </div>
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureSpentOn">
+                Spent on
+              </label>
+              <input
+                type="date"
+                id="captureSpentOn"
+                class="capture-input"
+                style="margin: 4px 0 0"
+              />
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureCategory">
+                Category
+              </label>
+              <select
+                id="captureCategory"
+                style="
+                  width: 100%;
+                  padding: 9px;
+                  border-radius: 8px;
+                  border: 1px solid var(--border);
+                  background: var(--bg);
+                  color: var(--text);
+                  margin-top: 4px;
+                "
+              >
+                <option value="">Not specified</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureMerchant">
+                Paid to
+              </label>
+              <input
+                class="capture-input"
+                id="captureMerchant"
+                placeholder="e.g. D-Mart"
+                style="margin: 4px 0 0"
+              />
+            </div>
+          </div>
+        </div>
+
         <!-- Recurrence + Person -->
         <div
           style="
@@ -2274,6 +2383,85 @@
               placeholder="e.g. Ravi"
               style="margin: 4px 0 0"
             />
+          </div>
+        </div>
+
+        <!-- Document fields. Shown only when the capture is a document, because five empty boxes on
+             every capture is how a capture sheet stops feeling like a capture sheet. -->
+        <div id="captureDocFields" style="display: none; margin-top: 10px">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureDocType">Type</label>
+              <select
+                id="captureDocType"
+                style="
+                  width: 100%;
+                  padding: 9px;
+                  border-radius: 8px;
+                  border: 1px solid var(--border);
+                  background: var(--bg);
+                  color: var(--text);
+                  margin-top: 4px;
+                "
+              >
+                <option value="">Not specified</option>
+                <option value="warranty">Warranty</option>
+                <option value="insurance">Insurance</option>
+                <option value="receipt">Receipt</option>
+                <option value="licence">Licence</option>
+                <option value="passport">Passport / ID</option>
+                <option value="manual">Manual</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureDocExpires">
+                Expires on
+              </label>
+              <input
+                type="date"
+                id="captureDocExpires"
+                class="capture-input"
+                style="margin: 4px 0 0"
+              />
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureDocIssuer">
+                Issued by
+              </label>
+              <input
+                class="capture-input"
+                id="captureDocIssuer"
+                placeholder="e.g. Croma"
+                style="margin: 4px 0 0"
+              />
+            </div>
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureDocNumber">
+                Number
+              </label>
+              <input
+                class="capture-input"
+                id="captureDocNumber"
+                placeholder="e.g. INV-2291"
+                style="margin: 4px 0 0"
+              />
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureIssuedOn">
+                Issued on
+              </label>
+              <input
+                type="date"
+                id="captureIssuedOn"
+                class="capture-input"
+                style="margin: 4px 0 0"
+              />
+            </div>
           </div>
         </div>
 
