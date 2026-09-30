@@ -80,6 +80,59 @@ inbox, calendar, projects, goals, and AI-assisted search.
 - **Money owed** — *"Ravi owes me ₹500"* is neither spending nor a bill, so it is a **task** with an
   amount and a direction, and the two directions are never netted; see *Money owed*.
 
+## What is built, and what is not
+
+Audited against the source on **30 September 2026**, not against a plan. Roughly half of the usual
+feature wishlist is already here, and the largest remaining item is not a feature at all but a
+correctness fix — so this table exists to stop anyone re-adding something that shipped.
+
+**🟢 Complete**
+
+| Area | Evidence |
+| --- | --- |
+| Smart Capture | text/voice/image/file/link; the conversation engine for missing values; silent auto-create |
+| Reminders | cron **and** service worker for a closed app; snooze; postpone; recurring; delivery history (`notification_log` → Settings) |
+| Schedule | Day/Week/Month over one grid; drag-and-drop reschedule; event reminders |
+| Inbox | AI categorization; convert to task/event/note; archive; **bulk** archive and delete, with undo |
+| People | contacts; birthdays; important dates; notes; linked items; merge; rename |
+| Documents | photograph + OCR; receipts; bills; warranties; 30-day reminders |
+| Money | expenses; bills; subscriptions; payment reminders; recurring payments |
+
+**🟡 Partial**
+
+| Area | Have | Have not |
+| --- | --- | --- |
+| Search / Ask | searches everything; natural-language questions; date/person/project search | **facet filters** — every view has a free-text box, none has real filters |
+| Projects | tasks; deadlines; progress; dashboard | **notes**, **files** |
+| Goals | goals → projects → tasks; progress | a real **weekly review** — there is a Review view, but no ritual |
+| Household | shared tasks and events; roles; private vs shared | **responsibilities** — items attach to a *person name*, not to a member's account |
+| Insights | patterns; unfinished tasks; deadlines; 14-day chart; a daily digest | a **weekly** rollup, and the daily digest is client-side only |
+| Security | privacy; private/shared; backup; export; delivery history | **activity history** — no "who changed what, when" |
+| Mobile | quick capture; notification actions; voice; camera | **home-screen widgets** |
+
+**🔴 Not built**
+
+| Area | State |
+| --- | --- |
+| Integrations | **nothing** — no calendar, email, contacts, cloud storage, maps or messaging |
+
+### The largest remaining item is a bug, not a feature
+
+The **morning digest is built on the client**, so it fires when the app is open or was opened that
+day. Real reminders *do* reach a closed app through the service worker and the server cron — the
+digest does not, and that inconsistency is the problem. It is the one entry here that is a
+correctness fix rather than a missing feature, which is why it outranks everything below it.
+
+The full reasoning, and the three things that have to be true before it can move, are in *The
+morning digest* → *What it does not do*. Nothing more is repeated here on purpose.
+
+### This table will go stale
+
+It is a point-in-time reading of the source, not a live fact, and nothing enforces it. It is
+correct **as of the date above** and should be re-audited rather than trusted indefinitely. A claim
+here is only as good as the search that produced it — the dead-code audit exists for the same
+reason, and a table nobody re-reads is a table that quietly starts lying.
+
 ## Recurring series
 
 A **series** is the set of items sharing one `recurrenceKey`: the original plus every occurrence
