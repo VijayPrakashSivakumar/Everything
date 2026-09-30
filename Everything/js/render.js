@@ -61,6 +61,24 @@ function switchView(id, options = {}) {
 
   const content = document.querySelector(".content");
   if (content) content.scrollTo({ top: 0, left: 0, behavior: "auto" });
+
+  /* Mark the view as one the person navigated to, so the stylesheet can play the arrival animation
+     only for that case.
+
+     `changed` is the honest signal and already computed above: it is false when switchView is called
+     for the view already showing, which is what boot and every re-render look like. Without this
+     gate the animation would restart every time the list re-rendered — so tapping a checkbox in the
+     middle of a fade made the whole page pulse again, which reads as a glitch rather than as motion.
+     Putting the class here rather than in CSS means the decision is made once, in the function that
+     knows why the view is being shown, instead of inferred from the DOM. */
+  const view = document.getElementById("view-" + id);
+  if (view && changed) {
+    view.classList.remove("entering");
+    // Reflow between the two class writes, or removing and re-adding in the same frame collapses to
+    // no change and the animation does not replay.
+    void view.offsetWidth;
+    view.classList.add("entering");
+  }
 }
 
 function syncSidebarMode() {

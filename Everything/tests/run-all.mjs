@@ -32,6 +32,7 @@ const SUITES = [
   { name: 'visual', file: 'plan-visual.mjs', timeoutMs: 120000 },
   { name: 'autosave', file: 'autosave-probe.mjs', timeoutMs: 120000 },
   { name: 'theme', file: 'theme-probe.mjs', timeoutMs: 120000 },
+  { name: 'motion', file: 'motion-probe.mjs', timeoutMs: 120000 },
   { name: 'back', file: 'back-nav-probe.mjs', timeoutMs: 120000 },
   { name: 'search', file: 'search-probe.mjs', timeoutMs: 120000 },
   // The inline-help notes are the one feature whose whole job is to be seen. A probe that only

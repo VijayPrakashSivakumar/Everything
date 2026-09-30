@@ -1959,8 +1959,123 @@ h1.page-title,
   min-width: 0;
 }
 
+/* ---------- Motion ----------
+   The app had 20 transitions in nearly 6,000 lines of CSS and one @keyframes, and the place it showed
+   most was navigation: `.view` is `display: none` and `.view.active` is `display: block`, so every
+   tap on a nav entry swapped one page for another instantly. Nothing about the layout was wrong —
+   which is exactly why it never showed up in a responsive audit. A hard cut is a feel problem, and a
+   feel problem cannot be measured by asking whether anything overflows.
+
+   Everything here is on the existing tokens, so it inherits each concept's --motion-scale and
+   --ease for free: the springy "casual" theme springs, "editorial" barely moves, and the calm theme
+   stays calm. That is the reason to add motion as tokens rather than as durations.
+
+   Two deliberate limits, because the failure modes are worse than the flatness being fixed:
+
+   Nothing animates on load. A page that fades up while a person is reading it, once per visit, is
+   decoration that costs them time; so the arrival animation only runs on a view the person actually
+   navigated to, and only after the first paint.
+
+   Nothing animates more than 8px or 200ms. A long travel is read as lag, and a long travel on a list
+   of forty rows is read as forty separate waits. */
+
+/* A view arriving. `animation` rather than `transition`, because display:none → block cannot
+   transition: there is no "before" state to interpolate from.
+
+   Played only for `.view.active.entering`, and `entering` is added by switchView when the person
+   actually navigated — not by boot and not by a re-render. Tying it to `.active` alone would restart
+   the fade every time a list re-rendered, so ticking one checkbox would make the whole page pulse. */
+@keyframes view-arrive {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 .view.active {
   display: block;
+}
+
+.view.active.entering {
+  animation: view-arrive var(--dur-4) var(--ease) both;
+}
+
+/* Rows and controls acknowledge the finger. There were eight :active rules in the file and none on
+   a row, so a tap on a task produced no evidence at all until the page came back — which reads as a
+   dropped tap rather than a slow one. This is the cheapest possible confirmation: a hair of
+   compression and the existing surface token. transform only, so it never triggers layout, and the
+   row's own text is left alone because scaling text makes small type look blurry mid-press. */
+.task-row:not(.swipeable) {
+  transition: background var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+}
+
+.task-row:not(.swipeable):active {
+  transform: scale(0.994);
+  background: var(--bg);
+}
+
+/* Swipeable rows are excluded deliberately. Their transform is owned by the drag in progress, and a
+   :active rule competing for the same property mid-gesture is how a row ends up stuck a few pixels
+   sideways after it has been released. */
+
+/* Checkboxes are the single most-tapped control in the app, and the smallest, so they get the same
+   acknowledgement at the same cost. */
+.checkbox {
+  transition: transform var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+
+.checkbox:active {
+  transform: scale(0.9);
+}
+
+/* Anything focusable gets a visible ring without the layout moving. outline rather than box-shadow,
+   because outline does not change the element's size and a focus ring that pushes a row sideways
+   makes the list reflow while somebody is arrowing through it. */
+:focus-visible {
+  outline: var(--ring-w) solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-ctl);
+}
+
+/* ---------- Motion, when the reader has asked for none ----------
+   The old rule turned off two selectors by name, which meant every animation added after it was
+   opted in by forgetting, not out. This zeroes the tokens themselves, so the whole app goes still and
+   stays still as it grows — the override cannot fall behind the thing it is protecting.
+
+   Specificity matters here and is easy to get wrong. Each concept sets --motion-scale on
+   `:root[data-concept="…"]`, which is (0,2,0). A bare `:root` override is (0,1,0) and loses to it,
+   so the reduced-motion rule would silently do nothing for every concept except the default. The
+   selector below matches the concepts as well as the root, and its !important is deliberate: it is
+   the one place in the stylesheet where a rule is allowed to insist, because losing this one is
+   invisible and the consequence is a motion-sensitive reader being moved whether they asked to be or
+   not. */
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  :root[data-concept] {
+    --motion-scale: 0 !important;
+  }
+
+  /* Anything that animates for its own sake rather than through a token stops outright. */
+  .view.active.entering {
+    animation: none;
+  }
+
+  /* A transform left behind by a rule that is no longer animating would otherwise park an element
+     mid-travel with nothing left to move it home. */
+  .task-row:not(.swipeable):active,
+  .checkbox:active {
+    transform: none;
+  }
+
+  /* Scrolling is motion too, and the one most often left on. */
+  html {
+    scroll-behavior: auto !important;
+  }
 }
 
 .logout-illustration {
