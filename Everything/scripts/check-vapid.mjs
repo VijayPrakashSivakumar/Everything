@@ -44,13 +44,24 @@ function publicKeyFromPrivate(privateKey) {
 }
 
 function browserPublicKey() {
+  /* The app logic is fifteen files now, in the order index.html loads them, and VAPID_PUBLIC_KEY
+     lives in one of them — utils.js. Reading a single named file was fine when it was one script.js
+     and silently returned '' after the split, which is the worst possible failure here: the script
+     would report "INFO could not read VAPID_PUBLIC_KEY" and still exit clean, so a mismatched key
+     pair would ship with a green check. Scans the loaded parts and fails loudly instead. */
   try {
-    const file = path.join(moduleDir, '..', 'script.js');
-    const source = fs.readFileSync(file, 'utf8');
-    const match = source.match(/VAPID_PUBLIC_KEY\s*=\s*"([^"]+)"/);
-
-    return match ? match[1] : '';
+    const appDir = path.join(moduleDir, '..');
+    const html = fs.readFileSync(path.join(appDir, 'index.html'), 'utf8');
+    const order = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+    if (!order.length) throw new Error('index.html loads no app scripts');
+    for (const rel of order) {
+      const source = fs.readFileSync(path.join(appDir, rel), 'utf8');
+      const match = source.match(/VAPID_PUBLIC_KEY\s*=\s*"([^"]+)"/);
+      if (match) return match[1];
+    }
+    return '';
   } catch (error) {
+    console.log(`WARN could not read VAPID_PUBLIC_KEY from the app scripts: ${error.message}`);
     return '';
   }
 }
