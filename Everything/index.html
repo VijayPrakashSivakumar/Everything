@@ -916,14 +916,35 @@
           <!-- MONEY VIEW -->
           <div class="view" id="view-money">
             <h1 class="page-title">Money</h1>
-            <p class="page-sub">What has been spent, and where it went.</p>
+            <p class="page-sub">What has been spent, what is owed, and what leaves every month.</p>
             <div class="stat-row" id="moneyStats"></div>
+            <div class="card" id="moneyBillsCard" hidden>
+              <div class="card-head">
+                <h3>Due soon</h3>
+                <span style="font-size: 12px; color: var(--muted)" id="moneyBillsLabel"></span>
+              </div>
+              <div id="moneyBills"></div>
+            </div>
             <div class="card">
               <div class="card-head">
                 <h3>This month by category</h3>
                 <span style="font-size: 12px; color: var(--muted)" id="moneyMonthLabel"></span>
               </div>
               <div id="moneyCategories"></div>
+            </div>
+            <div class="card" id="moneySubsCard" hidden>
+              <div class="card-head">
+                <h3>Subscriptions</h3>
+                <span style="font-size: 12px; color: var(--muted)" id="moneySubsLabel"></span>
+              </div>
+              <div id="moneySubs"></div>
+            </div>
+            <div class="card" id="moneyOwedCard" hidden>
+              <div class="card-head">
+                <h3>Owed</h3>
+                <span style="font-size: 12px; color: var(--muted)" id="moneyOwedLabel"></span>
+              </div>
+              <div id="moneyOwed"></div>
             </div>
             <div class="card">
               <div class="card-head">
@@ -2337,6 +2358,67 @@
           </div>
         </div>
 
+        <!-- Bill fields. An amount, a day it is due, and whether it is a bill or a subscription. The
+             repeat is NOT a control here: a bill reuses the shared "Repeats" row above, because two
+             repeat controls on one sheet is a question with two answers. -->
+        <div id="captureBillFields" style="display: none; margin-top: 10px">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureBillAmount">
+                Amount (₹)
+              </label>
+              <input
+                class="capture-input"
+                id="captureBillAmount"
+                inputmode="decimal"
+                autocomplete="off"
+                placeholder="e.g. 899"
+                style="margin: 4px 0 0"
+              />
+            </div>
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureBillDue">Due on</label>
+              <input
+                type="date"
+                id="captureBillDue"
+                class="capture-input"
+                style="margin: 4px 0 0"
+              />
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px">
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureBillType">Type</label>
+              <select
+                id="captureBillType"
+                style="
+                  width: 100%;
+                  padding: 9px;
+                  border-radius: 8px;
+                  border: 1px solid var(--border);
+                  background: var(--bg);
+                  color: var(--text);
+                  margin-top: 4px;
+                "
+              >
+                <option value="bill">Bill</option>
+                <option value="subscription">Subscription</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12.5px; color: var(--muted)" for="captureBillMerchant">
+                Paid to
+              </label>
+              <input
+                class="capture-input"
+                id="captureBillMerchant"
+                placeholder="e.g. Airtel"
+                style="margin: 4px 0 0"
+              />
+            </div>
+          </div>
+        </div>
+
         <!-- Recurrence + Person -->
         <div
           style="
@@ -2368,6 +2450,7 @@
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
             </select>
           </div>
 
@@ -2612,6 +2695,7 @@
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
             </select>
           </div>
 

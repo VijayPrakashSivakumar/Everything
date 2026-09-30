@@ -109,10 +109,23 @@ try {
     assert.equal(r.kind, 'memory', `expected a memory, got ${r.kind}`);
   });
 
-  await check('a picture with no date is never asked anything', async () => {
-    // Nothing to offer a choice about, so the card must stay out of the way.
-    const s = await shoot('receipt\nApollo Pharmacy\ntotal 240');
-    assert.equal(s.pending, false, 'a picture with no date must not raise a question');
+  await check('a picture with no date and no receipt is never asked anything', async () => {
+    // Nothing to offer a choice about, so the card must stay out of the way. A handwritten note has
+    // no date, no total and no invoice reference, which is the case this rule exists for.
+    const s = await shoot('remember the wifi password is on the router');
+    assert.equal(s.pending, false, 'a picture with nothing to decide must not raise a question');
+  });
+
+  await check('a receipt with no date is still offered, because its total is enough to decide', async () => {
+    // The rule above used to cover this case, and it was wrong for it. A receipt answers its own
+    // question — the amount is printed on the paper — so not offering "Record as expense" would mean
+    // photographing a receipt got you nothing but a wall of text to read.
+    const s = await shoot('receipt\nApollo Pharmacy\nTOTAL 240');
+    assert.equal(s.pending, true, 'a readable receipt was not offered the expense option');
+    assert.ok(
+      s.options.includes('Record as expense'),
+      `the expense option is missing from ${JSON.stringify(s.options)}`,
+    );
   });
 
   await check('dismissing the choice never blocks a save', async () => {

@@ -288,6 +288,377 @@ try {
     assert.ok(r.onclick.includes('openPanel'), 'the row is not clickable');
     assert.ok(r.text.includes('Cafe'), `the title was mangled: "${r.text}"`);
   });
+  // ---------- Bills & subscriptions ----------
+  await check('a bill is money owed, and a subscription is the same thing by another name', async () => {
+    const r = await run(() => {
+      const bill = { id: 'b1', kind: 'bill', captureMetadata: { amountMinor: 89900, billType: 'bill' } };
+      const sub = { id: 'b2', kind: 'bill', captureMetadata: { amountMinor: 64900, billType: 'subscription' } };
+      return {
+        isBill: isBill(bill),
+        subIsSub: isSubscription(sub),
+        billIsNotSub: isSubscription(bill),
+        label: billLabel(sub),
+        guess: [guessBillType('pay the netflix bill'), guessBillType('pay the electricity bill')],
+        repeats: [canRepeat(bill), canRepeat({ id: 'x', kind: 'task' }), canRepeat({ id: 'y', kind: 'expense' })],
+      };
+    });
+    assert.ok(r.isBill, 'a bill is not recognised as one');
+    assert.ok(r.subIsSub, 'a subscription is not recognised as one');
+    assert.ok(!r.billIsNotSub, 'an electricity bill was read as a subscription');
+    assert.equal(r.label, 'Subscription', 'the label is wrong');
+    assert.deepEqual(r.guess, ['subscription', 'bill'], `guessing came back as ${JSON.stringify(r.guess)}`);
+    // Only tasks and bills repeat. An expense does not come back, and neither does a document.
+    assert.deepEqual(r.repeats, [true, true, false], `canRepeat came back as ${JSON.stringify(r.repeats)}`);
+  });
+
+  await check('"pay ₹899 for internet on the 10th" is a bill, not an expense', async () => {
+    // The distinction the module rests on: money already spent is history, money still owed is a
+    // future obligation. Filing the second as the first would put ₹899 into this month's total for a
+    // payment that has not been made.
+    const r = await run(() => [
+      textLooksLikeBill('Pay ₹899 for internet on the 10th'),
+      textLooksLikeBill('Spent ₹450 for groceries'),
+      textLooksLikeBill('Pay the electricity bill'),
+    ]);
+    assert.equal(r[0], true, 'a dated payment was not read as a bill');
+    assert.equal(r[1], false, 'a spend with no date was read as a bill');
+    assert.equal(r[2], false, 'a bill with no amount was read as a bill');
+  });
+
+  await check('a bill repeats, and the next month arrives on its own', async () => {
+    // The regression: recurrence was gated on kind === "task", so a monthly bill got no series key
+    // and simply stopped existing after its first date passed.
+    const r = await run(async () => {
+      const past = new Date();
+      past.setDate(past.getDate() - 40);
+      state.items = [
+        {
+          id: 'bb1', kind: 'bill', title: 'Airtel', done: false, created: Date.now() - 86400000,
+          dueDate: past.toISOString(), recurrence: 'monthly',
+          captureMetadata: { amountMinor: 89900, currency: 'INR', billType: 'bill' },
+        },
+      ];
+      await dbSaveItem(state.items[0]);
+      const key = state.items[0].recurrenceKey;
+      localStorage.setItem('everything_recurring_sweep_v1', '0');
+      await rollForwardRecurringSeries();
+      return {
+        key: Boolean(key),
+        future: state.items.filter((i) => new Date(i.dueDate).getTime() > Date.now()).length,
+        sameKey: state.items.every((i) => i.recurrenceKey === key),
+      };
+    });
+    assert.ok(r.key, 'the bill was given no series key, so it can never roll forward');
+    assert.equal(r.future, 1, 'no future occurrence was created');
+    assert.ok(r.sameKey, 'the new occurrence is not part of the same series');
+  });
+  // ---------- Receipts ----------
+  await check('the total is read, not the subtotal or the tax', async () => {
+    // The whole point of reading a receipt. A receipt is mostly numbers, and three of them are wrong
+    // in the way that matters: the subtotal, the tax, and the change. This is a real receipt shape.
+    const r = await run(() => {
+      const receipt = [
+        'D-MART',
+        'GSTIN 27AAAAA1234A1Z5',
+        'Invoice 2291    04/03/2026',
+        'Colgate MaxFresh  x2       398.00',
+        'Amul Butter 500g x1        285.00',
+        'Parle-G 250g x4           112.00',
+        'SUBTOTAL                   795.00',
+        'CGST 5%                     39.75',
+        'SGST 5%                     39.75',
+        'ROUND OFF                   -0.50',
+        'TOTAL                      874.00',
+        'UPI ravi@okhdfcbank     874.00',
+        'CHANGE                       0.00',
+      ].join('\n');
+      const total = receiptTotalFromText(receipt);
+      return {
+        total: total && total.amountMinor,
+        line: total && total.line,
+        merchant: receiptMerchantFromText(receipt),
+        date: receiptDateFromText(receipt),
+        looks: textLooksLikeReceipt(receipt),
+      };
+    });
+    assert.equal(r.total, 87400, `the total read as ${r.total} — that is the subtotal, the tax or the change`);
+    assert.match(r.line, /TOTAL\s+874/i, `it read the line "${r.line}"`);
+    assert.equal(r.merchant, 'D-MART', `the shop read as "${r.merchant}"`);
+    assert.equal(r.date, '2026-03-04', `the date read as "${r.date}"`);
+    assert.ok(r.looks, 'a real receipt was not recognised as one');
+  });
+
+  await check('a receipt with no readable total proposes nothing at all', async () => {
+    // Better to say nothing than to guess. A wrong amount here is indistinguishable from a correct
+    // one on the screen, and it goes into a total the person will trust.
+    const r = await run(() => [
+      receiptTotalFromText('just a photo of a receipt with the numbers cut off'),
+      receiptTotalFromText('SUBTOTAL 795.00\nCGST 39.75\nSGST 39.75'),
+      textLooksLikeReceipt('TOTAL 240'),
+    ]);
+    assert.equal(r[0], null, 'a total was invented from a photo with no numbers');
+    // Every total-named line here is disqualified, so the right answer is to decline.
+    assert.equal(r[1], null, 'a subtotal or a tax line was read as the total');
+    // A total with no date and no invoice reference is not enough to be sure it is a receipt.
+    assert.equal(r[2], false, 'a bare number was taken for a receipt');
+  });
+
+  await check('a receipt date is read day-first, the way an Indian receipt prints it', async () => {
+    const r = await run(() => [
+      receiptDateFromText('Invoice 04/03/2026'),
+      receiptDateFromText('Dated 25/12/2025'),
+      receiptDateFromText('Invoice 12/25/2025'),
+      receiptDateFromText('2026-03-04'),
+      receiptDateFromText('no date here'),
+    ]);
+    assert.equal(r[0], '2026-03-04', `04/03/2026 read as ${r[0]}`);
+    assert.equal(r[1], '2025-12-25', `25/12/2025 read as ${r[1]} — the day and month were swapped`);
+    assert.equal(r[2], '2025-12-25', `12/25/2025 read as ${r[2]}`);
+    assert.equal(r[3], '2026-03-04', `the ISO form read as ${r[3]}`);
+    assert.equal(r[4], '', 'a date was invented out of nothing');
+  });
+  // PLACEHOLDER_RECEIPT_CAPTURE
+
+  await check('money owed is shown in its own section, and the two directions are never netted', async () => {
+    // A debt had nowhere to be seen: one line on Today, and no running total. And ₹500 in against
+    // ₹500 out netting to zero is the most misleading number this module could print.
+    const r = await run(() => {
+      state.items = [
+        { id: 'o1', kind: 'task', title: 'Owes me', person: 'Ravi', done: false, created: 1, captureMetadata: { owedMinor: 50000, currency: 'INR', owedDirection: 'in' } },
+        { id: 'o2', kind: 'task', title: 'Trip money', person: 'Meera', done: false, created: 2, captureMetadata: { owedMinor: 50000, currency: 'INR', owedDirection: 'out' } },
+        { id: 'o3', kind: 'task', title: 'Settled', person: 'Anil', done: true, created: 3, captureMetadata: { owedMinor: 99900, currency: 'INR', owedDirection: 'in' } },
+      ];
+      renderMoney();
+      return {
+        count: outstandingMoneyOwed().length,
+        card: !document.getElementById('moneyOwedCard').hidden,
+        label: (document.getElementById('moneyOwedLabel').textContent || '').replace(/\s+/g, ' '),
+        groups: document.querySelectorAll('#moneyOwed .money-owed-group').length,
+        rows: document.querySelectorAll('#moneyOwed .task-row').length,
+      };
+    });
+    // The completed debt is gone, which is the entire point of completing it.
+    assert.equal(r.count, 2, `outstanding came to ${r.count} — a settled debt is still listed`);
+    assert.ok(r.card, 'the Owed card stayed hidden with two debts in it');
+    assert.equal(r.rows, 2, 'the wrong number of debts rendered');
+    assert.equal(r.groups, 2, 'the two directions were merged instead of separated');
+    assert.ok(!/₹0\b/.test(r.label), `the two directions were netted into nothing: "${r.label}"`);
+  });
+
+  await check('a photographed receipt fills the amount, and leaves it visible to correct', async () => {
+    const r = await run(async () => {
+      state.items = [];
+      openCapture();
+      await new Promise((res) => setTimeout(res, 150));
+      pickType('image', true);
+      imageOcrText = 'D-MART\nInvoice 2291  04/03/2026\nColgate 398.00\nSUBTOTAL 795.00\nCGST 39.75\nTOTAL 874.00';
+      document.getElementById('captureText').value = imageOcrText;
+      onCaptureInput();
+      await new Promise((res) => setTimeout(res, 1100));
+      const button = [...document.querySelectorAll('.capture-question-actions .btn')]
+        .find((b) => b.textContent.trim() === 'Record as expense');
+      if (!button) return { error: 'no expense option was offered' };
+      button.click();
+      return {
+        kind: captureType,
+        amount: document.getElementById('captureAmount').value,
+        merchant: document.getElementById('captureMerchant').value,
+        spentOn: document.getElementById('captureSpentOn').value,
+        hint: document.getElementById('captureHint').textContent,
+      };
+    });
+    assert.ok(!r.error, r.error);
+    assert.equal(r.kind, 'expense', `the capture became a ${r.kind}`);
+    // Filled in plain rupees, because that is what is printed on the paper and what a person checks.
+    assert.equal(r.amount, '874', `the box shows "${r.amount}" — the subtotal, or nothing at all`);
+    assert.match(r.merchant, /D-MART/, `the shop box shows "${r.merchant}"`);
+    assert.equal(r.spentOn, '2026-03-04', `the date box shows "${r.spentOn}"`);
+    assert.match(r.hint, /874/, `the person is not told what was read: "${r.hint}"`);
+  });
+
+  // ---------- Money owed ----------
+  await check('"Ravi owes me ₹500" is money owed, not money spent', async () => {
+    // The mirror of the bill rule, and the one with no other home. Filed as an expense it would
+    // inflate this month's spending with money that never left the account.
+    const r = await run(() => [
+      textLooksLikeMoneyOwed('Ravi owes me ₹500'),
+      textLooksLikeMoneyOwed('I owe Ravi ₹500'),
+      textLooksLikeMoneyOwed('Spent ₹450 on groceries'),
+      textLooksLikeMoneyOwed('Ravi owes me a favour'),
+      moneyOwedOf({ captureMetadata: { owedMinor: 50000, currency: 'INR', owedDirection: 'in' } }).amountMinor,
+    ]);
+    assert.ok(r[0], '"Ravi owes me ₹500" was not recognised as money owed');
+    assert.ok(r[1], '"I owe Ravi ₹500" was not recognised as money owed');
+    assert.ok(!r[2], 'a plain spend was read as money owed');
+    assert.ok(!r[3], 'a debt with no amount was read as money owed');
+    assert.equal(r[4], 50000, 'the amount did not read back');
+  });
+
+  await check('the direction of a debt is recorded, because an amount alone is not actionable', async () => {
+    const r = await run(() => [
+      moneyOwedDirection('Ravi owes me ₹500'),
+      moneyOwedDirection('I owe Ravi ₹500'),
+      moneyOwedDirection('Meera owes us ₹200'),
+    ]);
+    assert.deepEqual(r, ['in', 'out', 'in'], `directions came back as ${JSON.stringify(r)}`);
+  });
+
+  await check('money owed is saved as a task with the amount, and lands on Today', async () => {
+    // A task, because that is what already chases you: Today, completable, snoozable. A new kind
+    // would have needed all three built again for a row whose only extra property is an amount.
+    const r = await run(async () => {
+      state.items = [];
+      openCapture();
+      await new Promise((res) => setTimeout(res, 150));
+      document.getElementById('captureText').value = 'Ravi owes me ₹500';
+      onCaptureInput();
+      await new Promise((res) => setTimeout(res, 900));
+      await saveCapture(true);
+      const item = state.items[0];
+      if (!item) return { error: 'nothing was saved' };
+      return {
+        kind: item.kind,
+        owed: moneyOwedOf(item).amountMinor,
+        direction: moneyOwedOf(item).direction,
+        person: item.person,
+        status: item.status,
+        spent: moneyOf(item).amountMinor,
+        monthTotal: sumMoney(expensesThisMonth()),
+      };
+    });
+    assert.ok(!r.error, r.error);
+    assert.equal(r.kind, 'task', `it was saved as a ${r.kind}`);
+    assert.equal(r.owed, 50000, `the amount saved as ${r.owed}`);
+    assert.equal(r.direction, 'in', `the direction saved as "${r.direction}"`);
+    assert.match(r.person || '', /Ravi/i, `nobody was named: "${r.person}"`);
+    assert.equal(r.status, 'today', `it is not on Today — nothing would chase it (status: ${r.status})`);
+    // The whole reason it is stored under its own key. A debt is not spending.
+    assert.equal(r.spent, null, 'the debt was written into the spending fields');
+    assert.equal(r.monthTotal, 0, `a debt was counted as spending: the month total is ${r.monthTotal}`);
+  });
+
+
+  await check('a yearly charge is divided by twelve, not added whole', async () => {
+    // ₹1,200 a year is ₹100 a month. Listed as ₹1,200 it would overstate the monthly cost twelve
+    // times, which is the difference between a number you check and one you believe.
+    const r = await run(() => {
+      const soon = new Date(Date.now() + 86400000).toISOString();
+      state.items = [
+        { id: 'y1', kind: 'bill', title: 'Domain', done: false, created: 1, recurrence: 'yearly', dueDate: soon, captureMetadata: { amountMinor: 120000, currency: 'INR', billType: 'subscription' } },
+        { id: 'y2', kind: 'bill', title: 'Netflix', done: false, created: 2, recurrence: 'monthly', dueDate: soon, captureMetadata: { amountMinor: 64900, currency: 'INR', billType: 'subscription' } },
+      ];
+      return { monthly: monthlyRecurringCost(), shown: formatMoney(monthlyRecurringCost()) };
+    });
+    assert.equal(r.monthly, 74900, `the monthly cost came to ${r.monthly}`);
+    assert.equal(r.shown, '₹749', `it displayed as ${r.shown}`);
+  });
+
+  await check('a due-soon bill is listed, and an overdue one is not hidden', async () => {
+    // An unpaid bill is exactly the thing worth seeing, so it stays in the list rather than being
+    // filtered out for having a past date.
+    const r = await run(() => {
+      const at = (days) => {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        d.setHours(12, 0, 0, 0);
+        return d.toISOString();
+      };
+      const bill = (id, days) => ({ id, kind: 'bill', title: id, done: false, created: 1, dueDate: at(days), recurrence: 'monthly', captureMetadata: { amountMinor: 10000, currency: 'INR' } });
+      state.items = [bill('overdue', -3), bill('soon', 2), bill('later', 40)];
+      renderMoney();
+      return {
+        due: billsDueSoon().map((i) => i.id).sort(),
+        card: !document.getElementById('moneyBillsCard').hidden,
+        rows: document.querySelectorAll('#moneyBills .task-row').length,
+        sub: (document.querySelector('#moneyBills .task-sub') || {}).textContent || '',
+      };
+    });
+    assert.deepEqual(r.due, ['overdue', 'soon'], `due soon came back as ${JSON.stringify(r.due)}`);
+    assert.ok(r.card, 'the Due soon card stayed hidden with two bills in it');
+    assert.equal(r.rows, 2, 'the wrong number of bills rendered');
+    assert.match(r.sub, /overdue|Due/i, `the row says nothing about urgency: "${r.sub}"`);
+  });
+
+  await check('a bill keeps its due date and does remind', async () => {
+    // The mirror of the expense rule. An expense is money gone and is reminded about never; a bill is
+    // money owed, and the reminder is the entire feature.
+    const r = await run(() => {
+      const bill = {
+        id: 'n1', kind: 'bill', title: 'Rent', done: false, created: 1,
+        dueDate: new Date(Date.now() + 3600000).toISOString(), snoozedUntil: '', notified: false,
+        captureMetadata: { amountMinor: 1500000, currency: 'INR' },
+      };
+      return { reminder: itemReminderTime(bill) };
+    });
+    assert.ok(r.reminder, 'a bill due in an hour did not set a reminder');
+  });
+
+  await check('"Pay ₹899 internet on the 10th" is captured as a repeating bill', async () => {
+    const r = await run(async () => {
+      state.items = [];
+      openCapture();
+      await new Promise((res) => setTimeout(res, 150));
+      document.getElementById('captureText').value = 'Pay ₹899 for internet on the 10th';
+      onCaptureInput();
+      await new Promise((res) => setTimeout(res, 900));
+      await saveCapture(true);
+      const item = state.items[0];
+      if (!item) return { error: 'nothing was saved' };
+      return {
+        kind: item.kind,
+        amount: moneyOf(item).amountMinor,
+        recurrence: item.recurrence,
+        isSub: isSubscription(item),
+        hasDue: Boolean(item.dueDate),
+      };
+    });
+    assert.ok(!r.error, r.error);
+    assert.equal(r.kind, 'bill', `it was saved as a ${r.kind}`);
+    assert.equal(r.amount, 89900, `the amount saved as ${r.amount}`);
+    assert.equal(r.recurrence, 'monthly', `it repeats as "${r.recurrence}" — next month would never arrive`);
+    assert.ok(r.hasDue, 'no due date, so it would never remind');
+    assert.ok(!r.isSub, 'an internet bill was filed as a subscription');
+  });
+
+  await check('Netflix is captured as a subscription and counted monthly', async () => {
+    const r = await run(async () => {
+      state.items = [];
+      openCapture();
+      await new Promise((res) => setTimeout(res, 150));
+      pickType('bill', true);
+      document.getElementById('captureText').value = 'Netflix ₹649 every month';
+      document.getElementById('captureBillType').value = 'subscription';
+      await saveCapture(true);
+      const item = state.items[0];
+      return item
+        ? { isSub: isSubscription(item), subs: subscriptions().length, total: monthlyRecurringCost() }
+        : { error: 'nothing was saved' };
+    });
+    assert.ok(!r.error, r.error);
+    assert.ok(r.isSub, 'Netflix was not filed as a subscription');
+    assert.equal(r.subs, 1, 'the subscriptions list is empty');
+    assert.equal(r.total, 64900, `the monthly cost came to ${r.total}`);
+  });
+
+  await check('a yearly bill rolls a year, and a monthly one clamps instead of overflowing', async () => {
+    // Fixed dates, so this cannot pass or fail depending on what month it happens to be. 31 January
+    // is also the overflow case: Date#setMonth would send it to 3 March.
+    const r = await run(() => {
+      const jan31 = new Date(2027, 0, 31, 9, 0, 0).toISOString();
+      const feb28 = new Date(2027, 1, 28, 9, 0, 0);
+      return {
+        yearly: nextOccurrence(jan31, 'yearly'),
+        monthly: nextOccurrence(jan31, 'monthly'),
+        expected: feb28.toISOString(),
+      };
+    });
+    const yearly = new Date(r.yearly);
+    assert.equal(yearly.getFullYear(), 2028, `a yearly bill advanced to ${yearly.getFullYear()}`);
+    assert.equal(yearly.getMonth(), 0, 'a yearly bill landed in the wrong month');
+    assert.equal(r.monthly, r.expected,
+      `31 January + 1 month gave ${r.monthly}, expected ${r.expected} — it overflowed into March`);
+  });
+
 } finally {
   await browser.close();
   server.kill();

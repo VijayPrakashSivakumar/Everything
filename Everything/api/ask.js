@@ -455,7 +455,7 @@ export function buildContextLine(item) {
    this when those rules are unsure, so ordinary captures stay instant and cost nothing. */
 // `agenda` is not stored as a kind: the browser folds it into the meeting's checklist.
 const EXTRACTION_KINDS = ['task', 'event', 'memory', 'waiting', 'openloop', 'agenda'];
-const EXTRACTION_RECURRENCE = ['none', 'daily', 'weekly', 'monthly'];
+const EXTRACTION_RECURRENCE = ['none', 'daily', 'weekly', 'monthly', 'yearly'];
 const EXTRACTION_PRIORITY = ['high', 'medium', 'low'];
 const EXTRACTION_CONFIDENCE = ['high', 'medium', 'low'];
 

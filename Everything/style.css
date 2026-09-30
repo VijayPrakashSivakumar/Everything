@@ -4242,6 +4242,32 @@ h1.page-title {
   background: var(--accent, var(--blue-fg));
 }
 
+/* The "/mo" is a unit, not a number, so it is set lighter and smaller — the eye should read the
+   figure first and the qualification second. */
+.money-per {
+  font-size: var(--fs-small);
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 1px;
+}
+
+/* The two directions of a debt get a label each, because "owed to you" and "you owe" are different
+   facts and a single net number would quietly hide one of them. */
+.money-owed-group + .money-owed-group {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.money-owed-head {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 2px;
+}
+
 /* On a phone the chip would squeeze the title into two words, so it drops to its own line under
    the row instead. The label is kept — it is the information, not the decoration.
    520px, not 560px: that exact width is the old capture-sheet width the UI suite asserts is gone,
@@ -5219,13 +5245,32 @@ body.overlay-open .content {
     gap: 6px;
   }
 
-  .modal .type-chip {
-    min-height: 38px;
+  #typeRow {
+    /* One scrolling line instead of a two-column grid. With twelve kinds a grid was six rows — a
+       third of the sheet — and every extra kind the app grows made it worse. The chips are a
+       picker, not something to read, so a swipe is the right gesture and the height is now the same
+       whatever the list contains. It also keeps the item count visible on a capture that produces
+       more than one thing, which a taller picker pushed below the fold. */
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    /* Room for the last chip to sit clear of the edge, and no visible bar — it is a scroller the
+       finger already knows about, and a 6px grey strip on a sheet is just clutter. */
+    padding-bottom: 2px;
+    margin-bottom: 12px;
+    scrollbar-width: none;
   }
 
-  #typeRow {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  #typeRow::-webkit-scrollbar {
+    display: none;
+  }
+
+  .modal .type-chip {
+    min-height: 38px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
   }
 
   #typeRow .type-chip {

@@ -2399,15 +2399,17 @@ check('a picture with a date is offered a choice instead of a silent guess', () 
   // A date says when, not what. Reading "05 October 4:00 PM" out of a photograph and filing it as
   // whatever the rules happened to call it is the outcome nobody asked for.
   assert.match(js, /id: "image-choice"/, 'a picture carrying a date must raise a choice');
-  // Only when the text really came out of a picture, and there is a date to be uncertain about.
-  assert.match(js, /captureChannel === "image" && imageOcrText && data\.dueDate/,
-    'the choice must require a real read, on the image channel, with a date');
+  // Only when the text really came out of a picture, and there is either a date to be uncertain
+  // about or a receipt whose own total settles the question. A receipt with no readable date is
+  // still offered, because the amount is printed on the paper and there is nothing to decide.
+  assert.match(js, /captureChannel === "image" && imageOcrText && \(data\.dueDate \|\| textLooksLikeReceipt\(imageOcrText\)\)/,
+    'the choice must require a real read, on the image channel, with a date or a receipt');
   // The answers have to reach real kinds, not just dismiss themselves. Matched value-by-value
   // rather than as one ternary: the original assertion pinned the exact line the ternary was
   // written on, so reformatting it — or adding the fourth option — failed a check about behaviour.
-  const answer = js.match(/if \(question\.id === "image-choice"\)[\s\S]{0,2000}?\n  }/);
+  const answer = js.match(/if \(question\.id === "image-choice"\)[\s\S]{0,4000}?\n  }/);
   assert.ok(answer, 'the image choice is never answered');
-  for (const [value, kind] of [['event', 'event'], ['note', 'memory'], ['document', 'document']]) {
+  for (const [value, kind] of [['event', 'event'], ['note', 'memory'], ['document', 'document'], ['expense', 'expense']]) {
     assert.match(answer[0], new RegExp(`value === "${value}"[\\s\\S]{0,80}?\\?\\s*"${kind}"`),
       `"${value}" must produce a ${kind}`);
   }

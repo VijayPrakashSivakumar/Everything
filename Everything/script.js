@@ -2542,6 +2542,144 @@ function parseAmountFromText(text) {
   return parseMoneyToMinor(match[1] || match[2]);
 }
 
+/* ---------- Receipts ----------
+   A photograph of a receipt already arrives as text: the image channel runs Tesseract and drops
+   the result into the capture box. So nothing here has to read pixels. The hard part is not
+   finding a number — a receipt is full of them — it is telling the *total* from the subtotal, the
+   tax, and the amount of change.
+
+   Two rules make that reliable without a model:
+
+     * read the lines from the BOTTOM up, because the total is printed last on almost every receipt
+     * and the itemised list above it is full of numbers larger than any single line;
+     * refuse a line that names anything but the total — SUBTOTAL, GST, CGST, TAX, DISCOUNT and
+       ROUND OFF are all present on the same paper and every one of them is the wrong answer.
+
+   And whatever it decides, it only ever *proposes*. The amount lands in the box where the person
+   can see it and change it. A receipt photo is the one capture where being confidently wrong is
+   most likely, so nothing here asserts a number it did not read. */
+const RECEIPT_TOTAL_RE = /(?:grand\s*)?(?:total|amount\s*(?:due|paid|payable)|net\s*payable|to\s*pay|balance)\b/i;
+/* A line carrying one of these is never the total, however close it sits to the bottom. */
+const RECEIPT_NOT_TOTAL_RE = /\b(sub\s*-?\s*total|subtotal|tax|gst|cgst|sgst|igst|discount|saving|offer|round\s*off|change|cash|paid\s*by|balance\s*forward|item\s*count|qty)\b/i;
+const RECEIPT_ANY_AMOUNT_RE = /(?:₹|rs\.?|inr)\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*\.\d{2})\b/i;
+
+/* The amount a receipt says was actually paid, or null when nothing on it says so clearly.
+
+   A bare number is accepted ONLY on a line already confirmed to be the total line, so "240" can
+   stand for ₹240 on a "TOTAL 240" line and still never be read off an item row. The looser pattern
+   is tried second for exactly that reason. */
+function receiptTotalFromText(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!RECEIPT_TOTAL_RE.test(line)) continue;
+    if (RECEIPT_NOT_TOTAL_RE.test(line)) continue;
+    const strict = RECEIPT_ANY_AMOUNT_RE.exec(line);
+    const loose = strict ? null : /(\d[\d,]*(?:\.\d{1,2})?)\s*$/.exec(line);
+    const minor = parseMoneyToMinor((strict && (strict[1] || strict[2])) || (loose && loose[1]));
+    if (minor !== null && minor > 0) return { amountMinor: minor, line };
+  }
+  return null;
+}
+
+/* The shop is the first line that is not a phone number, a tax id, an address or a date — a receipt
+   opens with its own name, and everything above it is machinery. */
+const RECEIPT_NOISE_RE =
+  /^(tax|invoice|inv|bill|receipt|gstin|gst|vat|tel|phone|mobile|www\.|http|date|time|cashier|bill no|order|customer|kotak|hdfc|icici|sbi|axis|upi|vpa|no\.)\b/i;
+
+function receiptMerchantFromText(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (const line of lines.slice(0, 4)) {
+    if (line.length < 3 || line.length > 40) continue;
+    if (RECEIPT_NOISE_RE.test(line)) continue;
+    if (/\d{4,}/.test(line)) continue;              // a phone number or a GST id, not a name
+    if (parseMoneyToMinor(line) !== null) continue;  // a bare number is not a shop
+    return line;
+  }
+  return "";
+}
+
+/* A date printed on the paper, so the expense lands on the day it happened rather than the day it
+   was photographed. Only the three orders an Indian receipt actually uses. */
+function receiptDateFromText(text) {
+  const body = String(text || "");
+  const slash = body.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\b/);
+  if (slash) {
+    let day = Number(slash[1]);
+    let month = Number(slash[2]);
+    /* A second field above 12 cannot be a month, so this is the month-first form. That test was
+       written backwards at first — keying off the *first* field instead — which swapped 25/12/2025
+       into a 25th month, found it impossible, and returned no date at all. Only a month can rule
+       itself out; a day above 12 proves the opposite, and is the common Indian case. */
+    if (month > 12 && day <= 12) {
+      const swap = day;
+      day = month;
+      month = swap;
+    }
+    let year = Number(slash[3]);
+    if (year < 100) year += 2000;
+    const candidate = new Date(year, month - 1, day);
+    if (year >= 2000 && year <= 2100 && candidate.getMonth() === month - 1 && candidate.getDate() === day) {
+      return isoDateString(candidate);
+    }
+  }
+  const iso = body.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso && parseIsoDate(`${iso[1]}-${iso[2]}-${iso[3]}`)) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return "";
+}
+
+/* Does this look like a receipt at all? A total line plus a date or an invoice reference is a much
+   safer bar than "contains a number", which every photograph of a price tag also satisfies. */
+function textLooksLikeReceipt(text) {
+  const body = String(text || "");
+  if (!receiptTotalFromText(body)) return false;
+  return Boolean(
+    receiptDateFromText(body) || /\b(invoice|inv|bill\s*no|receipt|gstin|order\s*(no|id))\b/i.test(body),
+  );
+}
+
+/* ---------- Money owed ----------
+   "Ravi owes me ₹500" is money that has not moved, in either direction. It is the one money fact
+   with no home among the others: not an expense (nothing was spent, and counting it would inflate
+   the month with money that never left the account), and not a bill (nobody has issued anything).
+
+   It is saved as a TASK, because a task already chases you — it lands on Today, it can be completed
+   when the money arrives, and it can be snoozed. A fourth kind would have needed all three built
+   again for a row whose only special property is an amount. */
+const MONEY_OWED_RE = /\b(owes?\s+me|owe\s+i|i\s+owe|lends?\s+me|borrowed)\b/i;
+
+/* Which way the money is going. "in" is someone else's debt to you, "out" is yours. Getting this
+   backwards is the whole failure: an amount with no direction is a number nobody can act on. */
+const MONEY_OWED_IN_RE = /\b(owes?\s+me|owes?\s+us|borrowed\s+from|lends?\s+me)\b/i;
+
+function textLooksLikeMoneyOwed(text) {
+  const body = String(text || "");
+  return MONEY_OWED_RE.test(body) && parseAmountFromText(body) !== null;
+}
+
+function moneyOwedDirection(text) {
+  return MONEY_OWED_IN_RE.test(String(text || "")) ? "in" : "out";
+}
+
+/* Read off a saved item. `owedMinor`, not `amountMinor`: the two are deliberately different keys,
+   so an amount belonging to an owed row can never be swept into this month's spending by a total
+   that loops over every row without checking what kind it is. */
+function moneyOwedOf(item) {
+  const meta = normaliseCaptureMetadata(item?.captureMetadata);
+  const minor = Number(meta.owedMinor);
+  return {
+    amountMinor: Number.isFinite(minor) ? Math.round(minor) : null,
+    currency: String(meta.currency || MONEY_CURRENCY).toUpperCase(),
+    direction: String(meta.owedDirection || "in"),
+  };
+}
+
 function guessMoneyCategory(text) {
   const body = String(text || "");
   for (const hint of MONEY_CATEGORY_HINTS) {
@@ -2618,6 +2756,184 @@ function expensesByCategory(reference) {
     bucket.count += 1;
   });
   return [...buckets.values()].sort((a, b) => b.total - a.total);
+}
+
+/* ---------- Bills & subscriptions ----------
+   A bill is money that is owed, on a date, and then owed again. That makes it the exact mirror of an
+   expense: the same amount handling, the same household, the same sync — but with a due date and a
+   recurrence instead of a day it already happened.
+
+   One kind covers both a bill and a subscription, because mechanically they are identical: an
+   amount, a day it is due, and a repeat. The only difference is what the row is called, so that is
+   a label (`billType`) rather than a second kind with a second copy of the recurrence plumbing. */
+
+const BILL_TYPES = [
+  { id: "bill", label: "Bill" },
+  { id: "subscription", label: "Subscription" },
+];
+
+/* How far ahead "due soon" reaches. A week is the point at which paying something is still a
+   decision rather than a scramble. */
+const BILL_DUE_SOON_DAYS = 7;
+
+function isBill(item) {
+  return item?.kind === "bill";
+}
+
+function isSubscription(item) {
+  return isBill(item) && billTypeOf(item) === "subscription";
+}
+
+/* What repeats, and therefore joins a series. A task repeats because the chore does; a bill repeats
+   because the charge does. An expense and a document never do — the money is spent and the document
+   expires, and neither comes back. One predicate, so the two call sites above cannot disagree. */
+function canRepeat(item) {
+  return item?.kind === "task" || isBill(item);
+}
+
+function billTypeOf(item) {
+  const meta = normaliseCaptureMetadata(item?.captureMetadata);
+  const id = String(meta.billType || "").trim().toLowerCase();
+  return BILL_TYPES.find((entry) => entry.id === id)?.id || "bill";
+}
+
+function billLabel(item) {
+  return billTypeOf(item) === "subscription" ? "Subscription" : "Bill";
+}
+
+/* Whole days until it is due. Negative once it has passed, which is the case that matters most. */
+function daysUntilBill(item) {
+  if (!item?.dueDate) return null;
+  const time = new Date(item.dueDate).getTime();
+  if (!Number.isFinite(time)) return null;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(time);
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((endDay.getTime() - start.getTime()) / 86400000);
+}
+
+function billLabelFor(item) {
+  const days = daysUntilBill(item);
+  if (days === null) return "No due date";
+  if (days < -1) return `${Math.abs(days)} days overdue`;
+  if (days === -1) return "1 day overdue";
+  if (days === 0) return "Due today";
+  if (days === 1) return "Due tomorrow";
+  if (days <= 30) return `Due in ${days} days`;
+  return `Due ${fmtDate(item.dueDate)}`;
+}
+
+function billItems() {
+  if (!state?.items) return [];
+  return state.items.filter((i) => isBill(i) && !isArchived(i) && !i.done);
+}
+
+/* What is owed in the next week, most urgent first. A bill that has already passed its date stays
+   in the list rather than being filtered out — an unpaid bill is exactly the thing worth seeing. */
+function billsDueSoon(days = BILL_DUE_SOON_DAYS) {
+  return billItems()
+    .filter((item) => {
+      const due = daysUntilBill(item);
+      return due !== null && due <= days;
+    })
+    .sort((a, b) => (daysUntilBill(a) ?? 0) - (daysUntilBill(b) ?? 0));
+}
+
+/* The number a household actually wants from subscriptions: what leaves the account every month.
+
+   A yearly charge is divided by twelve rather than added whole, because "₹1,200 a year for cloud
+   storage" is ₹100 a month, and listing it as ₹1,200 would overstate the monthly cost by twelve
+   times. Rounded to whole paise so the figure itself cannot drift. */
+function monthlyRecurringCost() {
+  return Math.round(
+    billItems().reduce((total, item) => {
+      const money = moneyOf(item);
+      if (money.amountMinor === null || money.currency !== MONEY_CURRENCY) return total;
+      if (item.recurrence === "monthly") return total + money.amountMinor;
+      if (item.recurrence === "yearly") return total + money.amountMinor / 12;
+      // A weekly charge is the one that has no honest monthly figure, so it is left out rather
+      // than guessed at — four weeks is not a month, and the difference shows up every time.
+      return total;
+    }, 0),
+  );
+}
+
+function subscriptions() {
+  return billItems()
+    .filter(isSubscription)
+    .sort((a, b) => (daysUntilBill(a) ?? 9999) - (daysUntilBill(b) ?? 9999));
+}
+
+/* Money owed, either way, and still open. A debt is not spending and is not a bill, so it has
+   nowhere else to be seen: without this the only place it exists is one task on Today, and the
+   running total of what you are owed is a number people actually want. */
+function outstandingMoneyOwed() {
+  if (!state?.items) return [];
+  return state.items
+    .filter((i) => i && !i.done && !isArchived(i) && Number.isFinite(Number(moneyOwedOf(i).amountMinor)))
+    .map((item) => ({ item, owed: moneyOwedOf(item) }))
+    .filter((entry) => entry.owed.amountMinor > 0)
+    // What others owe you first: that is the money you can go and collect, and it is the direction
+    // most captures are in. Then yours, so the two never blur into one number.
+    .sort((a, b) => {
+      if (a.owed.direction !== b.owed.direction) return a.owed.direction === "in" ? -1 : 1;
+      return b.owed.amountMinor - a.owed.amountMinor;
+    });
+}
+
+/* A bill named in the sentence, and the words that name the recurring services. Ordered so the
+   specific services win over the generic word "bill" — "netflix bill" is a subscription, and reading
+   it as a utility would put it in the wrong list. */
+const BILL_CATEGORY_HINTS = [
+  { id: "subscription", re: /\b(netflix|spotify|youtube|prime video|disney|hotstar|icloud|google (one|storage)|dropbox|adobe|canva|notion|microsoft 365|subscription|membership)\b/i },
+  { id: "bill", re: /\b(electricity|water|gas|internet|wifi|broadband|mobile|phone|recharge|dth|rent|emi|loan|insurance|tax|bill)\b/i },
+];
+
+function guessBillType(text) {
+  const body = String(text || "");
+  for (const hint of BILL_CATEGORY_HINTS) {
+    if (hint.re.test(body)) return hint.id;
+  }
+  return "bill";
+}
+
+/* Money that is owed rather than spent. A date in the sentence is what makes it a bill rather than
+   an expense: "spent ₹450 for groceries" is history, "pay ₹899 for internet on the 10th" is a
+   future obligation, and conflating the two would put a not-yet-spent amount into this month's
+   total. So both are required, and a sentence with neither is left alone entirely. */
+/* "on the 5th", "by the 10th" — the canonical Indian bill phrasing, and the one no date parser
+   resolves, because a bare day of the month is not a date until you supply the month.
+
+   Resolved to this month's 5th, or next month's when that has already passed. Always forward: a
+   bill said to be payable on the 1st, said on the 3rd, means the 1st of next month, not a date two
+   days in the past that would be filed overdue before it was ever due. */
+const DAY_OF_MONTH_RE = /\b(?:on|by|before)\s+the\s+(\d{1,2})(?:st|nd|rd|th)?\b/i;
+
+function resolveDayOfMonth(text) {
+  const match = DAY_OF_MONTH_RE.exec(String(text || ""));
+  if (!match) return null;
+  const day = Number(match[1]);
+  if (!Number.isFinite(day) || day < 1 || day > 31) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(now.getFullYear(), now.getMonth(), 1);
+  // Clamped, because there is no 31st in some months and a bill due then still has to land on the
+  // last day that exists rather than rolling into the following one.
+  target.setDate(Math.min(day, new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()));
+  if (target.getTime() < today.getTime()) target.setMonth(target.getMonth() + 1);
+  return target.toISOString();
+}
+
+function textLooksLikeBill(text) {
+  const body = String(text || "");
+  if (!textLooksLikeExpense(body)) return false;
+  if (parseAmountFromText(body) === null) return false;
+  if (/\b(on the \d{1,2}(st|nd|rd|th)?|tomorrow|today|next (week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|every (month|year|week)|monthly|yearly)\b/i.test(body)) {
+    return true;
+  }
+  if (DAY_OF_MONTH_RE.test(body)) return true;
+  return Boolean(parseLocalDate(body));
 }
 
 function isArchived(item) {
@@ -2927,20 +3243,30 @@ function formatDueDisplay(iso) {
     timeStr
   );
 }
+/* Steps whole months, clamping to the last valid day of the target month.
+
+   Date#setMonth overflows: 31 January plus one month is 3 March, so a bill due on the 31st would
+   quietly start landing in March. Clamping keeps it on the 28th, then the 30th, then the 31st again
+   as the months allow, which is what a person means by "the 31st". Shared by monthly and yearly,
+   which are the same arithmetic one and twelve times over. */
+function addMonthsClamped(date, months) {
+  const day = date.getDate();
+  date.setDate(1);
+  date.setMonth(date.getMonth() + months);
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  date.setDate(Math.min(day, lastDay));
+  return date;
+}
+
 function nextOccurrence(iso, recurrence) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   if (recurrence === "daily") d.setDate(d.getDate() + 1);
   else if (recurrence === "weekly") d.setDate(d.getDate() + 7);
-  else if (recurrence === "monthly") {
-    // Date#setMonth overflows (Jan 31 -> Mar 3). Clamp to the last valid day
-    // of the target month so monthly tasks remain predictable.
-    const day = d.getDate();
-    d.setDate(1);
-    d.setMonth(d.getMonth() + 1);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    d.setDate(Math.min(day, lastDay));
-  }
+  else if (recurrence === "monthly") addMonthsClamped(d, 1);
+  // Yearly, for a policy or a domain that renews annually. Without it, "yearly" was a value the
+  // capture sheet could offer and the engine could not honour — the option existed and did nothing.
+  else if (recurrence === "yearly") addMonthsClamped(d, 12);
   return d.toISOString();
 }
 
@@ -3264,9 +3590,13 @@ async function dbSaveItem(item) {
   const previous = Number(item.updatedAt) || 0;
   item.updatedAt = Math.max(Date.now(), previous + 1);
   item.dirty = true;
-  if (item.kind === "task" && item.recurrence && item.recurrence !== "none" && !item.recurrenceKey) {
+  /* Recurrence used to belong to tasks alone, gated on `kind === "task"` in two places, so a
+     recurring bill got no series key and never rolled forward — the monthly bill would simply stop
+     existing after its first date passed. Bills repeat for exactly the same reason tasks do, so the
+     gate is this one predicate instead, and there is a single place that decides what repeats. */
+  if (canRepeat(item) && item.recurrence && item.recurrence !== "none" && !item.recurrenceKey) {
     item.recurrenceKey = taskRecurrenceKey(item);
-  } else if (item.kind === "task" && (!item.recurrence || item.recurrence === "none")) {
+  } else if (canRepeat(item) && (!item.recurrence || item.recurrence === "none")) {
     item.recurrenceKey = null;
   }
   const col = itemCollectionFor(item);
@@ -3657,6 +3987,7 @@ function kindColor(kind) {
       link: ["var(--blue-bg)", "var(--blue-fg)"],
       document: ["var(--blue-bg)", "var(--blue-fg)"],
       expense: ["var(--green-bg)", "var(--green-fg)"],
+      bill: ["var(--amber-bg)", "var(--amber-fg)"],
     }[kind] || ["var(--bg)", "var(--text)"]
   );
 }
@@ -4756,6 +5087,17 @@ function expenseRow(item) {
    There is no editing and no charts here, and that is the point: the part that is easy to get
    subtly wrong (an amount, a currency, a month boundary) is done and tested before anything is
    built on top of it. */
+function billRow(item) {
+  const money = moneyOf(item);
+  return `<div class="task-row" onclick="openPanel(${jsStr(item.id)})">
+    <div class="task-meta">
+      <div class="task-title">${escapeHtml(item.title || billLabel(item))}</div>
+      <div class="task-sub">${escapeHtml([billLabel(item), money.merchant, billLabelFor(item)].filter(Boolean).join(" · "))}</div>
+    </div>
+    <span class="money-amount">${escapeHtml(formatMoney(money.amountMinor) || "—")}</span>
+  </div>`;
+}
+
 function renderMoney() {
   const listEl = document.getElementById("moneyList");
   if (!listEl) return;
@@ -4772,14 +5114,59 @@ function renderMoney() {
   if (statsEl) {
     statsEl.innerHTML = [
       { label: "Spent this month", value: formatMoney(total) || `${MONEY_SYMBOL}0` },
-      { label: "Expenses", value: String(thisMonth.length) },
-      { label: "Categories", value: String(byCategory.length) },
+      { label: "Every month", value: formatMoney(monthlyRecurringCost()) || `${MONEY_SYMBOL}0` },
+      { label: "Due soon", value: String(billsDueSoon().length) },
     ]
       .map(
         (stat) =>
           `<div class="stat"><div class="stat-value">${escapeHtml(stat.value)}</div><div class="stat-label">${escapeHtml(stat.label)}</div></div>`,
       )
       .join("");
+  }
+
+  // Due soon. Hidden rather than empty, for the same reason the birthdays card is: a permanently
+  // empty "nothing is due" box teaches nothing and takes the room a real one needs.
+  const billsCard = document.getElementById("moneyBillsCard");
+  const billsHost = document.getElementById("moneyBills");
+  const dueSoon = billsDueSoon();
+  if (billsCard && billsHost) {
+    billsCard.hidden = !dueSoon.length;
+    if (dueSoon.length) {
+      const label = document.getElementById("moneyBillsLabel");
+      if (label) label.textContent = `next ${BILL_DUE_SOON_DAYS} days`;
+      billsHost.innerHTML = dueSoon.map(billRow).join("");
+    }
+  }
+
+  // Subscriptions, each with what it costs per month rather than what it was billed at, so a yearly
+  // charge sits next to a monthly one on the same footing.
+  const subsCard = document.getElementById("moneySubsCard");
+  const subsHost = document.getElementById("moneySubs");
+  const subs = subscriptions();
+  if (subsCard && subsHost) {
+    subsCard.hidden = !subs.length;
+    if (subs.length) {
+      const label = document.getElementById("moneySubsLabel");
+      if (label) label.textContent = `${formatMoney(monthlyRecurringCost())} a month`;
+      subsHost.innerHTML = subs
+        .map((item) => {
+          const money = moneyOf(item);
+          const perMonth =
+            item.recurrence === "yearly" ? Math.round((money.amountMinor || 0) / 12) : money.amountMinor;
+          return `<div class="task-row" onclick="openPanel(${jsStr(item.id)})">
+            <div class="task-meta">
+              <div class="task-title">${escapeHtml(item.title || "Subscription")}</div>
+              <div class="task-sub">${escapeHtml(
+                [money.merchant, billLabelFor(item), item.recurrence === "yearly" ? "yearly" : "monthly"]
+                  .filter(Boolean)
+                  .join(" · "),
+              )}</div>
+            </div>
+            <span class="money-amount">${escapeHtml(formatMoney(perMonth) || "—")}<span class="money-per">/mo</span></span>
+          </div>`;
+        })
+        .join("");
+    }
   }
 
   const categoriesEl = document.getElementById("moneyCategories");
@@ -4800,6 +5187,49 @@ function renderMoney() {
           )
           .join("")
       : `<p class="empty">Nothing recorded this month yet.</p>`;
+  }
+
+  // Money owed. A debt is neither spending nor a bill, so without its own section the only trace of
+  // "Ravi owes me ₹500" is one line on Today and a running total nobody can build.
+  const owedCard = document.getElementById("moneyOwedCard");
+  const owedHost = document.getElementById("moneyOwed");
+  const owed = outstandingMoneyOwed();
+  if (owedCard && owedHost) {
+    owedCard.hidden = !owed.length;
+    if (owed.length) {
+      const incoming = owed.filter((e) => e.owed.direction === "in");
+      const outgoing = owed.filter((e) => e.owed.direction !== "in");
+      const sumOf = (list) => list.reduce((total, entry) => total + entry.owed.amountMinor, 0);
+      const label = document.getElementById("moneyOwedLabel");
+      if (label) {
+        const parts = [];
+        if (incoming.length) parts.push(`${formatMoney(sumOf(incoming))} owed to you`);
+        if (outgoing.length) parts.push(`${formatMoney(sumOf(outgoing))} you owe`);
+        label.textContent = parts.join(" · ");
+      }
+      // The two directions are separated by a heading and never added together: ₹500 coming back and
+      // ₹500 going out are two facts, and a single net figure would hide both.
+      owedHost.innerHTML = ["in", "out"]
+        .map((direction) => {
+          const list = owed.filter((e) => (e.owed.direction === "in") === (direction === "in"));
+          if (!list.length) return "";
+          return `<div class="money-owed-group">
+            <p class="money-owed-head">${direction === "in" ? "Owed to you" : "You owe"}</p>
+            ${list
+              .map(
+                ({ item, owed: money }) => `<div class="task-row" onclick="openPanel(${jsStr(item.id)})">
+                <div class="task-meta">
+                  <div class="task-title">${escapeHtml(item.person || item.title || "Someone")}</div>
+                  <div class="task-sub">${escapeHtml(item.title && item.person ? item.title : "")}</div>
+                </div>
+                <span class="money-amount">${escapeHtml(formatMoney(money.amountMinor))}</span>
+              </div>`,
+              )
+              .join("")}
+          </div>`;
+        })
+        .join("");
+    }
   }
 
   const searchInput = document.getElementById("moneySearchInput");
@@ -7035,6 +7465,7 @@ const CAPTURE_TYPES = [
   { id: "openloop", icon: "circle-help", label: "Open loop" },
   { id: "document", icon: "file-badge", label: "Document" },
   { id: "expense", icon: "receipt-indian-rupee", label: "Expense" },
+  { id: "bill", icon: "calendar-clock", label: "Bill" },
   { id: "voice", icon: "mic", label: "Voice" },
   { id: "image", icon: "image", label: "Image" },
   { id: "file", icon: "paperclip", label: "File" },
@@ -7696,6 +8127,14 @@ function openCapture() {
   if (categoryReset) categoryReset.value = "";
   const moneyFieldsReset = document.getElementById("captureMoneyFields");
   if (moneyFieldsReset) moneyFieldsReset.style.display = "none";
+  ["captureBillAmount", "captureBillDue", "captureBillMerchant"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const billTypeReset = document.getElementById("captureBillType");
+  if (billTypeReset) billTypeReset.value = "bill";
+  const billFieldsReset = document.getElementById("captureBillFields");
+  if (billFieldsReset) billFieldsReset.style.display = "none";
   document.getElementById("fileNamePreview").textContent = "";
   document.getElementById("linkUrlInput").value = "";
   document.getElementById("imageFileInput").value = "";
@@ -7765,6 +8204,14 @@ function pickType(id, manual) {
   // gains the amount box, and a photograph keeps its image.
   const moneyFields = document.getElementById("captureMoneyFields");
   if (moneyFields) moneyFields.style.display = id === "expense" ? "block" : "none";
+  const billFields = document.getElementById("captureBillFields");
+  if (billFields) billFields.style.display = id === "bill" ? "block" : "none";
+  // A bill repeats by default. A one-off electricity bill remembered as a bill and never repeated
+  // is the failure that matters, because the next month's arrives and nothing says so.
+  if (id === "bill" && manual) {
+    const repeats = document.getElementById("captureRecurrence");
+    if (repeats) repeats.value = "monthly";
+  }
   if (manual) updateCaptureDuplicate(id, captureInputValue());
 }
 function detectType(text) {
@@ -8267,7 +8714,7 @@ function buildCaptureQuestions(text, data) {
   // land here, and a date on its own does not say what the thing *is* — an event, something to be
   // reminded of, or just a record worth keeping. That is the one decision a picture cannot settle
   // by reading it, so it is offered rather than guessed.
-  if (captureChannel === "image" && imageOcrText && data.dueDate) {
+  if (captureChannel === "image" && imageOcrText && (data.dueDate || textLooksLikeReceipt(imageOcrText))) {
     // Set here rather than where the card renders, because this is the moment the app knows it is
     // in doubt, and the auto-create gate has to see it from that moment on.
     captureImageChoicePending = true;
@@ -8283,24 +8730,47 @@ function buildCaptureQuestions(text, data) {
     if (textLooksLikeDocument(imageOcrText)) {
       options.push({ label: "Keep as document", value: "document" });
     }
+    // A photographed receipt is the strongest case for a fourth answer: the total is printed on the
+    // paper, so there is nothing to decide — only a number to check. The amount is filled in and left
+    // visible for editing, never saved straight from the read.
+    if (textLooksLikeReceipt(imageOcrText)) {
+      options.push({ label: "Record as expense", value: "expense" });
+    }
+    // A receipt with no readable date still has to reach the card, and asking it about a date it
+    // never found would be nonsense. So the wording follows what was actually on the paper.
+    const total = receiptTotalFromText(imageOcrText);
+    const headline = data.dueDate
+      ? `I found a date on ${escapeHtml(formatDueDisplay(data.dueDate))}: ${escapeHtml(
+          String(data.title || body).trim().slice(0, 80) || "an appointment",
+        )}.`
+      : total
+        ? `This looks like a receipt. I read ${escapeHtml(formatMoney(total.amountMinor))} as the total.`
+        : "This looks like a receipt.";
     questions.push({
       id: "image-choice",
-      question: `I found a date on ${escapeHtml(formatDueDisplay(data.dueDate))}: ${escapeHtml(
-        String(data.title || body).trim().slice(0, 80) || "an appointment",
-      )}. What would you like me to do?`,
+      question: `${headline} What would you like me to do?`,
       options,
     });
   }
 
-  // A sentence about money. "Spent ₹450 for groceries" is an expense, and the local rules below can
-  // say so from the words alone — but only when the amount is actually in the sentence, because
-  // "pay the electricity bill on the 5th" is money *and a date* and is a reminder, not a spend.
-  // With both an amount and spend wording, the kind is settled and nothing is asked.
+  // An expense, or a bill. "Spent ₹450 for groceries" is history and "pay ₹899 for internet on the
+  // 10th" is a future obligation, and the difference is a date. Only a settled kind is switched
+  // here: with no amount, or no spend wording, the app is not sure and must ask rather than file
+  // someone's electricity bill as a note.
   const amountMinor = parseAmountFromText(body);
   if (!questions.length && amountMinor !== null && amountMinor > 0 && textLooksLikeExpense(body)) {
+    const wanted = textLooksLikeBill(body) ? "bill" : "expense";
     if (!captureAutoDetected && !["file", "link"].includes(captureChannel) && captureType === "text") {
-      captureSuggestionFields.kind = { appliedKind: "expense", previous: captureType };
-      pickType("expense", false);
+      captureSuggestionFields.kind = { appliedKind: wanted, previous: captureType };
+      pickType(wanted, false);
+      // A bill that names a service is a subscription, and the two live in different lists with
+      // different totals. The guess is written into the picker rather than used behind the person's
+      // back, so it is visible and can be changed.
+      if (wanted === "bill") {
+        const typeField = document.getElementById("captureBillType");
+        const guessed = guessBillType(body);
+        if (typeField && guessed) typeField.value = guessed;
+      }
     }
   }
 
@@ -8479,7 +8949,9 @@ function answerCaptureQuestion(value) {
             ? "memory"
             : value === "document"
               ? "document"
-              : "task";
+              : value === "expense"
+                ? "expense"
+                : "task";
       if (wanted !== captureType) {
         captureSuggestionFields.kind = { appliedKind: wanted, previous: captureType };
         pickType(wanted, false);
@@ -8506,6 +8978,32 @@ function answerCaptureQuestion(value) {
       if (!captureType || captureType === "text") {
         captureSuggestionFields.kind = { appliedKind: "document", previous: captureType };
         pickType("document", false);
+      }
+    }
+    // A receipt answers its own amount. The total, the shop and the date are all printed on the
+    // paper, so the boxes are filled from the read and left in plain sight — the person checks the
+    // number rather than being told it. Nothing is saved from here directly.
+    if (value === "expense" && captureChannel === "image" && imageOcrText) {
+      const total = receiptTotalFromText(imageOcrText);
+      const amountField = document.getElementById("captureAmount");
+      // Filled with plain rupees, not the paise integer: this is the one place a person reads it,
+      // and "450" is what is on the paper. parseMoneyToMinor does the conversion on save.
+      if (total && amountField && !amountField.value) {
+        amountField.value = String(Math.floor(total.amountMinor / PAISE_PER_RUPEE));
+        captureSuggestionFields.captureAmount = { applied: amountField.value, previous: "" };
+      }
+      const spentField = document.getElementById("captureSpentOn");
+      const printed = receiptDateFromText(imageOcrText);
+      if (printed && spentField && !spentField.value) spentField.value = printed;
+      const merchantField = document.getElementById("captureMerchant");
+      const shop = receiptMerchantFromText(imageOcrText);
+      if (shop && merchantField && !merchantField.value) merchantField.value = shop;
+      const categoryField = document.getElementById("captureCategory");
+      const category = guessMoneyCategory(imageOcrText);
+      if (category && categoryField && !categoryField.value) categoryField.value = category;
+      const receiptHint = document.getElementById("captureHint");
+      if (receiptHint && total) {
+        receiptHint.textContent = `Read ${formatMoney(total.amountMinor)} from "${total.line}". Check it, then save.`;
       }
     }
   }
@@ -9051,11 +9549,28 @@ function extractLocally(text) {
   if (result.dueDate && new Date(result.dueDate).getTime() < Date.now() - 60000)
     result.dueDate = "";
 
+  // A bare day of the month — "pay the bill on the 5th" — is the commonest way an Indian household
+  // states a due date and no date parser resolves it, because the month was never said. Tried before
+  // the kind is decided, so a bill gets a date and a reminder instead of becoming a memory.
+  if (!result.dueDate) {
+    const dayOfMonth = resolveDayOfMonth(text);
+    if (dayOfMonth) result.dueDate = dayOfMonth;
+  }
+
   // Person: "call/meet/with/for <Capitalized Name>"
   const personMatch = text.match(
     /\b(?:call|meet|with|for|from)\s+([A-Z][a-z]+)\b/,
   );
   if (personMatch) result.person = personMatch[1];
+
+  // …but a debt names the person FIRST: "Ravi owes me ₹500". None of the verbs above appear, so the
+  // name was dropped and the row arrived with an amount and no one attached to it — which is an
+  // amount nobody can chase. Gated on the debt shape, so a sentence that merely starts with a name
+  // does not get one read out of it.
+  if (!result.person && textLooksLikeMoneyOwed(text)) {
+    const debtor = text.match(/\b([A-Z][a-z]{2,})\s+(?:owes?|lends?|borrowed)\b/);
+    if (debtor) result.person = debtor[1];
+  }
 
   // Priority from urgency words
   if (/\b(urgent|asap|critical|important)\b/i.test(text))
@@ -9081,7 +9596,11 @@ function extractLocally(text) {
   // memory — a spending record filed as a note, which is the one thing this module must never do.
   // It needs an amount as well as the wording: "pay the bill on the 5th" is money, but the money has
   // not been spent yet and that is a reminder, not an expense.
-  if (parseAmountFromText(text) !== null && textLooksLikeExpense(text)) {
+  if (textLooksLikeMoneyOwed(text)) {
+    result.kind = "task";
+  } else if (parseAmountFromText(text) !== null && textLooksLikeBill(text)) {
+    result.kind = "bill";
+  } else if (parseAmountFromText(text) !== null && textLooksLikeExpense(text)) {
     result.kind = "expense";
   } else if (/\bwaiting (on|for)\b/i.test(text)) result.kind = "waiting";
   else if (/\b(need to decide|undecided|not sure yet)\b/i.test(text))
@@ -9121,7 +9640,7 @@ function captureNeedsModelHelp(text, local) {
    server's buildExtractionPrompt, which ui-structure pins by comparing the two lists. */
 const LOCAL_EXTRACTION_KINDS = ["task", "event", "memory", "waiting", "openloop", "agenda"];
 const LOCAL_EXTRACTION_PRIORITIES = ["high", "medium", "low"];
-const LOCAL_EXTRACTION_RECURRENCE = ["none", "daily", "weekly", "monthly"];
+const LOCAL_EXTRACTION_RECURRENCE = ["none", "daily", "weekly", "monthly", "yearly"];
 
 function buildLocalExtractionPrompt(text, today) {
   return `Today is ${today}. Turn this sentence into JSON for a personal productivity app.
@@ -9437,6 +9956,44 @@ async function saveCapture(forceSave = false, options = {}) {
       newItem.dueDate = "";
       newItem.due = "";
       newItem.status = "inbox";
+      newItem.sub = newItem.sub || (minor !== null && minor > 0 ? formatMoney(minor) : "");
+    }
+
+    // Money owed. The amount lives under its own key, never `amountMinor`, so a month total that
+    // walks every item cannot count a debt as spending. And the row is a task, so it lands on Today
+    // and can be completed when the money actually arrives.
+    if (realKind === "task" && textLooksLikeMoneyOwed(text || title)) {
+      const owed = parseAmountFromText(text || title);
+      if (owed !== null && owed > 0) {
+        captureMetadata.owedMinor = owed;
+        captureMetadata.currency = MONEY_CURRENCY;
+        captureMetadata.owedDirection = moneyOwedDirection(text || title);
+        if (!newItem.sub) newItem.sub = formatMoney(owed);
+      }
+    }
+
+    // A bill is money still owed. It keeps its due date — that is the whole point of it — and so it
+    // is the one money kind that DOES reach the Schedule and DOES fire a reminder.
+    if (realKind === "bill") {
+      const read = (id) => (document.getElementById(id)?.value || "").trim();
+      const minor = parseMoneyToMinor(read("captureBillAmount")) ?? parseAmountFromText(text);
+      if (minor !== null && minor > 0) {
+        captureMetadata.amountMinor = minor;
+        captureMetadata.currency = MONEY_CURRENCY;
+        captureMetadata.billType = read("captureBillType") === "subscription" ? "subscription" : "bill";
+        captureMetadata.merchant = read("captureBillMerchant");
+      }
+      // The picker is the better date: it is a whole day, while the sentence's parse carries a time
+      // of day that would fire the reminder at whatever hour the sentence happened to imply.
+      const picked = read("captureBillDue");
+      if (parseIsoDate(picked)) {
+        const noon = new Date(picked + "T12:00:00");
+        newItem.dueDate = Number.isNaN(noon.getTime()) ? newItem.dueDate : noon.toISOString();
+        newItem.due = fmtDate(picked);
+      }
+      // Monthly unless the person chose otherwise, which is what the sheet pre-selects anyway.
+      if (!newItem.recurrence || newItem.recurrence === "none") newItem.recurrence = "monthly";
+      newItem.status = "planned";
       newItem.sub = newItem.sub || (minor !== null && minor > 0 ? formatMoney(minor) : "");
     }
 
