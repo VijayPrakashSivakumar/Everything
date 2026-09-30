@@ -168,8 +168,12 @@ function renderProjects() {
   const el = document.getElementById("projectsList");
   if (!el) return;
   if (!state.projects.length) {
-    el.innerHTML =
-      '<div class="card"><p class="empty">No projects yet.</p></div>';
+    el.innerHTML = emptyStateHTML({
+      title: "No projects yet",
+      body: "A project is a piece of work with more than one step to it. Tag items with one and they collect here.",
+      action: "document.getElementById('newProjectInput')?.focus()",
+      actionLabel: "Name a project",
+    });
     return;
   }
   el.innerHTML = state.projects
@@ -262,7 +266,12 @@ function renderGoals() {
   const el = document.getElementById("goalsList");
   if (!el) return;
   if (!state.goals.length) {
-    el.innerHTML = '<p class="empty">No goals set yet.</p>';
+    el.innerHTML = emptyStateHTML({
+      title: "No goals yet",
+      body: "A goal is the thing underneath the tasks. Set one and progress is measured against it.",
+      action: "document.getElementById('newGoalInput')?.focus()",
+      actionLabel: "Set a goal",
+    });
     return;
   }
 
@@ -440,7 +449,11 @@ function renderReview() {
         (stuck.length > 12
           ? `<p class="empty">and ${stuck.length - 12} more — open the view they belong to.</p>`
           : "")
-      : '<p class="empty">Nothing is stuck. That is a good week.</p>';
+      : emptyStateHTML({
+            title: "Nothing is stuck",
+            body: "No task has been sitting untouched past its date. That is a good week.",
+            tone: "good",
+          });
   }
 
   const doneEl = document.getElementById("reviewDone");
@@ -471,7 +484,10 @@ function renderReview() {
         <div class="task-sub">${item.kind === "waiting" ? "Waiting, with no check-back day" : "No day on it"}</div></div></div>`,
           )
           .join("")
-      : '<p class="empty">Everything open has a day or a rhythm.</p>';
+      : emptyStateHTML({
+        title: "Everything open has a day or a rhythm",
+        body: "Nothing here because there is nothing unscheduled. Anything without a day would appear on this list.",
+      });
   }
 }
 

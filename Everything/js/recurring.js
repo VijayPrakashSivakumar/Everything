@@ -297,9 +297,17 @@ function renderInbox(filter) {
         .includes(query);
     });
   if (!items.length) {
+    /* Two different situations, and the old code drew the same grey sentence for both. A filtered
+       list is not an empty one: the person filtered it, and the useful thing to tell them is how to
+       undo that — not to capture something they were not trying to capture. */
     list.innerHTML = query
-      ? '<p class="empty">Nothing matches that filter.</p>'
-      : '<p class="empty">Nothing here yet.</p>';
+      ? emptyNoteHTML("Nothing matches that filter.")
+      : emptyStateHTML({
+          title: "Nothing captured yet",
+          body: "Anything you type, say or photograph lands here first. Nothing is filed until you say so.",
+          action: "openCapture()",
+          actionLabel: "Capture something",
+        });
     mountInboxBulkBar();
     renderBulkBar();
     return;

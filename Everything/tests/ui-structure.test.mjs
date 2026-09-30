@@ -2624,6 +2624,38 @@ check('every script the page loads is precached, and nothing is precached that i
   }
 });
 
+check('an empty view says why it is empty and offers one next step', () => {
+  /* An empty view is the first thing a new person sees on every screen, so it is the app's opening
+     line — and it was a line of grey text, which reads as a failed render rather than a state. Two
+     things have to be true: a reason, and a way forward.
+
+     The reason matters as much as the styling. "Nothing captured yet" and "nothing matches that
+     filter" are different situations wanting opposite things, and drawing the same grey sentence for
+     both is how a person concludes the app is broken when they are the one who filtered it. So a
+     filtered list is asserted to stay narrow, with no mark and no action button. */
+  assert.match(js, /function emptyStateHTML/, 'the empty view has no component');
+  assert.match(js, /empty-state-title/, 'an empty view has no title');
+  assert.match(js, /function emptyNoteHTML/, 'the narrow form for a filtered list is missing');
+
+  const inbox = between('function renderInbox', 'function renderTasks');
+  assert.match(inbox, /query\s*\n?\s*\?\s*emptyNoteHTML/,
+    'a filtered inbox must use the narrow form, not the full empty state');
+  assert.match(inbox, /:\s*emptyStateHTML/,
+    'an unfiltered inbox must use the full empty state');
+  assert.match(inbox, /action: "openCapture\(\)"/,
+    'a new person landing on the inbox is not told how to start');
+
+  // The mark is the brand, written once. A copy per call site is how a loader ends up looking like
+  // the logo at a glance and not being it.
+  assert.match(js, /class="empty-mark"/, 'the empty view has no mark');
+  assert.match(js, /const EMPTY_TONES = \{ good: "empty-state--good" \}/,
+    'tones must be mapped explicitly, so the class names stay visible to the dead-CSS audit');
+
+  // Good news is not an absence. "Nothing is stuck" is an outcome and must not read as a failure.
+  assert.match(js, /tone: "good"/, 'a good outcome is still drawn as a plain empty state');
+  assert.match(css, /\.empty-state--good/, 'the good tone has no styles');
+});
+
 check('a wait a person watches shows the brand mark, not a line of text', () => {
   /* The two waits long enough to be stared at. Both were static text, which is indistinguishable
      from a hung app — and unlike a layout bug, removing the loader fails nothing and breaks nothing,

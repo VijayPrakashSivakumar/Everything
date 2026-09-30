@@ -328,7 +328,12 @@ function renderInsights() {
               `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div></div></div>`,
           )
           .join("")
-      : '<p class="empty">Nothing to show yet. Capture a few things and patterns will appear here.</p>';
+      : emptyStateHTML({
+          title: "Nothing to show yet",
+          body: "Capture a few things and the patterns here — what is due, what is stuck, what nobody has touched — appear on their own.",
+          action: "openCapture()",
+          actionLabel: "Capture something",
+        });
   }
 
   const activeItems = state.items.filter((i) => !isArchived(i));

@@ -29,6 +29,58 @@ function brandLoaderHTML(options = {}) {
   );
 }
 
+/* An empty view. Three jobs, in this order, and the order is the design:
+
+   Say *why* it is empty. "You have not added anything" and "your filter matched nothing" are
+   different situations that want opposite things — one wants an action, the other wants the filter
+   cleared. Showing the same grey sentence for both is how a person concludes the app is broken when
+   they are the one who filtered it.
+
+   Look deliberate. An empty view is the first thing a new person sees on every screen, so it is the
+   app's opening line. A line of grey text in the middle of a white page reads as a failed render,
+   not as a considered state.
+
+   Offer exactly one next step. Not three. Two buttons is a decision the app is asking the person to
+   make on its behalf.
+
+   The mark is the same infinity the sidebar and the loader use, held still and dimmed. It is the
+   brand acknowledging an empty state rather than a shrug, and it costs nothing to stay consistent
+   because the path is written once, here. */
+/* Tones are mapped, not concatenated. The old shape built the class as `empty-state--${tone}`, which
+   has two problems at once: the class name never appears literally anywhere, so the dead-CSS audit
+   cannot see that it is used and reports it as dead; and a typo in a `tone` value silently produced a
+   class with no styles at all. A map makes the names checkable and the typo impossible. */
+const EMPTY_TONES = { good: "empty-state--good" };
+
+function emptyStateHTML(options = {}) {
+  const title = options.title || "";
+  const body = options.body || "";
+  // One action, or none. The call sites pass a handler expression, so it is escaped like any other
+  // interpolated value.
+  const action = options.action
+    ? `<button class="btn empty-action" onclick="${escapeHtml(options.action)}">${escapeHtml(options.actionLabel || "Get started")}</button>`
+    : "";
+  const tone = EMPTY_TONES[options.tone] || "";
+  if (!title) return "";
+  return (
+    `<div class="empty-state${tone ? ` ${tone}` : ""}">` +
+    `<svg class="empty-mark" viewBox="0 0 40 24" aria-hidden="true" focusable="false">` +
+    `<path d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"` +
+    ` fill="none" stroke-width="4.5" stroke-linecap="round"/></svg>` +
+    `<p class="empty-state-title">${escapeHtml(title)}</p>` +
+    (body ? `<p class="empty-state-body">${escapeHtml(body)}</p>` : "") +
+    action +
+    `</div>`
+  );
+}
+
+/* The narrow form: a single line, no mark, for a list that is merely filtered rather than new. The
+   mark is wrong here — a filtered list is not an empty one, and drawing the brand's "nothing yet"
+   mark on every failed search would train people to ignore it. */
+function emptyNoteHTML(text) {
+  return text ? `<p class="empty">${escapeHtml(text)}</p>` : "";
+}
+
 function escapeHtml(str) {
   return (str || "").replace(
     /[&<>"']/g,

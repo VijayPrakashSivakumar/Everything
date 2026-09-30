@@ -2054,6 +2054,84 @@ h1.page-title,
    the one place in the stylesheet where a rule is allowed to insist, because losing this one is
    invisible and the consequence is a motion-sensitive reader being moved whether they asked to be or
    not. */
+/* ---------- Empty views ----------
+   The old treatment was four lines of CSS: muted grey, body size, centred, some padding. Applied to
+   about thirty places. A line of grey text in the middle of a white page is indistinguishable from a
+   render that failed, and an empty view is the very first thing a new person sees on every screen —
+   so this is the app's opening line, spent on the least deliberate state in the product.
+
+   Centred with generous air, so the eye lands on the sentence rather than hunting for it. The mark
+   sits above at low opacity: it identifies the state as *Everything's* and not an error, without
+   competing with the sentence for attention. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  /* Air rather than a border or a card. A bordered box says "this is a panel"; an empty list is not a
+     panel, it is the absence of one, and drawing a frame around nothing invents something. */
+  padding: 44px 20px 52px;
+  max-width: 380px;
+  margin: 0 auto;
+}
+
+.empty-mark {
+  width: 54px;
+  height: 32px;
+  stroke: var(--accent);
+  opacity: 0.28;
+  flex: none;
+  margin-bottom: 2px;
+}
+
+.empty-state-title {
+  margin: 0;
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-bold);
+  color: var(--fg);
+  text-wrap: balance;
+}
+
+.empty-state-body {
+  margin: 0;
+  font-size: var(--fs-small, 13px);
+  line-height: 1.5;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/* The one next step. Given room to be found, and given the primary ring — it is the only thing on
+   the screen that does anything, and dressing it as secondary would be telling the person to ignore
+   the only action available. */
+.empty-action {
+  margin-top: 6px;
+  /* A whole-row target on a phone. A small centred button is the easiest thing on the screen to miss
+     with a thumb. */
+  min-height: 40px;
+  padding-inline: 18px;
+}
+
+/* "Nothing is stuck. That is a good week." — a good outcome is not an absence and should not be
+   dressed as one. Same shape, so the screen does not jump, but the mark takes the success colour,
+   because nothing is wrong here. */
+.empty-state--good .empty-mark {
+  stroke: var(--green-fg, var(--accent));
+  opacity: 0.45;
+}
+
+/* Inside a card or a dropdown, where 44px of air would be absurd. */
+.card .empty-state,
+.search-dropdown .empty-state {
+  padding: 20px 8px;
+}
+
+.card .empty-mark,
+.search-dropdown .empty-mark {
+  width: 40px;
+  height: 24px;
+}
+
 /* ---------- The brand loader ----------
    There was no loading indicator anywhere in the app. The one wait a person actually sees — the
    Ask overlay saying "Thinking…" — was a line of text with nothing moving on it, which is the
