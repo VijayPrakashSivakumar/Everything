@@ -22,12 +22,6 @@ const WIDTHS = [
   { w: 1600, h: 900, label: 'desktop' },
 ];
 
-const VIEWS = [
-  'view-today', 'view-inbox', 'view-tasks', 'view-schedule', 'view-memory',
-  'view-projects', 'view-people', 'view-goals', 'view-waiting', 'view-review',
-  'view-insights', 'view-settings',
-];
-
 const results = [];
 function record(ok, name, detail) {
   results.push({ ok, name, detail });
@@ -56,8 +50,33 @@ try {
     state.people = [{ id: 'p1', name: 'Ravi', phone: '+91 90000 11111', email: 'ravi@example.com' }];
     state.projects = [{ id: 'j1', name: 'Kitchen renovation', note: 'Long-running project with plenty of detail' }];
     state.goals = [{ id: 'g1', title: 'Run a marathon', note: 'Sub three hours' }];
+    /* Money and Documents rows seeded as well, and deliberately with the content that stresses a
+       layout: a long merchant name, a four-figure amount, a yearly subscription shown as a monthly
+       figure, and a debt. An empty view measures nothing — every overflow check would pass, and
+       "the Money view fits on a phone" would be a claim about a page with no money on it. */
+    const soon = new Date();
+    soon.setDate(soon.getDate() + 2);
+    const overdue = new Date();
+    overdue.setDate(overdue.getDate() - 5);
+    state.items = state.items.concat([
+      { id: 'm1', kind: 'expense', title: 'D-Mart', done: false, created: 6, spentOn: new Date().toISOString().slice(0, 10), captureMetadata: { amountMinor: 87450, currency: 'INR', category: 'Groceries', merchant: 'D-Mart Express, Koramangala' } },
+      { id: 'm2', kind: 'bill', title: 'Airtel broadband', done: false, created: 7, dueDate: soon.toISOString(), recurrence: 'monthly', captureMetadata: { amountMinor: 119900, currency: 'INR', billType: 'bill', merchant: 'Airtel' } },
+      { id: 'm3', kind: 'bill', title: 'Google One storage renewal', done: false, created: 8, dueDate: overdue.toISOString(), recurrence: 'yearly', captureMetadata: { amountMinor: 599900, currency: 'INR', billType: 'subscription', merchant: 'Google One' } },
+      { id: 'm4', kind: 'task', title: 'Ravi owes me for the dinner', person: 'Ravi', done: false, created: 9, captureMetadata: { owedMinor: 125000, currency: 'INR', owedDirection: 'in' } },
+      { id: 'd1', kind: 'document', title: 'Passport', done: false, created: 10, expiresOn: new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10), docType: 'passport' },
+      { id: 'd2', kind: 'document', title: 'Two-wheeler insurance policy', done: false, created: 11, expiresOn: new Date(Date.now() + 9 * 86400000).toISOString().slice(0, 10), docType: 'insurance' },
+    ]);
     if (typeof renderAll === 'function') renderAll();
   });
+
+  /* Derived from the markup rather than written out by hand. The list used to be a literal, and it
+     quietly fell behind: Documents and Money were added to the app and this audit went on measuring
+     thirteen views and missing the two newest — so the two views most likely to be laid out freshly
+     (money rows, category bars, a subscription list) were the only ones nobody ever looked at on a
+     phone or a tablet. Reading the ids means a new view is covered the day it is written, and an
+     audit that needs editing to keep up is an audit that stops being run. */
+  const VIEWS = await page.evaluate(() =>
+    [...document.querySelectorAll('.view[id]')].map((el) => el.id));
 
   for (const { w, h, label } of WIDTHS) {
     await page.setViewportSize({ width: w, height: h });
