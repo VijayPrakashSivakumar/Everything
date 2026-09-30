@@ -139,9 +139,82 @@ await check('a row acknowledges a press', async () => {
     assert.match(cs, /transform/, `the checkbox has no transform transition, got "${cs}"`);
   });
 
-  await check('every motion keyframe uses tokens, not literal durations', async () => {
-    // A literal cannot be scaled by --motion-scale, so it is the one way to accidentally give a
-    // concept or a reduced-motion reader motion they did not ask for.
+  // Brand loader: the one wait a person stares at must be provably alive, and must be the logo.
+const loaderPage = await open('no-preference');
+try {
+  await loaderPage.goto(testUrl(PORT), { waitUntil: 'commit' });
+  await loaderPage.waitForFunction(() => typeof window.brandLoaderHTML === 'function');
+  await loaderPage.evaluate(() => {
+    document.getElementById('authScreen').style.display = 'none';
+    // Mounted deliberately. The loader only exists in the document while a wait is in progress, and
+    // every check below measures the rendered thing — computed style, animation state, ARIA — rather
+    // than the string the function returned, which would prove only that a template works.
+    document.body.insertAdjacentHTML('beforeend', brandLoaderHTML({ label: 'Thinking…' }));
+  });
+
+  await check('the loader is the brand mark, path for path', async () => {
+    // Compared against the sidebar mark in the real document rather than against a copy in this
+    // probe. A loader built from a near-identical path is the failure: it looks like the logo at a
+    // glance and is not, so the one moment the app is on screen unattended is the one moment the
+    // branding is wrong.
+    const same = await loaderPage.evaluate(() => {
+      const logo = document.querySelector('.brand-mark path').getAttribute('d');
+      const run = document.querySelector('.brand-loader .loader-run').getAttribute('d');
+      const track = document.querySelector('.brand-loader .loader-track').getAttribute('d');
+      return { logo, run, track };
+    });
+    assert.equal(same.run, same.logo, 'the moving part of the loader is not the logo path');
+    assert.equal(same.track, same.logo, 'the track behind the loader is not the logo path');
+  });
+
+  await check('the stroke is normalised, so the dash maths is exact', async () => {
+    // pathLength="1" is what lets .16 mean a sixth of the way round without measuring the curve.
+    // Without it the dash is in user units and the loader would travel the wrong fraction of the
+    // loop on any other mark.
+    const len = await loaderPage.evaluate(() =>
+      document.querySelector('.brand-loader .loader-run').getAttribute('pathLength'));
+    assert.equal(len, '1', `the loader path is not normalised, pathLength is "${len}"`);
+  });
+
+  await check('the loader is actually moving, not a static mark', async () => {
+    const moved = await loaderPage.evaluate(async () => {
+      const read = () => getComputedStyle(document.querySelector('.brand-loader .loader-run'))
+        .strokeDashoffset;
+      const a = read();
+      await new Promise((r) => setTimeout(r, 260));
+      return { a, b: read() };
+    });
+    assert.notEqual(moved.a, moved.b,
+      `the loader dash never moved (${moved.a} → ${moved.b}); a still mark reads as a hung app`);
+  });
+
+  await check('the loader announces itself without announcing every frame', async () => {
+    const info = await loaderPage.evaluate(() => {
+      const el = document.querySelector('.brand-loader');
+      const svg = el.querySelector('svg');
+      return {
+        role: el.getAttribute('role'),
+        label: el.querySelector('.brand-loader-label')?.textContent || '',
+        svgHidden: svg.getAttribute('aria-hidden'),
+      };
+    });
+    assert.equal(info.role, 'status', 'the loader is not announced as a status');
+    assert.ok(info.label, 'the loader carries no words, so it says nothing to a screen reader');
+    // The shape is decorative and the words carry the meaning. Announcing both would read the same
+    // sentence twice.
+    assert.equal(info.svgHidden, 'true', 'the decorative shape is exposed to a screen reader');
+  });
+
+  await check('a loader with no label still renders the mark', async () => {
+    const ok = await loaderPage.evaluate(() =>
+      brandLoaderHTML({ label: '' }).includes('brand-loader'));
+    assert.ok(ok, 'a label-less loader produced nothing usable');
+  });
+} finally {
+  await loaderPage.close();
+}
+
+await check('every motion keyframe uses tokens, not literal durations', async () => {
     const literals = await page.evaluate(() => {
       const bad = [];
       for (const sheet of Array.from(document.styleSheets)) {

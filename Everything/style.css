@@ -2054,6 +2054,87 @@ h1.page-title,
    the one place in the stylesheet where a rule is allowed to insist, because losing this one is
    invisible and the consequence is a motion-sensitive reader being moved whether they asked to be or
    not. */
+/* ---------- The brand loader ----------
+   There was no loading indicator anywhere in the app. The one wait a person actually sees — the
+   Ask overlay saying "Thinking…" — was a line of text with nothing moving on it, which is the
+   hardest kind of wait: it is indistinguishable from a hung app, because text never proves that
+   anything is still happening.
+
+   This is the sidebar mark doing the waiting, so the app is recognisable even in a screenshot taken
+   at the moment it is thinking. It is the brand rather than a generic ring because a ring says
+   "loading" and nothing more, while this says "Everything is working on it".
+
+   The stroke is normalised with pathLength="1", so the dash maths below is exact and does not
+   depend on measuring this particular curve. That is why the numbers read as fractions: .16 of the
+   way round is .16 of the way round, whatever the real path length turns out to be. */
+
+.brand-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  vertical-align: middle;
+  color: var(--muted);
+}
+
+.brand-loader svg {
+  width: var(--loader-size, 22px);
+  height: calc(var(--loader-size, 22px) * 0.6);
+  display: block;
+  overflow: visible;
+  flex: none;
+}
+
+/* The track: the whole loop, held quietly. Without it the travelling segment reads as a stray dash
+   appearing out of nowhere rather than as something moving along a known path. */
+.brand-loader .loader-track {
+  stroke: var(--accent);
+  opacity: 0.2;
+}
+
+/* The segment that travels. Linear and looping, so the period is constant — an ease here makes it
+   hesitate at the join and draws the eye to the seam. */
+.brand-loader .loader-run {
+  stroke: url(#logoGrad);
+  stroke-dasharray: 0.16 0.84;
+  animation: brand-loader-run 1.4s linear infinite;
+}
+
+@keyframes brand-loader-run {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    /* One full path length, because pathLength is 1. */
+    stroke-dashoffset: -1;
+  }
+}
+
+.brand-loader-label {
+  font-size: var(--fs-caption, 12px);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Sizes. Small sits inline beside a status line; large replaces the content of a panel that has
+   nothing else in it yet. */
+.brand-loader--sm {
+  --loader-size: 18px;
+}
+
+.brand-loader--lg {
+  --loader-size: 56px;
+}
+
+/* Centred block, for a panel that is empty because something is genuinely in flight. */
+.brand-loader-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 28px 12px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root,
   :root[data-concept] {
@@ -2075,6 +2156,15 @@ h1.page-title,
   /* Scrolling is motion too, and the one most often left on. */
   html {
     scroll-behavior: auto !important;
+  }
+
+  /* A loader that stops moving has to stop looking like a spinner and start looking like a status,
+     or it becomes a still ring nobody can tell from a stuck app — the exact problem it was built to
+     solve. Half the loop is drawn solid instead, which is static and still unmistakably "working". */
+  .brand-loader .loader-run {
+    animation: none;
+    stroke-dasharray: 0.5 0.5;
+    stroke-dashoffset: 0;
   }
 }
 

@@ -257,7 +257,23 @@ let imageOcrText = "";
 
 function setImageOcrStatus(message) {
   const status = document.getElementById("imageOcrStatus");
-  if (status) status.textContent = message || "";
+  if (!status) return;
+  /* Reading an image is a genuinely long wait — the engine is fetched, a worker is built, then the
+     page is recognised — and until now the only feedback was a sentence that changed three times
+     without anything moving. The mark goes in front of those sentences while the work is happening,
+     which is also what stops them reading as a stuck caption.
+
+     Driven by wording rather than by a busy flag, because the same setter is used for the failure
+     messages afterwards ("No text was found…"), and a spinner beside an error is a lie. Every message
+     that means work is in flight is listed; anything else renders as plain text. */
+  const inFlight = /^(Loading the text reader|Preparing|Reading the image|Recognising|Recognizing)/i.test(
+    message || "",
+  );
+  if (inFlight) {
+    status.innerHTML = brandLoaderHTML({ size: "sm" }) + `<span>${escapeHtml(message)}</span>`;
+    return;
+  }
+  status.textContent = message || "";
 }
 
 function pickOcrLang(tag) {

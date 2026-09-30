@@ -637,7 +637,11 @@ async function askAI(q, opts = {}) {
   const slot = () => (mountId ? document.getElementById(mountId) : null);
   const first = slot();
   if (!first) return;
-  first.innerHTML = `<div class="ask-answer">Thinking…</div>`;
+  // The brand mark, not a generic ring. This is the wait a person actually stares at — a model
+  // round trip on a phone — and it was a line of static text, which is indistinguishable from a
+  // hung app. The words stay, because "Thinking…" says what is happening and a moving shape only
+  // says that something is; the motion is what proves the app is still alive.
+  first.innerHTML = `<div class="ask-answer">${brandLoaderHTML({ label: "Thinking…" })}</div>`;
 
   // Only a newer call supersedes this one; a re-render is not a newer question.
   const isSuperseded = () => ticket !== askRequestSeq;

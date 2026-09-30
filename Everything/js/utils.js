@@ -1,4 +1,34 @@
 /* ---------- Utility ---------- */
+
+/* The brand mark, as markup. One function rather than a template literal at each call site, because
+   the path is already written out three times in index.html and a fourth, fifth and sixth copy is
+   exactly how the sidebar and the capture button drift apart visually. A loader built from a
+   different path than the logo is not the brand doing the waiting, it is a near-miss.
+
+   The gradient is referenced by id and defined once, in the document, next to the sidebar mark. So
+   the loader inherits the same paint as the logo for free instead of carrying its own colours.
+
+   `block` centres the whole thing and is what a panel with nothing else in it wants; inline is for a
+   status line that already has words next to it. */
+function brandLoaderHTML(options = {}) {
+  const label = options.label || "";
+  const size = options.size === "lg" ? " brand-loader--lg" : options.size === "sm" ? " brand-loader--sm" : "";
+  const tag = options.block ? "div" : "span";
+  // role=status announces the change once, rather than on every tick, and the label is read out
+  // rather than the word "loading" being implied by a moving shape that a screen reader cannot see.
+  return (
+    `<${tag} class="brand-loader${size}${options.block ? " brand-loader-block" : ""}" role="status">` +
+    `<svg viewBox="0 0 40 24" aria-hidden="true" focusable="false">` +
+    `<path class="loader-track" d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"` +
+    ` fill="none" stroke-width="4.5" stroke-linecap="round" pathLength="1"/>` +
+    `<path class="loader-run" d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"` +
+    ` fill="none" stroke-width="4.5" stroke-linecap="round" pathLength="1"/>` +
+    `</svg>` +
+    (label ? `<span class="brand-loader-label">${escapeHtml(label)}</span>` : "") +
+    `</${tag}>`
+  );
+}
+
 function escapeHtml(str) {
   return (str || "").replace(
     /[&<>"']/g,

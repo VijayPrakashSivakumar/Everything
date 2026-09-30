@@ -2624,6 +2624,31 @@ check('every script the page loads is precached, and nothing is precached that i
   }
 });
 
+check('a wait a person watches shows the brand mark, not a line of text', () => {
+  /* The two waits long enough to be stared at. Both were static text, which is indistinguishable
+     from a hung app — and unlike a layout bug, removing the loader fails nothing and breaks nothing,
+     it just makes the app look broken again with no test noticing. So the wiring is asserted. */
+  assert.match(js, /brandLoaderHTML\(\{ label: "Thinking…" \}\)/,
+    'the Ask overlay went back to a bare "Thinking…" with nothing moving');
+  assert.match(js, /function setImageOcrStatus[\s\S]{0,1200}brandLoaderHTML/,
+    'reading an image no longer shows the brand loader');
+  // The loader is built once, from the logo's own path, rather than copied into each waiting place.
+  assert.match(js, /function brandLoaderHTML/, 'the brand loader helper is missing');
+  assert.match(js, /pathLength="1"/,
+    'the loader stroke is not normalised, so its dash maths depends on the curve length');
+});
+
+check('the loader never sits beside a failure message', () => {
+  /* Spinning next to "No text was found" is a lie about the state of the app. The busy state is
+     chosen by wording, and every other message through that setter — including the error paths —
+     must render as plain text. */
+  const setter = between('function setImageOcrStatus', '\n}');
+  assert.match(setter, /const inFlight =/, 'the setter no longer distinguishes work from failure');
+  assert.match(setter, /status\.textContent = message/, 'a non-busy message is no longer plain text');
+  assert.match(setter, /escapeHtml\(message\)/,
+    'the busy path interpolates the message unescaped');
+});
+
 check('the service worker cache is versioned and current', () => {
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
   const version = sw.match(/CACHE_NAME = 'everything-shell-v(\d+)'/);
