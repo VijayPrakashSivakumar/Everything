@@ -9,11 +9,15 @@
 //
 // Nothing is created, edited or deleted.
 //
-//   node tmp-profile-check.mjs
+//   node Everything/scripts/live-profile-check.mjs
 import { chromium } from 'playwright';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const URL = process.env.APP_URL || 'https://everything-app-zeta.vercel.app';
-const PROFILE = 'd:/Projects/Everything/.browser-profile';
+// The same profile live-login.mjs writes, derived the same way rather than repeated as a literal.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const PROFILE = path.join(repoRoot, '.browser-profile');
 
 const context = await chromium.launchPersistentContext(PROFILE, { headless: false, viewport: { width: 1280, height: 800 } });
 const page = context.pages()[0] || (await context.newPage());
@@ -27,7 +31,7 @@ page.on('response', (r) => {
 
 await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
 if (await page.locator('#authEmail').isVisible().catch(() => false)) {
-  console.log('Session expired. Run tmp-login.mjs first.');
+  console.log('Session expired. Run Everything/scripts/live-login.mjs first.');
   await context.close();
   process.exit(2);
 }

@@ -1,7 +1,7 @@
 // Projects view probe. Runs SIGNED OUT in a throwaway profile, so `db` and `sbUser` are null and
 // everything stays in localStorage — it cannot reach the real account. Drives the real UI.
 //
-//   node projects-probe.mjs
+//   node Everything/tests/projects-probe.mjs
 import { chromium } from 'playwright';
 import OS from 'os';
 import fs from 'fs';

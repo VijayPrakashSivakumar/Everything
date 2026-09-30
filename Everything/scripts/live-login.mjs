@@ -2,14 +2,20 @@
 // The profile is persistent (userDataDir), so the Supabase session is kept on disk and later
 // scripts can reuse it without asking you to log in again.
 //
-//   node tmp-login.mjs
+//   node Everything/scripts/live-login.mjs
 //
 // Nothing is typed and no credentials are stored in this repo — the session lives in the
 // browser profile under .browser-profile/, which is git-ignored.
 import { chromium } from 'playwright';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const URL = process.env.APP_URL || 'https://everything-app-zeta.vercel.app';
-const PROFILE = 'd:/Projects/Everything/.browser-profile';
+// Derived from where this file sits rather than typed out. A hard-coded absolute path meant the
+// script only worked on the machine it was written on, and failed everywhere else with an error
+// that said nothing about why.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const PROFILE = path.join(repoRoot, '.browser-profile');
 const WAIT_MS = 5 * 60 * 1000; // five minutes to sign in
 
 const context = await chromium.launchPersistentContext(PROFILE, {

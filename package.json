@@ -18,7 +18,11 @@
     "test:conversation": "node Everything/tests/conversation-engine-probe.mjs",
     "test:imagechoice": "node Everything/tests/image-choice-probe.mjs",
     "check:drift": "node Everything/scripts/schema-drift.mjs",
-    "probe:projects": "node projects-probe.mjs"
+    "check:dead": "node dead-code-audit.mjs",
+    "probe:projects": "node Everything/tests/projects-probe.mjs",
+    "live:login": "node Everything/scripts/live-login.mjs",
+    "live:profile": "node Everything/scripts/live-profile-check.mjs",
+    "live:vapid": "node Everything/scripts/check-vapid.mjs"
   },
   "repository": {
     "type": "git",

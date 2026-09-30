@@ -31,7 +31,14 @@ const testSources = fs.existsSync(testDir)
 const tests = testSources.join('\n');
 
 const countOf = (haystack, name) => (haystack.match(new RegExp(`\\b${name}\\b`, 'g')) || []).length;
-const out = { deadFunctions: [], testOnlyFunctions: [], deadClasses: [], deadRoutes: [], brokenScripts: [] };
+const out = {
+  deadFunctions: [],
+  testOnlyFunctions: [],
+  deadClasses: [],
+  deadRoutes: [],
+  brokenScripts: [],
+  commentedOut: [],
+};
 
 // ---- functions ---------------------------------------------------------------------------------
 // Declaration forms actually used in this file: `function name(`, `async function name(`,
@@ -94,6 +101,40 @@ for (const [name, cmd] of Object.entries(pkg.scripts || {})) {
   }
 }
 
+// ---- commented-out code -----------------------------------------------------------------------
+/* A line comment that *is* code, rather than a comment. Getting this wrong is worse than having no
+   check at all: the first version flagged 11 lines in a codebase that has none, and every one was a
+   wrapped English sentence that happened to begin with a keyword — "// for the next sync to discard
+   them." A reader who sees that once stops reading the section, and then a real finding is missed.
+
+   So two conditions, not one. The text after the slashes must begin *like a statement* — a keyword
+   followed by a bracket, an identifier or an operator, never a bare word — and the line must end in a
+   terminator. Prose does not end in a semicolon or a brace; disabled code almost always does. The two
+   together are narrow enough to be worth trusting.
+
+   Only *whole-line* comments count. A trailing comment after live code is normal and left alone. */
+const STATEMENT_START =
+  /^\s*(?:\/\/|\*)\s*(?:(?:const|let|var|function|class|import|export|return|throw|await|new|delete|typeof|yield)\s+(?=[A-Za-z_$([{'"])|(?:if|for|while|switch|try|catch|do|else|return)\s*[({]|(?:window|document|state|item|items|db|localStorage|sessionStorage|caches|navigator|console|Notification|state)\s*\.\s*[A-Za-z_$][\w.$]*\s*\()/;
+const STATEMENT_END = /(?:;|\{|\})\s*$|\)\s*;?\s*$/;
+
+function findCommentedOutCode(file, source) {
+  const hits = [];
+  source.split('\n').forEach((raw, i) => {
+    if (!STATEMENT_START.test(raw) || !STATEMENT_END.test(raw)) return;
+    // A trailing comment sits after code on the same line; that is prose about live code, not a
+    // disabled statement, so it does not count.
+    const slash = raw.indexOf('//') >= 0 ? raw.indexOf('//') : raw.indexOf('*');
+    if (slash > 0 && !/^\s*(\*|\/\*)/.test(raw.slice(0, slash))) return;
+    hits.push({ file, line: i + 1, text: raw.trim().slice(0, 90) });
+  });
+  return hits;
+}
+
+for (const file of ['Everything/script.js', 'Everything/sw.js', 'Everything/api/ask.js']) {
+  const full = path.join(here, file);
+  if (fs.existsSync(full)) out.commentedOut.push(...findCommentedOutCode(file, fs.readFileSync(full, 'utf8')));
+}
+
 // ---- report ------------------------------------------------------------------------------------
 const line = (s) => console.log(s);
 if (process.argv.includes('--debug')) {
@@ -124,8 +165,11 @@ if (process.argv.includes('--json')) {
   section('API ROUTES THE CLIENT NEVER CALLS', out.deadRoutes, (r) => `/api/${r}`);
   section('NPM SCRIPTS POINTING AT MISSING FILES', out.brokenScripts,
     (r) => `${r.name} -> ${r.missing}`);
+  section('COMMENTED-OUT CODE — a whole-line comment that is really a statement', out.commentedOut,
+    (r) => `${r.file}:${r.line}  ${r.text}`);
 
-  const total = out.deadFunctions.length + out.deadClasses.length + out.deadRoutes.length + out.brokenScripts.length;
+  const total = out.deadFunctions.length + out.deadClasses.length + out.deadRoutes.length
+    + out.brokenScripts.length + out.commentedOut.length;
   if (out.testOnlyFunctions.length) {
     line(`\nKept alive by a probe, not dead: ${out.testOnlyFunctions.map((r) => r.name).join(', ')}`);
   }
