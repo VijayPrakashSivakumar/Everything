@@ -197,6 +197,10 @@ function toggleVoiceDictation() {
 let captureRecordRecognition = null;
 let voiceTranscript = "";
 let voiceTranscriptBase = "";
+/* True once the recogniser has emitted its own end, and the function to run when it does. The
+   browser is the only authority on when it has finished hearing the last word. */
+let voiceTranscriptionSettled = false;
+let voiceTranscriptionDone = null;
 
 function setVoiceLiveTranscript(text) {
   const live = document.getElementById("voiceLiveTranscript");
@@ -229,6 +233,8 @@ function startVoiceTranscription() {
   const input = document.getElementById("captureText");
   voiceTranscriptBase = input.value.trim();
   voiceTranscript = "";
+  voiceTranscriptionSettled = false;
+  voiceTranscriptionDone = null;
 
   let final = "";
   const recognition = new Recognition();
@@ -256,6 +262,15 @@ function startVoiceTranscription() {
   };
   try {
     recognition.start();
+    /* The recogniser's own end is the signal that it has finished hearing. Anything waiting on it
+       runs now; the stop path no longer has to guess how long the last word takes to arrive. */
+    recognition.onend = () => {
+      voiceTranscriptionSettled = true;
+      const done = voiceTranscriptionDone;
+      voiceTranscriptionDone = null;
+      if (captureRecordRecognition === recognition) captureRecordRecognition = null;
+      if (done) done();
+    };
     return true;
   } catch (error) {
     captureRecordRecognition = null;
@@ -276,14 +291,30 @@ function stopVoiceTranscription() {
 async function toggleVoiceRecording() {
   if (captureVoiceActive) stopVoiceDictation();
   if (mediaRecorder && mediaRecorder.state === "recording") {
-    // Give the recogniser a moment to deliver its final words before the result is judged, or a
-    // sentence that ended just before the tap would be thrown away.
-    setTimeout(() => {
+    /* Wait for the recogniser to actually finish instead of racing a timer.
+
+       This used to wait 400ms and then check whether anything had been heard. The browser delivers
+       the final transcript asynchronously, so a sentence that ended just before the tap was
+       discarded and the app confidently reported silence — which is exactly what the person was
+       told while they had been speaking the whole time. Timing cannot be fixed by guessing a longer
+       number; the recogniser emits its own end, and that is the only honest signal that it has
+       finished saying what it heard. */
+    const finish = () => {
       stopVoiceTranscription();
       if (!voiceTranscript.trim()) {
-        setVoiceLiveTranscript("Nothing was heard in that recording. The audio is saved — type what you meant instead.");
+        setVoiceLiveTranscript(
+          "Nothing was heard in that recording. The audio is saved — type what you meant instead.",
+        );
       }
-    }, 400);
+    };
+    if (voiceTranscriptionSettled) finish();
+    else {
+      voiceTranscriptionSettled = true;
+      voiceTranscriptionDone = finish;
+      // Backstop only. onend is what normally fires this; the timer exists for the browser that
+      // never delivers it, because a stuck recogniser must not leave the sheet mid-reset.
+      setTimeout(finish, 3000);
+    }
     mediaRecorder.stop();
     return;
   }
@@ -522,6 +553,26 @@ async function runImageOcr() {
     if (!ocrWorker) {
       ocrWorker = await withTimeout(
         Tesseract.createWorker(captureOcrLang, 1, {
+          /* cacheMethod: "none" is the documented remedy for the hang this feature actually had.
+
+             Tesseract caches the ~11 MB language pack in IndexedDB. When that write or read fails —
+             private browsing, a full or restricted store, a stale entry from an older version — the
+             worker sits at "loading language traineddata" with progress 0 and never moves. The
+             library raises nothing: naptha/tesseract.js#901 reports errorHandler never firing, and
+             #528 confirms a failure between createWorker and load() cannot be caught at all. So the
+             promise simply never settles, which is why this read timed out identically on WiFi and
+             on mobile data — it was never a bandwidth problem.
+
+             Disabling that cache costs a re-download per session. The service worker still caches the
+             response, so the bytes come back from Cache Storage on the next read; what is given up
+             is IndexedDB, which is the part that hangs. */
+          cacheMethod: "none",
+          /* Spelled out rather than derived. Left to itself the library resolves these against its
+             own bundle URL, and a service worker or an extension that answers for that origin can
+             produce a script that loads but cannot importScripts (#851) — again with no error. */
+          workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
+          corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5",
+          langPath: "https://tessdata.projectnaptha.com/4.0.0",
           logger: (message) => {
             // Progress is reported by Tesseract as a 0..1 fraction per stage.
             if (message?.status && typeof message.progress === "number") {

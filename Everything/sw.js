@@ -214,12 +214,36 @@ function isShellRequest(request) {
   }
 }
 
+/* The OCR engine's own downloads must not be answered by us.
+
+   The worker script, the WebAssembly core and the ~11 MB language pack are fetched by Tesseract from
+   three CDN origins, and the last of them is not even same-origin. Routing them through
+   staleWhileRevalidate means a failed fetch comes back as Response.error() rather than as a network
+   error the page can see, and Tesseract cannot report that failure at all: naptha/tesseract.js#528
+   records that a download failing between createWorker and load() is uncatchable, and #851 shows
+   the load failing outright as an importScripts NetworkError. Either way the promise never settles
+   and the read times out for reasons the user cannot act on.
+
+   Passing them straight through costs nothing here — they are large, rarely repeated, and already
+   covered by the browser's own HTTP cache — and it removes our worker from the failure path
+   entirely. */
+const OCR_HOSTS = ['cdn.jsdelivr.net', 'tessdata.projectnaptha.com', 'unpkg.com'];
+
+function isOcrVendorRequest(request) {
+  try {
+    return OCR_HOSTS.includes(new URL(request.url).hostname);
+  } catch (e) {
+    return false;
+  }
+}
+
 self.addEventListener('fetch', event => {
   const request = event.request;
 
   // Never intercept writes (e.g. POST /api/ask) or API traffic.
   if (request.method !== 'GET') return;
   if (isApiRequest(request)) return;
+  if (isOcrVendorRequest(request)) return;
 
   if (isNavigationRequest(request) || isShellRequest(request)) {
     event.respondWith(networkFirst(request));
