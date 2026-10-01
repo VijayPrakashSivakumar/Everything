@@ -413,6 +413,9 @@ let ocrScriptPromise = null;
 let ocrWorker = null;
 let ocrBusy = false;
 let imageOcrText = "";
+/* The language pack is warmed once per page, not once per read: repeating it would re-check an
+   11 MB download on every capture. The worker skips anything already cached. */
+let ocrLangWarm = false;
 
 /* The first read fetches a ~11 MB language pack (eng.traineddata.gz alone is 10,923,060 bytes).
    Three things were missing, and all three cost the same thing: the user's afternoon. There was
@@ -466,7 +469,46 @@ function cancelImageOcr() {
    the person is reading the sheet rather than while they are waiting on a button. Swallowed
    completely: a failed warm-up is not an error the user has to dismiss, and the real read will
    retry it and report properly if it fails again. */
+/* Pulls the language pack into the service worker's cache during idle time.
+
+   The read is not the problem — the 11 MB on the tap is. Because the worker now serves these
+   cache-first, anything fetched here makes the first real read fast instead of slow, and the cost
+   lands while the capture sheet is open and idle rather than while someone watches a button.
+
+   Fire-and-forget by design. This is a convenience, not part of reading an image: if it fails, is
+   blocked, or is still running when the person presses the button, the read simply downloads it
+   itself and nothing is lost. */
+const OCR_LANG_URL = "https://tessdata.projectnaptha.com/4.0.0";
+
+function warmOcrLanguage() {
+  if (ocrLangWarm) return;
+  if (!("serviceWorker" in navigator)) return;
+  ocrLangWarm = true;
+
+  const send = () => {
+    /* The page cannot fill that cache itself: only the worker knows what it is called, and it changes
+       whenever the shell version does. So the request goes to the worker that owns the cache and the
+       worker does the fetching. Warming the chosen language and not merely English matters too — a
+       Tamil or Hindi speaker warming the wrong pack would leave their first read exactly as slow. */
+    const post = (reg) => reg?.active?.postMessage({
+      type: "WARM_OCR_LANGUAGE",
+      url: `${OCR_LANG_URL}/${captureOcrLang}.traineddata.gz`,
+    });
+    const controller = navigator.serviceWorker.controller;
+    if (controller) post({ active: controller });
+    else navigator.serviceWorker.ready.then((reg) => post(reg)).catch(() => {});
+  };
+
+  if (typeof requestIdleCallback === "function") requestIdleCallback(send, { timeout: 8000 });
+  else setTimeout(send, 2500);
+}
+
+/* Fetches the engine in the background when the capture sheet opens, so the work is spent while the
+   person is reading the sheet rather than while they are waiting on a button. Swallowed completely:
+   a failed warm-up is not an error the user has to dismiss, and the real read will retry it and
+   report properly if it fails again. */
 function warmOcrEngine() {
+  warmOcrLanguage();
   if (window.Tesseract || ocrScriptPromise) return;
   try {
     withTimeout(loadOcrEngine(), OCR_LOAD_TIMEOUT_MS, "warm-up gave up").catch(() => {});

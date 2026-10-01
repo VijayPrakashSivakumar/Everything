@@ -125,13 +125,21 @@ async function stashSharedCapture(request) {
   return Response.redirect('./?share=1', 303);
 }
 
+/* Declared here, above the activation handler, because KEPT_CACHES reads it while initialising.
+   Declared next to its own use further down it would be a temporal dead zone reference — and that
+   throws while the worker is starting, which takes the service worker down rather than one feature. */
+const OCR_CACHE = `${CACHE_NAME}-ocr`;
+
+/* Caches this worker owns and must keep. OCR_CACHE is in the list deliberately: an omitted one is
+   deleted on every activation, so the ~11 MB language pack would be re-downloaded after each deploy —
+   exactly the cost the cache exists to remove. */
+const KEPT_CACHES = new Set([CACHE_NAME, REMINDER_CACHE, OCR_CACHE]);
+
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
 
-    await Promise.all(
-      keys.filter(k => k !== CACHE_NAME && k !== REMINDER_CACHE).map(k => caches.delete(k))
-    );
+    await Promise.all(keys.filter((k) => !KEPT_CACHES.has(k)).map((k) => caches.delete(k)));
 
     await self.clients.claim();
 
@@ -214,19 +222,23 @@ function isShellRequest(request) {
   }
 }
 
-/* The OCR engine's own downloads must not be answered by us.
+/* The OCR engine's own downloads get a cache of their own, and cache-first.
 
-   The worker script, the WebAssembly core and the ~11 MB language pack are fetched by Tesseract from
-   three CDN origins, and the last of them is not even same-origin. Routing them through
-   staleWhileRevalidate means a failed fetch comes back as Response.error() rather than as a network
-   error the page can see, and Tesseract cannot report that failure at all: naptha/tesseract.js#528
-   records that a download failing between createWorker and load() is uncatchable, and #851 shows
-   the load failing outright as an importScripts NetworkError. Either way the promise never settles
-   and the read times out for reasons the user cannot act on.
+   They used to go through staleWhileRevalidate like any other asset, which was wrong twice over. On
+   failure that path answers Response.error() rather than a network error the page can see, and
+   Tesseract cannot report the failure at all — naptha/tesseract.js#528 records that a download
+   failing between createWorker and load() is uncatchable, and #851 shows it failing outright as an
+   importScripts NetworkError. Either way the promise never settles and the read times out for
+   reasons nobody can act on.
 
-   Passing them straight through costs nothing here — they are large, rarely repeated, and already
-   covered by the browser's own HTTP cache — and it removes our worker from the failure path
-   entirely. */
+   And it was the wrong strategy regardless: these are large, immutable at a fixed version, and asked
+   for repeatedly. So they are served from a dedicated cache first, and only reach the network the
+   once. That is what makes the second read instant, which is the difference between a wait and a
+   stall. This is also what replaces the IndexedDB cache that was switched off — Cache Storage is
+   under our control and, unlike IndexedDB, has never hung.
+
+   An opaque or failed response is never stored. Caching one would poison every later read with the
+   same failure, which is a slower way to reach the timeout this was meant to remove. */
 const OCR_HOSTS = ['cdn.jsdelivr.net', 'tessdata.projectnaptha.com', 'unpkg.com'];
 
 function isOcrVendorRequest(request) {
@@ -237,13 +249,29 @@ function isOcrVendorRequest(request) {
   }
 }
 
+async function cacheFirstVendor(request) {
+  const cache = await caches.open(OCR_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  // A rejected fetch is left to reject: a network error is something the caller can be told about,
+  // and Response.error() is what it was given before.
+  const response = await fetch(request);
+  if (response && response.ok && response.type !== 'opaque') {
+    await cache.put(request, response.clone());
+  }
+  return response;
+}
+
 self.addEventListener('fetch', event => {
   const request = event.request;
 
   // Never intercept writes (e.g. POST /api/ask) or API traffic.
   if (request.method !== 'GET') return;
   if (isApiRequest(request)) return;
-  if (isOcrVendorRequest(request)) return;
+  if (isOcrVendorRequest(request)) {
+    event.respondWith(cacheFirstVendor(request));
+    return;
+  }
 
   if (isNavigationRequest(request) || isShellRequest(request)) {
     event.respondWith(networkFirst(request));
@@ -257,6 +285,23 @@ self.addEventListener('message', event => {
   // served the stale shell it just rejected.
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  }
+  /* Warm the language pack so the first real read is fast rather than a 30 second download. The page
+     asks; the worker fetches, because the page cannot name this cache and guessing would put 11 MB in
+     the wrong place. Not waited on by the page — a failure here costs nothing, because the read
+     simply downloads it itself. */
+  const data = event.data || {};
+  if (data.type === 'WARM_OCR_LANGUAGE' && typeof data.url === 'string' && data.url.startsWith('https://')) {
+    event.waitUntil((async () => {
+      try {
+        const cache = await caches.open(OCR_CACHE);
+        if (await cache.match(data.url)) return;
+        const response = await fetch(data.url, { mode: 'cors' });
+        if (response && response.ok && response.type !== 'opaque') {
+          await cache.put(data.url, response);
+        }
+      } catch (e) { /* offline or blocked — the read will fetch it itself */ }
+    })());
   }
 });
 
