@@ -1,4 +1,4 @@
-// Runs every suite and reports honestly, which chaining them with `&&` in `npm test` did not.
+﻿// Runs every suite and reports honestly, which chaining them with `&&` in `npm test` did not.
 //
 //   node Everything/tests/run-all.mjs            every suite
 //   node Everything/tests/run-all.mjs ask ui     only the named ones
@@ -11,7 +11,7 @@
 // `&&` means the first suite that exits non-zero ends the whole run, and a suite that could not
 // even start exits non-zero. Playwright is declared in devDependencies but is absent on a fresh
 // clone until `npm install` runs, so `plan-probe.mjs` died with ERR_MODULE_NOT_FOUND and the six
-// suites after it never ran at all. The output just stopped mid-list, which reads as "finished" —
+// suites after it never ran at all. The output just stopped mid-list, which reads as "finished" â€”
 // six suites of coverage silently vanished and the exit code was the only clue.
 //
 // So: every suite runs, each under its own hard timeout (a hung browser or a hung socket can no
@@ -35,6 +35,7 @@ const SUITES = [
   { name: 'motion', file: 'motion-probe.mjs', timeoutMs: 120000 },
   { name: 'layers', file: 'layers-probe.mjs', timeoutMs: 120000 },
   { name: 'datetime', file: 'datetime-probe.mjs', timeoutMs: 120000 },
+  { name: 'reminderinstant', file: 'reminder-instant-probe.mjs', timeoutMs: 120000 },
   { name: 'voiceimage', file: 'voice-image-probe.mjs', timeoutMs: 120000 },
   { name: 'back', file: 'back-nav-probe.mjs', timeoutMs: 120000 },
   { name: 'search', file: 'search-probe.mjs', timeoutMs: 120000 },
@@ -66,7 +67,7 @@ const SUITES = [
   // The one thing that can lose data: two devices offline at the same time.
   { name: 'sync', file: 'sync-conflict-probe.mjs', timeoutMs: 120000 },
 // The Schedule view's day grid, the drag-to-reschedule engine, and the recurring series that rolls
-// itself forward. They share one probe because they share one file — a drag writes through the same
+// itself forward. They share one probe because they share one file â€” a drag writes through the same
 // occurrence rules a completion does, and splitting them would let the two halves disagree.
 { name: 'calendar', file: 'calendar-probe.mjs', timeoutMs: 180000 },
   // A document is reminded by its expiry, which means a date has to survive a round trip through
@@ -80,11 +81,11 @@ const SUITES = [
   // else that merely looks plausible. This is the net for the next one.
   { name: 'deadcode', file: '../../dead-code-audit.mjs', timeoutMs: 60000 },
   // Signing out cleared the Supabase session but left the local state, which one key shared by
-  // every account on the device. The next person to sign in inherited it — and the merge pushed
+  // every account on the device. The next person to sign in inherited it â€” and the merge pushed
   // it into their account.
   { name: 'signout', file: 'signout-probe.mjs', timeoutMs: 120000 },
   // Parses and shape-checks every file, and runs before the rest so a malformed file is reported
-  // as what it is — a broken edit — rather than as a logic failure in whichever suite died on it.
+  // as what it is â€” a broken edit â€” rather than as a logic failure in whichever suite died on it.
   { name: 'verify', file: 'verify.mjs', timeoutMs: 60000 },
   // Nothing overflowed at any width, so the gap was never a broken layout: the app had breakpoints
   // at 1180/900/480/381/335 and nothing at all for 640px-900px, so a tablet was served the phone
@@ -104,7 +105,7 @@ const selected = wanted.size ? SUITES.filter((s) => wanted.has(s.name)) : SUITES
 const ANSI = { dim: '\x1b[2m', red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', bold: '\x1b[1m', off: '\x1b[0m' };
 const paint = (color, text) => (process.stdout.isTTY ? `${ANSI[color]}${text}${ANSI.off}` : text);
 
-// A suite that dies on a missing package is not a test failure and must not look like one — but it
+// A suite that dies on a missing package is not a test failure and must not look like one â€” but it
 // is also not a pass, because the coverage it stood for is not happening.
 const MISSING_MODULE = /Cannot find package '([^']+)'/;
 const FAILED_TO_START = /ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED_ESM_URL_SCHEME/;
@@ -150,7 +151,7 @@ let skipped = 0;
 /* ---------- Pre-flight: parse every file before running anything ----------
 
    This exists because of how the probe files got corrupted twice. The cause was never the
-   content being written — it was *where* it was written. A positional insert lands at a line
+   content being written â€” it was *where* it was written. A positional insert lands at a line
    number, blind to what is there, and the line number came from a read that had gone stale. So an
    insert landed inside a `try { ... } finally { ... }`, producing a duplicate `} finally {` and a
    truncated arrow function whose body had swallowed the next `await check(...)`.
@@ -209,16 +210,16 @@ function preflightParse() {
 preflightParse();
 
 for (const suite of selected) {
-  process.stdout.write(`${paint('dim', `→ ${suite.name} (${(suite.timeoutMs / 1000) | 0}s budget)`)}\n`);
+  process.stdout.write(`${paint('dim', `â†’ ${suite.name} (${(suite.timeoutMs / 1000) | 0}s budget)`)}\n`);
   const r = await runSuite(suite);
 
   const pkg = MISSING_MODULE.exec(r.out)?.[1] || (FAILED_TO_START.test(r.out) ? 'its dependency' : null);
-  // Each suite prints its own banner, and the wording is not uniform — `ALL 7 AUTO-SAVE CHECKS
+  // Each suite prints its own banner, and the wording is not uniform â€” `ALL 7 AUTO-SAVE CHECKS
   // PASSED` has a hyphen, and `VOICE+IMAGE` has a plus, so the character class has to allow both or
   // the suite is scored as failed while its output plainly says otherwise. That failure mode is
   // the dangerous one: a suite that passes everything is reported as broken, and the real bug goes
   // looking somewhere else.
-  const verdict = /ALL (\d+) [A-Z0-9 +&()'’-]*PASSED/.exec(r.out);
+  const verdict = /ALL (\d+) [A-Z0-9 +&()'â€™-]*PASSED/.exec(r.out);
 
   let state;
   if (r.timedOut) state = 'TIMEOUT';
@@ -227,7 +228,7 @@ for (const suite of selected) {
   else state = 'failed';
 
   if (state === 'passed') summary.push({ name: suite.name, state, note: `${verdict[1]} checks in ${(r.ms / 1000).toFixed(1)}s` });
-  else if (state === 'skipped') { skipped += 1; summary.push({ name: suite.name, state, note: `missing "${pkg}" — run npm install` }); }
+  else if (state === 'skipped') { skipped += 1; summary.push({ name: suite.name, state, note: `missing "${pkg}" â€” run npm install` }); }
   else if (state === 'TIMEOUT') { failed += 1; summary.push({ name: suite.name, state, note: `over ${(suite.timeoutMs / 1000) | 0}s, killed` }); }
   else { failed += 1; summary.push({ name: suite.name, state, note: `exit ${r.status} in ${(r.ms / 1000).toFixed(1)}s` }); }
 
@@ -246,7 +247,7 @@ for (const s of summary) {
 }
 
 const ok = summary.filter((s) => s.state === 'passed').length;
-console.log(`\n${summary.length} of ${selected.length} suites ran — ${ok} passed, ${failed} failed, ${skipped} skipped.`);
+console.log(`\n${summary.length} of ${selected.length} suites ran â€” ${ok} passed, ${failed} failed, ${skipped} skipped.`);
 
 if (skipped) {
   // This is precisely the silent-truncation bug being recreated by a missing dependency, so it is
@@ -257,3 +258,4 @@ if (skipped) {
 if (failed) console.log(paint('red', `${failed} suite(s) failed.`));
 
 process.exit(failed || (skipped && !process.env.ALLOW_SKIP) ? 1 : 0);
+

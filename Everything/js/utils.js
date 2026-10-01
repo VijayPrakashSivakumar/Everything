@@ -251,7 +251,19 @@ function itemReminderTime(item) {
   // has already happened — and it would do it every time the app was opened.
   if (isExpense(item)) return null;
   if (!item.dueDate) return null;
-  const time = new Date(item.dueDate).getTime();
+  /* The reminder instant is the one number every downstream decision rests on: the service worker's
+     timer, the "Due …" line, and whether it has already fired. It was read straight through the
+     Date constructor, which is the same shape as the 5:30 bug — a string whose format it has to
+     guess. A full instant carries its own time and parses correctly, but a date-ONLY string is
+     defined as UTC midnight by the specification, so "2026-10-05" became 05:30 in India and the
+     reminder fired before breakfast. Nothing threw; it only misfired east of Greenwich.
+
+     Legacy rows and anything synced from an older build can still carry that shape, so it is
+     normalised here rather than trusted. A true instant is left untouched — only a bare date is
+     reinterpreted, and only as local midnight, which is what the person meant when they typed one. */
+  const raw = String(item.dueDate).trim();
+  const localMidnight = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? DATE_TIME.fromDateInput(raw) : "";
+  const time = new Date(localMidnight || raw).getTime();
   return Number.isFinite(time) ? time : null;
 }
 
