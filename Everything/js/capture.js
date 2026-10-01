@@ -1,4 +1,23 @@
 ﻿/* ---------- Capture modal ---------- */
+/* The three ways a thought actually arrives. Everything else in this list is a *kind* — a filing
+   decision — and the app makes that decision on its own from the sentence.
+
+   Voice and Image sat at positions 10 and 11, behind ten organising chips, so the two inputs a
+   person reaches for most were the hardest to find while the ones they almost never choose by hand
+   filled the front of the row. That read as "capture is manual" when in fact a dictated sentence
+   already reached the same understanding pipeline as a typed one. */
+const CAPTURE_PRIMARY = ["text", "voice", "image"];
+let captureMoreTypesOpen = false;
+
+function toggleMoreTypes() {
+  captureMoreTypesOpen = !captureMoreTypesOpen;
+  renderTypeRow();
+  const row = document.getElementById("typeMoreRow");
+  if (row) row.style.display = captureMoreTypesOpen ? "flex" : "none";
+  const chip = document.getElementById("typeMoreChip");
+  if (chip) chip.classList.toggle("active", captureMoreTypesOpen);
+}
+
 const CAPTURE_TYPES = [
   { id: "text", icon: "file-text", label: "Text" },
   { id: "task", icon: "check-square-2", label: "Task" },
@@ -838,6 +857,9 @@ function pickScope(scope) {
 }
 function openCapture() {
   captureType = "text";
+  /* Reset with the rest of the sheet. A row left expanded by the previous capture makes the next one
+     look like it needs choosing from thirteen options again, which is the thing being fixed. */
+  captureMoreTypesOpen = false;
   /* Warm the image reader while the sheet is opening. The sheet is on screen and the person is
      reading it, so the ~11 MB first-run download is spent in the background rather than in
      front of them — which is what turns "stuck on Reading" into an instant result later. */
@@ -864,10 +886,23 @@ function openCapture() {
   stopVoiceDictation();
   pickScope("shared");
   const row = document.getElementById("typeRow");
-  row.innerHTML = CAPTURE_TYPES.map(
-    (t) =>
-      `<div class="type-chip ${t.id === captureType ? "active" : ""}" data-type="${t.id}" onclick="pickType(${jsStr(t.id)}, true)"><i data-lucide="${t.icon}"></i><span>${t.label}</span></div>`,
-  ).join("");
+  const primary = CAPTURE_TYPES.filter((t) => CAPTURE_PRIMARY.includes(t.id));
+  const rest = CAPTURE_TYPES.filter((t) => !CAPTURE_PRIMARY.includes(t.id));
+  const chip = (t) =>
+    `<div class="type-chip ${t.id === captureType ? "active" : ""}" data-type="${t.id}" onclick="pickType(${jsStr(t.id)}, true)"><i data-lucide="${t.icon}"></i><span>${t.label}</span></div>`;
+
+  /* Primary first, then a single "More types" control. The kinds stay one tap away and keep their
+     labels and order — nothing is removed, only moved out of the way of the three that matter. */
+  row.innerHTML = [
+    ...primary.map(chip),
+    `<div class="type-chip type-chip-more ${captureMoreTypesOpen ? "active" : ""}" id="typeMoreChip" onclick="toggleMoreTypes()"><i data-lucide="ellipsis" aria-hidden="true"></i><span>More types</span></div>`,
+  ].join("");
+
+  const moreRow = document.getElementById("typeMoreRow");
+  if (moreRow) {
+    moreRow.innerHTML = rest.map(chip).join("");
+    moreRow.style.display = captureMoreTypesOpen ? "flex" : "none";
+  }
   // Built from MONEY_CATEGORIES rather than typed into the markup, so the picker and the labels used
   // by the list and the report can never drift — one list, three readers.
   const categorySelect = document.getElementById("captureCategory");
@@ -988,6 +1023,11 @@ function pickType(id, manual) {
   document
     .querySelectorAll(".type-chip")
     .forEach((el) => el.classList.toggle("active", el.dataset.type === id));
+  /* When the app files something as a kind that lives behind "More types", that row is opened. The
+     person is told the decision in the same place they make one — a receipt filed as an expense
+     while the chip stays hidden behind a collapsed row reads as the app deciding behind their back,
+     which is the opposite of visible automation. It closes again on the next reset. */
+  if (!CAPTURE_PRIMARY.includes(id) && !captureMoreTypesOpen) toggleMoreTypes();
 
   // The channel's own panel follows the *channel*, never the kind. A voice note that has been read
   // as a task keeps its recorder on screen, because the audio is still attached and still savable.
