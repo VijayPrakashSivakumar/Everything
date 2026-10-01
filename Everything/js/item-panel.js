@@ -498,9 +498,11 @@ function openEditModal() {
   document.getElementById("editTitle").value = item.title || "";
   document.getElementById("editSub").value = item.sub || "";
   document.getElementById("editPriority").value = item.priority || "";
-  document.getElementById("editDueDate").value = item.dueDate
-    ? item.dueDate.slice(0, 16)
-    : "";
+  /* The 5:30 bug. This put a UTC ISO string into a datetime-local box by slicing it, and read it back
+     with `new Date(string)` — which the spec reads as UTC because the string carries no zone. So a
+     task kept its wall clock in the box but was stored a whole offset out, and every save re-applied
+     the error. The capture sheet already had the right helpers; this dialog just never used them. */
+  document.getElementById("editDueDate").value = toDateTimeLocalValue(item.dueDate);
   document.getElementById("editRecurrence").value = item.recurrence || "none";
   document.getElementById("editPerson").value = item.person || "";
   const projSel = document.getElementById("editProject");
@@ -633,7 +635,9 @@ async function saveEdit() {
   item.goal = document.getElementById("editGoal").value;
 
   const editDueVal = document.getElementById("editDueDate").value;
-  const newDueDate = editDueVal ? new Date(editDueVal).toISOString() : "";
+  // fromDateTimeLocal, not `new Date(value)`: the constructor reads a zoneless "YYYY-MM-DDTHH:mm" as
+  // UTC, which is the 5½ hour error this whole change exists to remove.
+  const newDueDate = editDueVal ? DATE_TIME.fromDateTimeLocal(editDueVal) : "";
   if (newDueDate !== item.dueDate) {
     // Re-dating re-arms the reminder on this device as well as on the server.
     item.notified = false;

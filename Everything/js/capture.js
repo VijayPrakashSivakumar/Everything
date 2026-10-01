@@ -1701,7 +1701,7 @@ function applyCaptureSlot(slot, answer) {
     if (!time) return null;
     // A clock time is set onto whichever day is already chosen. With no day yet there is nothing
     // to attach it to, so the date question has to come first.
-    const base = field.value ? new Date(field.value) : null;
+    const base = field.value ? DATE_TIME.toDate(DATE_TIME.fromDateTimeLocal(field.value)) : null;
     if (!base || Number.isNaN(base.getTime())) return null;
     base.setHours(time.hours, time.minutes, 0, 0);
     // "10 AM" said for a morning that has already gone means the next one.

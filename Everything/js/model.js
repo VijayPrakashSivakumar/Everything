@@ -888,6 +888,156 @@ function applyFormatPrefs(profile) {
   if (profile && profile.date_format) dateFormatPref = profile.date_format;
   if (profile && profile.time_format) timeFormatPref = profile.time_format;
 }
+/* ---------- Date and time ----------
+   One place that decides what a timestamp *is*, because the app had three conventions and mixed
+   them freely:
+
+     dueDate    a UTC ISO string        "2026-10-05T17:30:00.000Z"
+     created    a plain number         1764000000000
+     due_at     a UTC ISO string       (the database column)
+
+   Those agree only while nothing converts between them. The moment a UTC string is put into a
+   `datetime-local` box the offset is lost, and reading it back with `new Date(string)` reinterprets
+   local wall-clock as UTC — a 5½ hour error in India, and a different one in every other zone. That
+   is exactly the "everything is due at 5:30" report, and it showed up in every input channel because
+   they all converged on the same broken round trip rather than each having its own bug.
+
+   The rules, and they are the whole design:
+
+     STORED   always UTC ISO, via toUtcIso(). Comparisons are then correct in every timezone without
+              anyone converting first.
+     DISPLAY  always via the fmt* helpers, which read local getters.
+     INPUT    always via fromDateTimeLocal(), never `new Date(input.value)` — that constructor treats
+              a zoneless string as UTC, which is the bug above in one call.
+
+   `created` stays a number deliberately: it is an ordering key, never a time of day, and both the
+   client and the API compare it with `<`. Converting it would be churn for no gain.
+
+   createdAt (row written), dueAt (thing due) and reminderAt (notify) are three different facts and
+   must never be derived from one another. reminderAt is dueAt plus a lead time, and is recomputed
+   whenever dueAt changes rather than stored and left to drift. */
+const DATE_TIME = {
+  createdNow() {
+    return Date.now();
+  },
+
+  toUtcIso(value) {
+    const date = DATE_TIME.toDate(value);
+    return date ? date.toISOString() : "";
+  },
+
+  /* Null-tolerant. `new Date(null)` is 1970, which formats as a real-looking time and makes "no date
+     set" indistinguishable from "1 January 1970". */
+  toDate(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  },
+
+  /* UTC ISO → the exact string a `datetime-local` input expects, in the reader's own wall clock.
+     This is the function item-panel.js was missing: it sliced the ISO string instead, so the box
+     showed UTC and saving it unchanged shifted the task by the zone offset. */
+  toDateTimeLocalValue(value) {
+    const date = DATE_TIME.toDate(value);
+    if (!date) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+      `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  },
+
+  /* A `datetime-local` value → UTC ISO. THE fix for the 5:30 bug. `new Date("…T17:30")` reads that as
+     UTC because the string carries no zone, so a task set for 5:30 in the evening became 5:30 UTC. */
+  fromDateTimeLocal(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw);
+    if (!match) {
+      // Not the shape we expect — a full ISO with a zone already, say. Fall back to the constructor
+      // rather than guessing a zone, and let toDate null out anything unusable.
+      const parsed = new Date(raw);
+      return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+    }
+    // Built in local time deliberately: new Date(y, m, d, …) is the documented way to mean
+    // "this wall-clock time, here".
+    const local = new Date(
+      Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+      Number(match[4]), Number(match[5]), Number(match[6] || 0),
+    );
+    return local.toISOString();
+  },
+/* A `date` input value, which has no time part. Kept separate because a date-only value used to be
+     padded with midnight and then treated as a time of day, which is how an all-day task turned into
+     "due at 12:00 AM". */
+  fromDateInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+    if (!match) return "";
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 0, 0, 0, 0).toISOString();
+  },
+
+  toDateInputValue(value) {
+    const date = DATE_TIME.toDate(value);
+    if (!date) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  },
+
+  /* Local calendar day as YYYY-MM-DD. Never toISOString().slice(0, 10): that is the UTC date, which
+     is the previous day for anyone east of Greenwich until 5:30am local — so "today" was wrong for
+     most of every morning. */
+  localDayKey(value) {
+    const date = value === undefined ? new Date() : DATE_TIME.toDate(value);
+    if (!date) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  },
+
+  /* Midnight local, as a UTC ISO instant. */
+  startOfLocalDay(value) {
+    const date = value === undefined ? new Date() : DATE_TIME.toDate(value);
+    if (!date) return "";
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).toISOString();
+  },
+
+  isSameLocalDay(a, b) {
+    const keyA = DATE_TIME.localDayKey(a);
+    const keyB = DATE_TIME.localDayKey(b === undefined ? new Date() : b);
+    return Boolean(keyA) && keyA === keyB;
+  },
+
+  /* A stored instant's local time of day, as {hours, minutes}. */
+  localTimeOfDay(value) {
+    const date = DATE_TIME.toDate(value);
+    return date ? { hours: date.getHours(), minutes: date.getMinutes() } : null;
+  },
+
+  /* A local YYYY-MM-DD day plus a local {hours, minutes} → one UTC ISO instant. This is what the
+     recurrence roll-forward was doing by hand with setHours on a parsed string. */
+  combineLocal(dayKey, timeOfDay) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dayKey || ""));
+    if (!match) return "";
+    const hours = timeOfDay && Number.isFinite(timeOfDay.hours) ? timeOfDay.hours : 9;
+    const minutes = timeOfDay && Number.isFinite(timeOfDay.minutes) ? timeOfDay.minutes : 0;
+    return new Date(
+      Number(match[1]), Number(match[2]) - 1, Number(match[3]), hours, minutes, 0, 0,
+    ).toISOString();
+  },
+
+  /* Default when a capture names a date but no time. Local, not UTC — and in one place so there is
+     exactly one thing to change. */
+  defaultTimeOfDay() {
+    return { hours: 9, minutes: 0 };
+  },
+};
+
+/* The capture sheet had its own copy of toDateTimeLocalValue — identical until one of the two was
+   edited and the other was not, which is how the edit dialog ended up slicing the ISO string by
+   hand. One implementation now. */
+function toDateTimeLocalValue(value) {
+  return DATE_TIME.toDateTimeLocalValue(value);
+}
+
 function toDate(value) {
   // null/undefined are "no value" (new Date(null) is 1970, which would silently
   // print a real-looking time), and anything unparseable is null too.

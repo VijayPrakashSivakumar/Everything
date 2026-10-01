@@ -216,7 +216,11 @@ async function saveCapture(forceSave = false, options = {}) {
 
     const project = document.getElementById("captureProject").value;
     const dueVal = document.getElementById("captureDueDate").value;
-    const dueISO = dueVal ? new Date(dueVal).toISOString() : "";
+    // DATE_TIME.fromDateTimeLocal, not `new Date(dueVal)`. The capture box is a datetime-local, whose
+    // value carries no zone, and the constructor reads those as UTC — so every task, expense and bill
+    // saved through here was stored a whole timezone offset out. This is the single line that made
+    // text, voice and picture captures all land at the same wrong time: they all converge here.
+    const dueISO = dueVal ? DATE_TIME.fromDateTimeLocal(dueVal) : "";
     const recurrence = document.getElementById("captureRecurrence").value;
     const priority =
       document.getElementById("capturePriority").value ||
