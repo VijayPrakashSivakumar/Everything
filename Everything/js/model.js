@@ -965,7 +965,7 @@ const DATE_TIME = {
     );
     return local.toISOString();
   },
-  /* A `date` input value, which has no time part. Kept separate because a date-only value used to be
+/* A `date` input value, which has no time part. Kept separate because a date-only value used to be
      padded with midnight and then treated as a time of day, which is how an all-day task turned into
      "due at 12:00 AM". */
   fromDateInput(value) {
