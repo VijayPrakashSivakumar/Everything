@@ -2173,6 +2173,68 @@ check('image text reading is local, opt-in and cannot break capture', () => {
   assert.match(js, /ocrText: channel === "image"/, 'the recognised text must be saved with the capture');
 });
 
+/* The image sheet was usable but not finishable. Reading text fetches a ~11 MB language pack on
+   first use; nothing reported progress, nothing could be cancelled and nothing timed out, so a slow
+   or stalled connection left the button on "Reading…" for ever. These pin the recovery paths, not
+   the happy path, because the happy path was never the problem. */
+
+check('a slow or stalled image read can be seen, cancelled and given up on', () => {
+  // A first run downloads ~11 MB. Saying so is the difference between a wait and a fault.
+  assert.match(js, /first run|one-time download|downloads once/i, 'the one-time ~11 MB download is not disclosed');
+  // Timeout: a request that neither loads nor errors must not hold the promise open for ever.
+  assert.match(js, /function withTimeout\(/, 'there is no timeout helper');
+  assert.match(js, /withTimeout\(\s*loadOcrEngine\(\)/, 'the engine load is not bounded by a timeout');
+  // Cancel: the button is disabled while busy, so there must be a second control to abort.
+  assert.match(html, /id="imageOcrCancelBtn"/, 'there is no way to cancel a long read');
+  assert.match(js, /function cancelImageOcr\(\)/, 'cancelImageOcr is missing');
+  assert.match(js, /ocrAbort\s*=/, 'cancelling must actually abort the in-flight work');
+  // Give up: every long wait needs a ceiling, or the sheet is unusable until reload.
+  assert.match(js, /OCR_LOAD_TIMEOUT_MS/, 'the engine load has no explicit budget');
+});
+
+check('the image engine is warmed before the button is pressed', () => {
+  assert.match(js, /function warmOcrEngine\(\)/, 'warmOcrEngine is missing');
+  // Warming on sheet open is what turns an 11 MB stall into a background one.
+  assert.match(js, /function openCapture\(\)[^]*?warmOcrEngine\(\)/, 'opening the sheet does not warm the engine');
+  // A background warm must never surface a failure as an error the user has to dismiss.
+  assert.match(js, /warmOcrEngine[\s\S]{0,600}catch/, 'a failed warm must be swallowed');
+});
+
+check('the camera opens directly instead of only the gallery', () => {
+  assert.match(html, /id="imageCameraInput"/, 'there is no separate camera input');
+  // capture="environment" is what makes a phone open the rear camera rather than the file browser.
+  const cameraInput = html.match(/<input[^>]*id="imageCameraInput"[^>]*>/);
+  assert.ok(cameraInput, 'the camera input is malformed');
+  assert.match(cameraInput[0], /capture="environment"/, 'the camera input must open the camera directly');
+  assert.match(cameraInput[0], /accept="image\/\*"/, 'the camera input must still accept images only');
+  // Two intents, because "photo or library" is one ambiguous control on a phone.
+  assert.match(html, /id="imageGalleryInput"/, 'the gallery input is missing');
+  assert.match(html, /id="imageCameraBtn"/, 'the take-photo button is missing');
+  assert.match(html, /id="imageGalleryBtn"/, 'the choose-photo button is missing');
+});
+
+check('recording and transcribing happen together in one tap', () => {
+  // Web Speech API reads the live microphone and cannot be handed a recorded blob, so the two
+  // must run side by side or "record" never becomes text.
+  const recorder = js.match(/async function toggleVoiceRecording\(\)[\s\S]*?\n\}/);
+  assert.ok(recorder, 'toggleVoiceRecording is missing');
+  assert.match(recorder[0], /MediaRecorder/, 'the audio recording is missing');
+  assert.match(recorder[0], /startVoiceTranscription|startCaptureTranscription/, 'recording does not start transcription');
+  // Recognition is best-effort: a browser without it must still record.
+  assert.match(js, /function startVoiceTranscription\(/, 'startVoiceTranscription is missing');
+});
+
+check('what the voice and image were understood as reaches the capture box', () => {
+  // The transcript is the payload; without it the recording is just an attachment.
+  assert.match(js, /voiceTranscript/, 'the transcript is not stored anywhere');
+  assert.match(js, /voiceTranscript[\s\S]{0,900}onCaptureInput\(\)/, 'the transcript must enter the capture pipeline');
+  // Partial results while recording: otherwise the user cannot tell it is hearing them.
+  assert.match(js, /interimResults\s*=\s*true/, 'partial transcription is off, so nothing shows while speaking');
+  assert.match(js, /onCaptureInput\(\)/, 'onCaptureInput is the pipeline entry point');
+  // A silent recording must say so rather than saving an empty capture.
+  assert.match(js, /nothing was heard|No speech|transcript is empty|did not catch/i, 'a silent recording has no message');
+});
+
 check('the OCR language picker is styled and reset with the capture sheet', () => {
   assert.match(cssBaseRules, /#voiceLangRow\s*\{/, 'language chip styles are missing');
   assert.match(js, /renderOcrLanguages\(\);/, 'the OCR language picker is never rendered on open');

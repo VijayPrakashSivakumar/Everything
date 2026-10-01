@@ -183,9 +183,107 @@ function toggleVoiceDictation() {
   }
 }
 
+/* ---------- Voice: record and understand in one tap ----------
+
+   The Web Speech API reads the *live* microphone. It has no API for being handed a recorded file,
+   so the recogniser cannot be pointed at a blob after the fact. That is why recording used to
+   dead-end: the audio was saved as an attachment and nothing ever read it, and the only way to get
+   words out was a second, separate "Dictate" button — a second recording of the same sentence.
+
+   The fix is to stop treating them as two features. Both listeners run over the same moment:
+   MediaRecorder keeps the audio, SpeechRecognition keeps the words. One tap, one permission, and
+   the words land in the capture box where the existing smart-capture pipeline picks them up as if
+   they had been typed. */
+let captureRecordRecognition = null;
+let voiceTranscript = "";
+let voiceTranscriptBase = "";
+
+function setVoiceLiveTranscript(text) {
+  const live = document.getElementById("voiceLiveTranscript");
+  if (live) live.textContent = text || "";
+}
+
+/* Writes the transcript into the capture box and re-runs the pipeline. This is the moment voice
+   capture becomes a capture: until this runs, a recording was just an attachment. */
+function applyVoiceTranscript(finalText) {
+  voiceTranscript = finalText;
+  const spoken = voiceTranscript.trim();
+  const input = document.getElementById("captureText");
+  input.value = [voiceTranscriptBase, spoken].filter(Boolean).join(" ");
+  setVoiceLiveTranscript(spoken ? `Heard: “${spoken}”` : "");
+  if (spoken) onCaptureInput();
+}
+
+/* Best-effort: a browser without the Web Speech API still records, and says why there are no
+   words, rather than failing the whole capture. */
+function startVoiceTranscription() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    setVoiceLiveTranscript("This browser cannot turn speech into text here — the recording is still saved.");
+    return false;
+  }
+  if (captureRecordRecognition) return true;
+
+  if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
+  captureVoiceLanguage = captureVoiceLang;
+  const input = document.getElementById("captureText");
+  voiceTranscriptBase = input.value.trim();
+  voiceTranscript = "";
+
+  let final = "";
+  const recognition = new Recognition();
+  captureRecordRecognition = recognition;
+  recognition.lang = captureVoiceLang;
+  // Continuous because a capture is a sentence or two, and a recogniser that stops after one
+  // pause returns half of what was said. Interim results so the sheet shows the words landing.
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const transcript = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) final += `${transcript} `;
+      else interim += transcript;
+    }
+    applyVoiceTranscript(`${final} ${interim}`.trim());
+  };
+  recognition.onerror = (event) => {
+    if (event.error === "no-speech") {
+      setVoiceLiveTranscript("Nothing was heard yet — keep speaking, or stop and type instead.");
+    } else if (event.error === "not-allowed") {
+      setVoiceLiveTranscript("Microphone permission was denied — the recording is still saved.");
+    }
+  };
+  try {
+    recognition.start();
+    return true;
+  } catch (error) {
+    captureRecordRecognition = null;
+    return false;
+  }
+}
+
+function stopVoiceTranscription() {
+  if (!captureRecordRecognition) return;
+  try {
+    captureRecordRecognition.stop();
+  } catch (error) {
+    // Already stopped by the browser; nothing to unwind.
+  }
+  captureRecordRecognition = null;
+}
+
 async function toggleVoiceRecording() {
   if (captureVoiceActive) stopVoiceDictation();
   if (mediaRecorder && mediaRecorder.state === "recording") {
+    // Give the recogniser a moment to deliver its final words before the result is judged, or a
+    // sentence that ended just before the tap would be thrown away.
+    setTimeout(() => {
+      stopVoiceTranscription();
+      if (!voiceTranscript.trim()) {
+        setVoiceLiveTranscript("Nothing was heard in that recording. The audio is saved — type what you meant instead.");
+      }
+    }, 400);
     mediaRecorder.stop();
     return;
   }
@@ -205,6 +303,8 @@ async function toggleVoiceRecording() {
       setVoiceRecordLabel("Re-record", "mic");
       stream.getTracks().forEach((t) => t.stop());
     };
+    // Listen for the words over the same moment as the audio, not after it.
+    startVoiceTranscription();
     mediaRecorder.start();
     recordingSeconds = 0;
     setVoiceRecordLabel("Stop recording", "square");
@@ -218,9 +318,15 @@ async function toggleVoiceRecording() {
   }
 }
 
-function previewImageFile() {
-  const file = document.getElementById("imageFileInput").files[0];
+function previewImageFile(input) {
+  /* Two inputs now — camera and gallery — so the element is handed in rather than looked up.
+     Resettable after use: picking the same file twice in a row must still fire `change`, which
+     it does not while the control still holds the previous selection. */
+  const element =
+    input || document.getElementById("imageCameraInput") || document.getElementById("imageGalleryInput");
+  const file = element?.files?.[0];
   if (!file) return;
+  element.value = "";
   pendingBlob = file;
   pendingBlobExt = file.name.split(".").pop();
   const preview = document.getElementById("imagePreview");
@@ -254,6 +360,67 @@ let ocrScriptPromise = null;
 let ocrWorker = null;
 let ocrBusy = false;
 let imageOcrText = "";
+
+/* The first read fetches a ~11 MB language pack (eng.traineddata.gz alone is 10,923,060 bytes).
+   Three things were missing, and all three cost the same thing: the user's afternoon. There was
+   no ceiling, so a connection that neither loaded nor errored held the promise open for ever and
+   the button sat on "Reading…"; there was no cancel, so the wait was compulsory; and there was no
+   warm-up, so the download was charged to the person who actually pressed the button.
+
+   OCR_LOAD_TIMEOUT_MS is deliberately generous. 11 MB on mobile data is genuinely slow, and a
+   timeout that fires early would turn a working read into a failure. This is a backstop against
+   "never", not a target. */
+const OCR_LOAD_TIMEOUT_MS = 90000;
+let ocrAbort = null;
+
+/* A promise that settles by the clock instead of by the network. Every network wait in the OCR
+   path goes through this, because the failure mode being defended against is not an error —
+   it is silence, and silence never rejects a promise on its own. */
+function withTimeout(promise, ms, message) {
+  let timer = null;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
+function setImageOcrCancelVisible(visible) {
+  const button = document.getElementById("imageOcrCancelBtn");
+  if (button) button.style.display = visible ? "block" : "none";
+}
+
+/* Aborts the in-flight read. The engine is a WebAssembly worker that cannot be interrupted by
+   the timeout above — the timeout only stops *waiting* for it — so cancelling also terminates the
+   worker, which is the only way the CPU actually stops. */
+function cancelImageOcr() {
+  if (!ocrBusy) return;
+  ocrAbort?.abort();
+  if (ocrWorker) {
+    try {
+      ocrWorker.terminate();
+    } catch (error) {
+      // A worker that has already gone is not a failure worth reporting.
+    }
+    ocrWorker = null;
+  }
+  ocrBusy = false;
+  setOcrButtonBusy(false);
+  setImageOcrCancelVisible(false);
+  setImageOcrStatus("Reading stopped. The photo is still attached — type what it says if you need it now.");
+}
+
+/* Fetches the engine in the background when the capture sheet opens, so the 11 MB is spent while
+   the person is reading the sheet rather than while they are waiting on a button. Swallowed
+   completely: a failed warm-up is not an error the user has to dismiss, and the real read will
+   retry it and report properly if it fails again. */
+function warmOcrEngine() {
+  if (window.Tesseract || ocrScriptPromise) return;
+  try {
+    withTimeout(loadOcrEngine(), OCR_LOAD_TIMEOUT_MS, "warm-up gave up").catch(() => {});
+  } catch (error) {
+    // Nothing to do — loadOcrEngine already resets itself so the next attempt retries.
+  }
+}
 
 function setImageOcrStatus(message) {
   const status = document.getElementById("imageOcrStatus");
@@ -322,6 +489,7 @@ function setOcrButtonBusy(busy) {
   button.disabled = busy;
   const label = document.getElementById("imageOcrLabel");
   if (label) label.textContent = busy ? "Reading…" : "Read text from image";
+  setImageOcrCancelVisible(busy);
 }
 
 async function runImageOcr() {
@@ -332,26 +500,47 @@ async function runImageOcr() {
   }
 
   ocrBusy = true;
+  ocrAbort = new AbortController();
   setOcrButtonBusy(true);
   try {
-    setImageOcrStatus("Loading the text reader…");
-    const Tesseract = await loadOcrEngine();
+    /* The old wording — "Loading the text reader…" — was true and useless. The first run fetches
+       ~11 MB of language data; saying so is the difference between a wait the user understands
+       and a button they assume is broken. */
+    setImageOcrStatus(
+      window.Tesseract
+        ? "Preparing the text reader…"
+        : "First run downloads the text reader (~11 MB, once). On mobile data this can take a minute — you can stop it below.",
+    );
+    const Tesseract = await withTimeout(
+      loadOcrEngine(),
+      OCR_LOAD_TIMEOUT_MS,
+      "The text reader download timed out. Check the connection, or type the note yourself.",
+    );
+    if (ocrAbort.signal.aborted) return;
 
-    setImageOcrStatus("Preparing…");
+    setImageOcrStatus("Preparing the reader and language pack…");
     if (!ocrWorker) {
-      ocrWorker = await Tesseract.createWorker(captureOcrLang, 1, {
-        logger: (message) => {
-          // Progress is reported by Tesseract as a 0..1 fraction per stage.
-          if (message?.status && typeof message.progress === "number") {
-            const percent = Math.round(message.progress * 100);
-            setImageOcrStatus(`${message.status} ${percent}%`);
-          }
-        },
-      });
+      ocrWorker = await withTimeout(
+        Tesseract.createWorker(captureOcrLang, 1, {
+          logger: (message) => {
+            // Progress is reported by Tesseract as a 0..1 fraction per stage.
+            if (message?.status && typeof message.progress === "number") {
+              const percent = Math.round(message.progress * 100);
+              setImageOcrStatus(`${message.status} ${percent}%`);
+            }
+          },
+        }),
+        OCR_LOAD_TIMEOUT_MS,
+        "Preparing the text reader timed out. Try again, or type the note yourself.",
+      );
     }
+    if (ocrAbort.signal.aborted) return;
 
     setImageOcrStatus("Reading the image…");
     const { data } = await ocrWorker.recognize(pendingBlob);
+    /* A cancelled read must not write its result: cancelImageOcr has already told the user it
+       stopped, and text appearing after that would be the app contradicting itself. */
+    if (ocrAbort.signal.aborted) return;
     const text = String(data?.text || "")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
@@ -598,6 +787,10 @@ function pickScope(scope) {
 }
 function openCapture() {
   captureType = "text";
+  /* Warm the image reader while the sheet is opening. The sheet is on screen and the person is
+     reading it, so the ~11 MB first-run download is spent in the background rather than in
+     front of them — which is what turns "stuck on Reading" into an instant result later. */
+  warmOcrEngine();
   // The channel resets with it, or the next capture opens with the last one's voice recorder, image
   // panel or link field still on screen.
   captureChannel = "text";
@@ -696,11 +889,17 @@ function openCapture() {
   if (billFieldsReset) billFieldsReset.style.display = "none";
   document.getElementById("fileNamePreview").textContent = "";
   document.getElementById("linkUrlInput").value = "";
-  document.getElementById("imageFileInput").value = "";
-  document.getElementById("genericFileInput").value = "";
+  ["imageCameraInput", "imageGalleryInput", "genericFileInput"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
   document.getElementById("voiceDictationStatus").textContent = "";
   setVoiceDictateLabel("Dictate text", "audio-lines");
   captureVoiceLanguage = "";
+  voiceTranscript = "";
+  voiceTranscriptBase = "";
+  stopVoiceTranscription();
+  setVoiceLiveTranscript("");
   pickVoiceLang(defaultVoiceLang());
   renderVoiceLanguages();
   pendingBlob = null;

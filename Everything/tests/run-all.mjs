@@ -35,7 +35,7 @@ const SUITES = [
   { name: 'motion', file: 'motion-probe.mjs', timeoutMs: 120000 },
   { name: 'layers', file: 'layers-probe.mjs', timeoutMs: 120000 },
   { name: 'datetime', file: 'datetime-probe.mjs', timeoutMs: 120000 },
-  { name: 'datetime', file: 'datetime-probe.mjs', timeoutMs: 120000 },
+  { name: 'voiceimage', file: 'voice-image-probe.mjs', timeoutMs: 120000 },
   { name: 'back', file: 'back-nav-probe.mjs', timeoutMs: 120000 },
   { name: 'search', file: 'search-probe.mjs', timeoutMs: 120000 },
   // The inline-help notes are the one feature whose whole job is to be seen. A probe that only
@@ -214,9 +214,11 @@ for (const suite of selected) {
 
   const pkg = MISSING_MODULE.exec(r.out)?.[1] || (FAILED_TO_START.test(r.out) ? 'its dependency' : null);
   // Each suite prints its own banner, and the wording is not uniform — `ALL 7 AUTO-SAVE CHECKS
-  // PASSED` has a hyphen, so the character class has to allow one or the suite is scored as failed
-  // while its output plainly says otherwise.
-  const verdict = /ALL (\d+) [A-Z -]*PASSED/.exec(r.out);
+  // PASSED` has a hyphen, and `VOICE+IMAGE` has a plus, so the character class has to allow both or
+  // the suite is scored as failed while its output plainly says otherwise. That failure mode is
+  // the dangerous one: a suite that passes everything is reported as broken, and the real bug goes
+  // looking somewhere else.
+  const verdict = /ALL (\d+) [A-Z0-9 +&()'’-]*PASSED/.exec(r.out);
 
   let state;
   if (r.timedOut) state = 'TIMEOUT';

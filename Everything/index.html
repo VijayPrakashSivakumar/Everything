@@ -2138,6 +2138,14 @@
             id="voiceTimer"
             style="font-size: 13px; color: var(--muted)"
           ></span>
+          <!-- What is being heard, while it is being heard. Recording used to look identical
+               whether the microphone was picking up a person or nothing at all. -->
+          <p
+            id="voiceLiveTranscript"
+            class="voice-dictation-status"
+            aria-live="polite"
+            style="width: 100%; margin: 6px 0 0"
+          ></p>
           <p
             id="voiceDictationStatus"
             class="voice-dictation-status"
@@ -2157,10 +2165,44 @@
         <div id="imageCaptureUI" style="display: none; margin: 10px 0">
           <input
             type="file"
-            id="imageFileInput"
+            id="imageCameraInput"
             accept="image/*"
-            onchange="previewImageFile()"
+            capture="environment"
+            onchange="previewImageFile(this)"
+            style="display: none"
           />
+          <input
+            type="file"
+            id="imageGalleryInput"
+            accept="image/*"
+            onchange="previewImageFile(this)"
+            style="display: none"
+          />
+          <!-- Two buttons, not one. A single "choose image" control asks the phone to decide
+               between the camera and the library, and on Android it answers by opening the
+               library — so the camera was reachable only through a submenu nobody finds. -->
+          <div style="display: flex; gap: 8px; flex-wrap: wrap">
+            <button
+              class="btn"
+              id="imageCameraBtn"
+              type="button"
+              onclick="document.getElementById('imageCameraInput').click()"
+              style="flex: 1 1 140px"
+            >
+              <i data-lucide="camera" aria-hidden="true"></i
+              ><span>Take photo</span>
+            </button>
+            <button
+              class="btn"
+              id="imageGalleryBtn"
+              type="button"
+              onclick="document.getElementById('imageGalleryInput').click()"
+              style="flex: 1 1 140px"
+            >
+              <i data-lucide="image" aria-hidden="true"></i
+              ><span>Choose photo</span>
+            </button>
+          </div>
           <img
             id="imagePreview"
             style="
@@ -2178,6 +2220,18 @@
           >
             <i data-lucide="scan-text" aria-hidden="true"></i
             ><span id="imageOcrLabel">Read text from image</span>
+          </button>
+          <!-- The read button is disabled while a read is in flight, so cancelling needs its own
+               control. Without one, a stalled download could only be escaped by reloading. -->
+          <button
+            class="btn"
+            id="imageOcrCancelBtn"
+            type="button"
+            onclick="cancelImageOcr()"
+            style="margin-top: 8px; width: 100%; display: none"
+          >
+            <i data-lucide="x" aria-hidden="true"></i
+            ><span>Stop reading</span>
           </button>
           <div class="voice-lang-block">
             <span class="voice-lang-label">Text language in the image</span>
