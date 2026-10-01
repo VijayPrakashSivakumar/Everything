@@ -137,6 +137,54 @@ try {
     assert.equal(wired.hasNewPasswordForm, true, 'there is no form to set a new password in');
     assert.equal(wired.hasHandler, true, 'the new-password form is not wired to anything');
   });
+
+  await check('a sign-in arriving after a recovery does not close the reset form', async () => {
+    /* The check above asserts the form and the handler exist. Necessary, nowhere near sufficient,
+       and the reason this complaint survived a green suite: nothing ever drove the arrival.
+
+       This is the sequence that actually happens. Supabase reads the recovery token, establishes a
+       session, and emits SIGNED_IN as well as PASSWORD_RECOVERY. The old code handled the recovery
+       event correctly and returned — and then the sign-in that followed hid the auth screen and
+       switched to the main view, so the person landed in the app holding a recovery session with
+       no form in front of them and no error to explain why. Nothing threw; the link worked and the
+       screen was still wrong.
+
+       Driven directly rather than through a real token because the events, not the crypto, are the
+       claim under test — and because a live recovery token is a credential a test should not need. */
+    const after = await page.evaluate(() => {
+      const shown = (id) => {
+        const el = document.getElementById(id);
+        return el ? getComputedStyle(el).display !== 'none' : null;
+      };
+      const snapshot = () => ({
+        authScreen: shown('authScreen'),
+        newPassword: shown('authFormNewPassword'),
+        signIn: shown('authFormNormal'),
+      });
+      const session = {
+        user: { id: '11111111-2222-3333-4444-555555555555', email: 'locked.out@example.com' },
+      };
+      handleAuthStateChange('PASSWORD_RECOVERY', session);
+      const afterRecovery = snapshot();
+      // The ordinary sign-in that a recovery session also produces.
+      handleAuthStateChange('SIGNED_IN', session);
+      return { afterRecovery, afterSignIn: snapshot() };
+    });
+
+    assert.equal(after.afterRecovery.newPassword, true,
+      `PASSWORD_RECOVERY must show the reset form (got ${JSON.stringify(after.afterRecovery)})`);
+    assert.equal(after.afterRecovery.signIn, false, 'the sign-in form must not cover it');
+    assert.equal(after.afterSignIn.newPassword, true,
+      `the sign-in that follows must not close the reset form (got ${JSON.stringify(after.afterSignIn)})`);
+    assert.equal(after.afterSignIn.authScreen, true, 'the auth screen must stay up mid-reset');
+  });
+
+  await check('a recovery link does not leave its token in the address bar', async () => {
+    // The hash holds a live session token. Left in place it ends up in history, bookmarks and
+    // screenshots, and a refresh drops the person back into a reset they already finished.
+    const hash = await page.evaluate(() => window.location.hash);
+    assert.equal(hash, '', `a live recovery token was left in the URL: ${hash}`);
+  });
 } finally {
   await browser.close();
   server.kill();

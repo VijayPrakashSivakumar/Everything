@@ -977,6 +977,9 @@ async function authUpdatePassword() {
   }
   err.style.color = "var(--accent)";
   err.textContent = "Password updated — signing you in…";
+  /* The guard in the auth handler stops any event from closing the form mid-reset, so it has to be
+     released here or the next sign-in on this device would be refused its own session. */
+  passwordRecoveryActive = false;
   setTimeout(() => (window.location.href = window.location.origin), 1200);
 }
 async function authSignOut() {
@@ -2030,13 +2033,49 @@ function confirmSignOut() {
 
 let syncedUserId = null;
 
-sb.auth.onAuthStateChange((event, session) => {
+/* A recovery link is a special kind of sign-in, and treating it like any other is what makes
+   "reset my password" fail silently.
+
+   Supabase hands the person back a URL carrying a recovery token. The client reads it, establishes
+   a session — and then, depending on the client version and whether a session was already open,
+   emits SIGNED_IN as well as PASSWORD_RECOVERY. The old handler showed the new-password form on
+   PASSWORD_RECOVERY and returned, which is right on its own; but the SIGNED_IN that follows fell
+   into the ordinary branch, hid the auth screen and switched to the main view. The person was
+   bounced into the app holding a recovery session, with no form in front of them and no error to
+   explain why. Nothing threw. The link worked and the screen was still wrong.
+
+   This flag makes the intent explicit and survives any number of events arriving after it. */
+let passwordRecoveryActive = false;
+
+function showPasswordRecoveryForm() {
+  passwordRecoveryActive = true;
+  const authScreen = document.getElementById("authScreen");
+  if (authScreen) authScreen.style.display = "flex";
+  const normal = document.getElementById("authFormNormal");
+  const forgot = document.getElementById("authFormForgot");
+  const reset = document.getElementById("authFormNewPassword");
+  if (normal) normal.style.display = "none";
+  if (forgot) forgot.style.display = "none";
+  if (reset) reset.style.display = "block";
+  /* The hash carries a live session token. Leaving it in the address bar means it survives into
+     screenshots, bookmarks and the browser history, and a refresh re-enters recovery by accident. */
+  if (typeof history !== "undefined" && history.replaceState) {
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+}
+
+/* Named rather than anonymous so the arrival path can be driven directly in a test. Signalling a
+   recovery and then an ordinary sign-in is a real event sequence, not a contrived one, and it is the
+   only way to prove the second does not close the first. */
+function handleAuthStateChange(event, session) {
   const authScreen = document.getElementById("authScreen");
   if (event === "PASSWORD_RECOVERY") {
-    authScreen.style.display = "flex";
-    document.getElementById("authFormNormal").style.display = "none";
-    document.getElementById("authFormForgot").style.display = "none";
-    document.getElementById("authFormNewPassword").style.display = "block";
+    showPasswordRecoveryForm();
+    return;
+  }
+  if (passwordRecoveryActive) {
+    // Anything arriving while a reset is pending must leave the form alone — including SIGNED_IN,
+    // which is the one that used to close the form the person was in the middle of using.
     return;
   }
   if (session) {
@@ -2066,7 +2105,10 @@ sb.auth.onAuthStateChange((event, session) => {
     syncReadyPromise = null;
     authScreen.style.display = "flex";
   }
-});
+}
+
+sb.auth.onAuthStateChange(handleAuthStateChange);
+
 function showSettingsTab(tab) {
   const panel = document.getElementById("settingsTab-" + tab);
   if (!panel) return;
