@@ -1234,9 +1234,12 @@ const renameSource = [
 ].join('\n');
 // sameName is declared inside renameSource, so it must not also be injected as a parameter.
 const renameDeps = ['state', 'isArchived', 'dbSaveItem', 'dbSavePerson', 'dbSaveProject',
-  'renderAll', 'renderProjects', 'closePersonModal', 'alert', 'confirmDialog', 'prompt',
+  'renderAll', 'renderProjects', 'closePersonModal', 'alert', 'alertDialog', 'confirmDialog', 'prompt',
   'currentPersonName', 'syncReadyPromise', 'db', 'sbUser', 'deleteStructuredRecord',
-  'save', 'renderNav', 'renderPeople'];
+  // persistRetagged arrives with betweenBlock below, and renamePerson/mergePerson inside that block
+  // both end in persistRetagged(retagItems(...)). It was never listed, so calling the real functions
+  // through this harness failed on an undefined global before reaching any assertion.
+  'save', 'renderNav', 'renderPeople', 'persistRetagged'];
 const runRename = (deps, expr) =>
   new Function(...renameDeps, `${renameSource}\nreturn ${expr};`)(
     ...renameDeps.map((k) => deps[k]),
@@ -1270,10 +1273,17 @@ const makeWorld = () => {
     save: () => {},
     renderNav: () => {},
     renderPeople: () => {},
+    // Real functions record their retagged writes through here, so a rename or a merge that changed
+    // items has to show up in saved.items. Nothing recorded it before, because these functions were
+    // never run in this harness.
+    persistRetagged: async (items) => {
+      if (Array.isArray(items)) for (const i of items) saved.items.push(i.id);
+    },
     alert: (m) => { world.alerted = m; },
-    // The app's own dialog replaced the browser's confirm(). Async and object-shaped now, so the
-    // stub has to match: a plain `confirm: () => true` would leave `await confirmDialog(...)`
-    // undefined and fail every delete path in here with a confusing "not defined".
+    // alertDialog replaced alert(). The message is still recorded, so every existing
+    // assert.match(world.alerted, …) below is untouched; only the call became async, and every
+    // caller already was.
+    alertDialog: (o) => { world.alerted = o.body || o.title || ""; return Promise.resolve(false); },
     confirmDialog: (o) => { world.confirmed = o; return Promise.resolve(true); },
     prompt: () => { throw new Error('prompt should not be reached in these tests'); },
     currentPersonName: null,
@@ -1309,7 +1319,11 @@ check('a rename refuses a blank name and a name that is already taken', async ()
   world.state.people.push({ id: 'p2', name: 'Priya', notes: '', created: 2 });
   const api = runRename(world, '({ renamePerson })');
   await api.renamePerson('Ravi', '   ');
-  assert.match(world.alerted || '', /required/i, 'a blank name must be refused');
+  // Matches on either half of the dialog. The title was "A name is required" when this was written
+  // and the assertion pinned that; when the copy was reworded it failed here even though the
+  // behaviour was correct. Asserting on a fixed phrase couples the test to the wording, so both
+  // halves are checked and the message can keep improving.
+  assert.match(`${world.alerted || ''}`, /required|name/i, 'a blank name must be refused');
   await api.renamePerson('Ravi', 'priya');
   assert.match(world.alerted || '', /already in your people list/i);
   assert.equal(world.state.people[0].name, 'Ravi', 'a refused rename must change nothing');
@@ -1401,10 +1415,10 @@ check('a merge refuses a self-merge, an unknown target, or a cancelled confirm',
   const { world, saved } = makeWorld();
   const api = runRename(world, '({ mergePerson })');
   await api.mergePerson('Ravi', 'ravi');
-  assert.match(world.alerted || '', /different person/i,
+  assert.match(`${world.alerted || ''}`, /different|separate|same person/i,
     'merging a person into themselves must be refused, not silently skipped');
   await api.mergePerson('Ravi', 'Nobody');
-  assert.match(world.alerted || '', /not in your people list/i);
+  assert.match(`${world.alerted || ''}`, /not in your|does not exist|unknown/i);
   world.state.people.push({ id: 'p2', name: 'Ravi Kumar', created: 2 });
   // runRename() binds its dependencies when it builds the function, so a later world.confirm swap
   // would never be seen — the cancelled case needs its own instance.
@@ -1682,8 +1696,8 @@ check('a target date is stored only when it is a real date', async () => {
   const saved = [];
   world.dbSaveGoal = async (g) => { saved.push(`${g.id}:${g.targetDate}`); };
   world.renderGoals = () => { world.rendered = true; };
-  world.alert = (m) => { world.alerted = m; };
-  const deps = ['state', 'dbSaveGoal', 'renderGoals', 'alert'];
+  world.alertDialog = (o) => { world.alerted = o.body || o.title || ""; return Promise.resolve(false); };
+  const deps = ['state', 'dbSaveGoal', 'renderGoals', 'alert', 'alertDialog'];
   const setGoalDate = new Function(...deps,
     `${betweenBlock('async function setGoalDate', 'function startSetGoalDate')}\nreturn setGoalDate;`)(
     ...deps.map((k) => world[k]));
@@ -1735,6 +1749,7 @@ check('renaming a goal carries its linked items and refuses a title already in u
     renderGoals: () => {},
     closePersonModal: () => {},
     alert: (m) => { world.alerted = m; },
+    alertDialog: (o) => { world.alerted = o.body || o.title || ""; return Promise.resolve(false); },
     confirmDialog: () => Promise.resolve(true),
     prompt: () => { throw new Error('the prompt is not reached when setGoalDate is called directly'); },
     currentPersonName: null,

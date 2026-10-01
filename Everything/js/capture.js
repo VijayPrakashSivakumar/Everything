@@ -1,4 +1,4 @@
-/* ---------- Capture modal ---------- */
+﻿/* ---------- Capture modal ---------- */
 const CAPTURE_TYPES = [
   { id: "text", icon: "file-text", label: "Text" },
   { id: "task", icon: "check-square-2", label: "Task" },
@@ -214,7 +214,7 @@ async function toggleVoiceRecording() {
         `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
     }, 1000);
   } catch (e) {
-    alert("Microphone access denied or unavailable.");
+    await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
   }
 }
 

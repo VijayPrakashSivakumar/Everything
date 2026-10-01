@@ -1,4 +1,4 @@
-const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
+﻿const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
 const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
@@ -714,9 +714,7 @@ window.addEventListener("appinstalled", () => {
 
 async function installApp() {
   if (isIosDevice() && !deferredInstallPrompt) {
-    alert(
-      'To install Everything, tap Share in Safari, then choose "Add to Home Screen".',
-    );
+    await alertDialog({ title: "Install from the browser menu", body: "On iPhone: Share, then Add to Home Screen. On Android: the three-dot menu, then Install app." });
     return;
   }
   if (!deferredInstallPrompt) return;

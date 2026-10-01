@@ -1,4 +1,4 @@
-/* ---------- Rename and remove people and projects ----------
+﻿/* ---------- Rename and remove people and projects ----------
    Items link to a person or a project by name, not by id. That is why a name is the identity, and it
    is why there was no way out of a typo: "Hom" stranded every item tagged with it, and the only fix
    was opening each item by hand. Renaming now carries the items along in one step.
@@ -27,11 +27,11 @@ function personNameTaken(name, exceptName) {
 async function renamePerson(oldName, newName) {
   const next = String(newName == null ? "" : newName).trim();
   if (!next) {
-    alert("A name is required.");
+    await alertDialog({ title: "A name is required", body: "A person needs a name before anything can be tagged with them." });
     return;
   }
   if (personNameTaken(next, oldName)) {
-    alert(`"${next}" is already in your people list.`);
+    await alertDialog({ title: "That name is taken", body: `"${next}" is already in your people list. Pick another, or merge the two.` });
     return;
   }
   const person = state.people.find((p) => sameName(p.name, oldName));
@@ -84,12 +84,12 @@ async function mergePerson(sourceName, targetName) {
   const into = String(targetName == null ? "" : targetName).trim();
   if (!from || !into) return;
   if (sameName(from, into)) {
-    alert("Pick a different person to merge into.");
+    await alertDialog({ title: "Pick a different person", body: `"${from}" and "${into}" are the same person, so there is nothing to merge them into.` });
     return;
   }
   const target = state.people.find((p) => sameName(p.name, into));
   if (!target) {
-    alert(`"${into}" is not in your people list.`);
+    await alertDialog({ title: "Not in your people list", body: `"${into}" does not exist yet. Add them first, then merge.` });
     return;
   }
   const source = state.people.find((p) => sameName(p.name, from));
@@ -148,11 +148,11 @@ async function renameProject(id, newName) {
   if (!project) return;
   const next = String(newName == null ? "" : newName).trim();
   if (!next) {
-    alert("A name is required.");
+    await alertDialog({ title: "A name is required", body: "A project needs a name before tasks can be grouped under it." });
     return;
   }
   if (state.projects.some((p) => p.id !== id && sameName(p.name, next))) {
-    alert(`"${next}" is already a project.`);
+    await alertDialog({ title: "That name is taken", body: `"${next}" is already a project. Pick another, or merge the two.` });
     return;
   }
   const previous = project.name;
@@ -248,11 +248,11 @@ async function renameGoal(id, newTitle) {
   if (!goal) return;
   const next = String(newTitle == null ? "" : newTitle).trim();
   if (!next) {
-    alert("A goal needs a title.");
+    await alertDialog({ title: "Give it a title", body: "A goal needs a title, otherwise there is nothing to measure against." });
     return;
   }
   if (state.goals.some((g) => g.id !== id && sameName(g.title, next))) {
-    alert(`"${next}" is already a goal.`);
+    await alertDialog({ title: "That title is taken", body: `"${next}" is already a goal. Pick another, or merge the two.` });
     return;
   }
   const previous = goal.title;
@@ -358,7 +358,7 @@ async function setGoalDate(id, value) {
   const usable = !raw ||
     (/^\d{4}-\d{2}-\d{2}$/.test(raw) && !Number.isNaN(parsed.getTime()) && parsed.getDate() === Number(raw.slice(8)));
   if (!usable) {
-    alert("Use a date like 2026-12-31, or leave it blank to clear it.");
+    await alertDialog({ title: "Use a real date", body: "Write it like 2026-12-31, or leave it blank to clear it." });
     return;
   }
   goal.targetDate = raw;

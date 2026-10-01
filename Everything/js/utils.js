@@ -1,4 +1,4 @@
-/* ---------- Utility ---------- */
+﻿/* ---------- Utility ---------- */
 
 /* The brand mark, as markup. One function rather than a template literal at each call site, because
    the path is already written out three times in index.html and a fourth, fifth and sixth copy is
@@ -365,7 +365,7 @@ function urlBase64ToUint8Array(base64String) {
 
 async function enablePushNotifications() {
   if (!notificationSupported()) {
-    alert("Notifications aren't supported in this browser.");
+    await alertDialog({ title: "Notifications unsupported", body: "This browser cannot show notifications from a web app. Chrome or Firefox on Android, or Safari on iPhone, all can." });
     return;
   }
 
@@ -375,9 +375,7 @@ async function enablePushNotifications() {
   if (!(await requestNotificationPermission())) {
     updateNotifBtn();
     renderNotificationStatus();
-    alert(
-      "Notifications are blocked. Allow them for Everything in your browser or phone settings, then try again.",
-    );
+    await alertDialog({ title: "Notifications are blocked", body: "Allow them for Everything in your browser or phone settings, then try again." });
     return;
   }
 
@@ -538,7 +536,7 @@ function renderNotificationLog() {
    push only when the endpoint is registered. */
 async function testNotification() {
   if (!notificationSupported()) {
-    alert("Notifications aren't supported in this browser.");
+    await alertDialog({ title: "Notifications unsupported", body: "This browser cannot show notifications from a web app. On Android try Chrome or Firefox." });
     return;
   }
   const btn = document.getElementById("notifTestBtn");
@@ -555,7 +553,7 @@ async function testNotification() {
 async function runNotificationTest() {
   if (!(await requestNotificationPermission())) {
     updateNotifBtn();
-    alert("Allow notifications first, then try again.");
+    await alertDialog({ title: "Allow notifications first", body: "Turn reminders on, then send the test again." });
     return;
   }
 

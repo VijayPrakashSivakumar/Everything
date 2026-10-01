@@ -1,4 +1,4 @@
-/* ---------- Keyboard shortcuts ---------- */
+﻿/* ---------- Keyboard shortcuts ---------- */
 function isTypingTarget(el) {
   if (!el || !el.tagName) return false;
   return (
@@ -423,7 +423,7 @@ async function importData(input) {
   try {
     payload = JSON.parse(await readFileAsText(file));
   } catch (e) {
-    alert("That file is not valid JSON.");
+    await alertDialog({ title: "That file is not JSON", body: "Nothing was imported. Pick a file exported from Everything." });
     input.value = "";
     return;
   }
@@ -441,7 +441,7 @@ async function importData(input) {
     !incomingGoals.length &&
     !incomingPeople.length
   ) {
-    alert("No Everything data found in that file.");
+    await alertDialog({ title: "No Everything data in that file", body: "The file parsed, but it holds no captures. Nothing was imported." });
     input.value = "";
     return;
   }
@@ -490,7 +490,7 @@ async function importData(input) {
 
   input.value = "";
   renderAll();
-  alert(`Imported ${incomingItems.length} item(s).`);
+    await alertDialog({ title: "Import finished", body: `${incomingItems.length} item${incomingItems.length === 1 ? "" : "s"} imported.` });
 }
 
 /* PWA manifest shortcuts / deep links: ./?capture=1 and ./?view=tasks */
