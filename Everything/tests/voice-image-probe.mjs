@@ -216,6 +216,111 @@ try {
     assert.match(outcome.live, /recording is still saved|cannot turn speech into text/i,
       'it must say the audio is safe');
   });
+
+  await check('a bulleted list becomes several items, not one', async () => {
+    // The whiteboard case: five actions photographed at once. This was a single item whose title was
+    // the entire list, which looks like it worked and is unusable.
+    const out = await page.evaluate(() => {
+      const text = '- call the plumber\n- renew the insurance\n- book the dentist\n- pay the rent\n- email Priya';
+      const parts = localSplitItems(text, { kind: 'task', dueDate: '' });
+      return { count: parts ? parts.length : 0, titles: parts ? parts.map((p) => p.title) : [] };
+    });
+    assert.equal(out.count, 5, `expected five items, got ${out.count}`);
+    assert.ok(out.titles.includes('call the plumber'), 'the bullet itself must be stripped');
+    assert.ok(!out.titles.some((t) => t.startsWith('-')), 'a dash must not survive into a title');
+  });
+
+  await check('a numbered list and an agenda both split', async () => {
+    const out = await page.evaluate(() => {
+      const numbered = localSplitItems('1. buy milk\n2. call mum\n3. book flights', {});
+      const agenda = localSplitItems('Monday 10:00 standup\nMonday 14:00 review\nTuesday 09:00 retro', {});
+      return { numbered: numbered ? numbered.length : 0, agenda: agenda ? agenda.length : 0 };
+    });
+    assert.equal(out.numbered, 3, 'a numbered list must split');
+    assert.equal(out.agenda, 3, 'an agenda must split');
+  });
+
+  await check('prose is left whole', async () => {
+    // The cost of being wrong. A paragraph broken into fragments is a note destroyed, so a block
+    // with no deliberate markers must come back as no split at all.
+    const out = await page.evaluate(() => ({
+      prose: localSplitItems(
+        'Remember that the water bill was very high last month\nand the gardener said he would come again in spring\nbut we should probably check the invoice first', {}),
+      one: localSplitItems('just one single line of text', {}),
+      mixed: localSplitItems('- a real item\nsome prose that was never a list\nanother stray line', {}),
+    }));
+    assert.equal(out.prose, null, 'prose must not be split');
+    assert.equal(out.one, null, 'a single line must not be split');
+    assert.equal(out.mixed, null, 'a block with unmarked lines is prose, not a list');
+  });
+
+  await check('a receipt is never split into its own lines', async () => {
+    // A receipt is one thing printed over many lines. Splitting it would turn a total, a date and a
+    // merchant into three unrelated items, and the receipt path already reads all three.
+    const out = await page.evaluate(() => localSplitItems([
+      'FRESH MART',
+      '12/09/2026 18:22',
+      'MILK 1L          65.00',
+      'BREAD            40.00',
+      'EGGS 6           90.00',
+      'TOTAL           195.00',
+    ].join('\n'), {}));
+    assert.equal(out, null, 'a receipt with a readable total must stay one item');
+  });
+
+  await check('money in the sentence keeps it as one item', async () => {
+    // Two amounts are usually two halves of one expense, not two tasks.
+    const out = await page.evaluate(() =>
+      localSplitItems('- spent 450 on groceries\n- spent 200 on fuel', {}));
+    assert.equal(out, null, 'a capture carrying an amount must not be split');
+  });
+
+  await check('a date on the header is inherited by lines that have none', async () => {
+    // "Before Friday:" over a list is a header, not an item. Each line should take that date.
+    const out = await page.evaluate(() => {
+      const parts = localSplitItems('- renew insurance\n- service the car', {
+        kind: 'task', dueDate: '2026-10-09T09:00:00.000Z',
+      });
+      return parts ? parts.map((p) => p.dueDate) : null;
+    });
+    assert.ok(out && out.length === 2, 'both lines must be kept');
+    assert.ok(out.every((d) => d === '2026-10-09T09:00:00.000Z'),
+      `every line must inherit the header date, got ${JSON.stringify(out)}`);
+  });
+
+  await check('a line naming its own date keeps it', async () => {
+    // "pay rent tomorrow" carries its own date, so the header must not overwrite it. A line whose
+    // date the local reader cannot see still inherits — that is the safe direction to fail.
+    const out = await page.evaluate(() => {
+      const parts = localSplitItems('- pay rent tomorrow\n- book dentist', {
+        kind: 'task', dueDate: '2026-10-09T09:00:00.000Z',
+      });
+      return parts ? parts.map((p) => p.dueDate) : null;
+    });
+    assert.ok(out && out.length === 2, 'both lines must be kept');
+    assert.notEqual(out[0], '2026-10-09T09:00:00.000Z',
+      'a line that names its own date must not be overwritten by the header');
+  });
+
+  await check('the type picker survives being opened and closed', async () => {
+    /* A missing function in this path throws inside pickType, which runs on every capture — a
+       keyboard tap or a dictated sentence — so the whole sheet would break over a cosmetic toggle. */
+    const out = await page.evaluate(() => {
+      try {
+        pickType('expense', true);
+        const opened = document.getElementById('typeMoreRow').style.display !== 'none';
+        toggleMoreTypes();
+        const closed = document.getElementById('typeMoreRow').style.display === 'none';
+        toggleMoreTypes();
+        return { threw: false, opened, closed };
+      } catch (e) {
+        return { threw: true, message: e.message };
+      }
+    });
+    assert.equal(out.threw, false, `the toggle must not throw (got ${out.message})`);
+    assert.equal(out.opened, true, 'filing as a hidden kind must reveal that row');
+    assert.equal(out.closed, true, 'the row must be able to close again');
+  });
 } finally {
   await browser.close();
   server.kill();

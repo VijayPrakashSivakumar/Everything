@@ -11,7 +11,10 @@ let captureMoreTypesOpen = false;
 
 function toggleMoreTypes() {
   captureMoreTypesOpen = !captureMoreTypesOpen;
-  renderTypeRow();
+  /* Toggled, not re-rendered. The chips for both rows are written once when the sheet opens, and
+     the only thing that changes here is which row is on screen — rebuilding the DOM from here would
+     need the sheet's own render step, and getting that name wrong throws inside pickType, which is
+     on the path of every single capture. */
   const row = document.getElementById("typeMoreRow");
   if (row) row.style.display = captureMoreTypesOpen ? "flex" : "none";
   const chip = document.getElementById("typeMoreChip");
@@ -1267,6 +1270,80 @@ function onCaptureInput() {
    The model is then asked for a second opinion, but only when the rules are not confident —
    a vague time, a promise, a multi-clause sentence, or a half-read. A failure there is silent:
    the local result stands, which is why this can never block saving. */
+/* Splits a capture into several items, entirely on the device, without asking the model.
+
+   Why this exists: the plan UI, the multi-save and the single group Undo were all already built and
+   all already worked — but only when the server returned several items. Offline, rate-limited, or
+   simply not asked, a photo of a whiteboard with five actions on it became ONE item containing all
+   five sentences. That is the worst possible outcome for a capture-first app: it looks like it
+   worked, and the work is unusable.
+
+   Deliberately conservative. Splitting prose into fragments destroys a note that was fine, and a
+   receipt is many lines and exactly one item, so both are refused outright. The signal has to be
+   deliberate — bullets, numbers, or an agenda line that opens with a day or a clock time — before
+   anything is broken apart. Fewer items found is a much cheaper mistake than a note shredded into
+   five wrong ones.
+
+   Each line is then read by the same local extractor that already handles a whole sentence, so a
+   date written on one line is understood exactly as well as a date written alone. */
+const LIST_MARKER = /^\s*(?:[-*•·–—]|\d+[.)]|\(?\d+\))\s+/;
+const AGENDA_OPENING = /^\s*(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*\.?\b|^\s*\d{1,2}[:.]\d{2}\b|^\s*\d{1,2}\s*(?:am|pm)\b/i;
+/* Money words beside a number. Not a parser — it answers only "does this line talk about an amount",
+   which is all the splitter needs to know before deciding not to break a capture apart. */
+const MONEY_IN_LINE = /(?:₹|\brs\.?\b|\binr\b)\s*\d|\b\d+(?:\.\d{1,2})?\s*(?:rupees?|lakh|crore)\b|\b(?:spent|paid|costs?|price|total|bought|charges?)\b[^.\n]{0,40}\d/i;
+
+function splitCaptureLines(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const marked = lines.filter((line) => LIST_MARKER.test(line) || AGENDA_OPENING.test(line));
+  /* Fewer than two explicit markers means the author was not writing a list — it is a paragraph, or
+     a note whose lines merely happen to break. */
+  if (marked.length < 2) return [];
+
+  // Every line must belong. A mixed block is prose with a stray dash in it, not a list.
+  if (marked.length !== lines.length) return [];
+
+  return lines
+    .map((line) => line.replace(LIST_MARKER, "").trim())
+    // A stub left by a bullet with nothing after it, or an OCR artefact too short to be a thought.
+    .filter((line) => line.length >= 3);
+}
+
+function localSplitItems(text, fallback) {
+  const parts = splitCaptureLines(text);
+  if (parts.length < 2) return null;
+
+  /* A receipt is one thing that happens to be printed over many lines. Splitting it would turn a
+     total, a date and a merchant into three unrelated items — and the receipt path already reads all
+     three correctly. Refused before anything else looks at the text. */
+  if (receiptTotalFromText(text)) return null;
+  /* Money anywhere in the list means the lines are parts of one expense, not separate things.
+     Checked per line rather than once over the whole block, and by two means rather than one: the
+     shared detector needs a currency mark or a format the app itself wrote, so "spent 450 on
+     groceries" read clean past it. Money words beside a number are the shape people actually type,
+     and missing that is how an expense gets torn into two unrelated tasks. */
+  if (parts.some((line) => parseAmountFromText(line) !== null || MONEY_IN_LINE.test(line))) {
+    return null;
+  }
+
+  const parts2 = parts.map((line) => {
+    const read = extractLocally(line);
+    return {
+      ...fallback,
+      ...read,
+      title: line,
+      // A date on the whole capture but not on this line is a header — "before Friday:" over a
+      // list — so the line inherits it. A line that names its own date keeps it.
+      dueDate: read.dueDate || fallback?.dueDate || "",
+    };
+  });
+  return parts2;
+}
+
 async function extractWithAI(text) {
   const local = extractLocally(text);
   if (document.getElementById("captureText").value !== text) return;
@@ -1286,12 +1363,17 @@ async function extractWithAI(text) {
      items without the model being asked a second time. The local rules only ever describe the one
      entry the form is editing, so they stand in as a single-entry plan — the same shape the server
      returns, so finishCaptureDialogue() does not have to know which path ran. */
-  captureLastPlan = (ai?.items?.length ? ai.items : [local])
+  const localParts = localSplitItems(text, local);
+  captureLastPlan = (ai?.items?.length ? ai.items : localParts || [local])
     .map((entry) => (entry && typeof entry === "object" ? { ...entry, title: entry.title || text } : null))
     .filter((entry) => entry && String(entry.title || "").trim());
   captureLastText = text;
   // "Done." A sentence that read cleanly creates itself; an unclear one still asks.
   if (ai?.items?.length) scheduleAutoSave(ai.items, text);
+  /* A list found on the device saves the same way an AI-provided one does, and is previewed the same
+     way, because both go through captureLastPlan and setCapturePlan. Nothing about the preview, the
+     save or the Undo knows or cares which of the two produced the entries. */
+  else if (localParts) setCapturePlan(localParts, []);
 }
 
 function renderCapturePlan() {
