@@ -2153,6 +2153,53 @@ h1.page-title,
   height: 24px;
 }
 
+/* ---------- The boot splash ----------
+
+   The gap between the browser's cached icon and the running app. Before this element the platform is
+   drawing a static icon it saved earlier; after it, the app is up. Putting the brand mark in that gap
+   — on the same path, with the same travelling dash as the sidebar logo and the in-app loader — means
+   the brand is the one thing on screen through the whole load, instead of a static box that is
+   replaced a moment later by a bare mark of a different shape.
+
+   Shown by a class rather than by default, so the inline `display:none` in the markup is what
+   actually governs the first paint. A splash that appears only once a stylesheet has loaded and then
+   replaced again is worse than no splash at all. */
+
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The app's own background tokens, so the splash is the same colour the app is about to become.
+     A white flash on a dark theme is its own brand failure. */
+  background: var(--bg, #f5f6fb);
+  /* Removed from the a11y tree and from the tab order: it is decoration, and a control nobody can
+     reach is a control that traps focus on a keyboard. */
+  pointer-events: none;
+}
+
+.boot-splash-mark {
+  width: 84px;
+  height: 50px;
+  overflow: visible;
+}
+
+/* The track behind the travelling segment, matching the in-app loader so the two are the same mark
+   doing the same thing. Without it a dash appearing out of nowhere reads as a glitch rather than as
+   something moving along a known path. */
+.boot-splash .loader-track {
+  stroke: var(--accent);
+  opacity: 0.2;
+}
+
+.boot-splash .loader-run {
+  stroke: url(#logoGrad);
+  stroke-dasharray: 0.18 0.82;
+  animation: brand-loader-run 1.4s linear infinite;
+}
+
 /* ---------- The brand loader ----------
    There was no loading indicator anywhere in the app. The one wait a person actually sees — the
    Ask overlay saying "Thinking…" — was a line of text with nothing moving on it, which is the
@@ -2261,6 +2308,14 @@ h1.page-title,
      or it becomes a still ring nobody can tell from a stuck app — the exact problem it was built to
      solve. Half the loop is drawn solid instead, which is static and still unmistakably "working". */
   .brand-loader .loader-run {
+    animation: none;
+    stroke-dasharray: 0.5 0.5;
+    stroke-dashoffset: 0;
+  }
+
+  /* The boot splash carries the same rule for the same reason: a still mark that nobody can tell from
+     a hung page is worse than no mark. Half the loop solid still reads as "working". */
+  .boot-splash .loader-run {
     animation: none;
     stroke-dasharray: 0.5 0.5;
     stroke-dashoffset: 0;

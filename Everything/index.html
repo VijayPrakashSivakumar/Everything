@@ -1,18 +1,33 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Third-party code is pinned to an exact version, never a range and never `@latest`. A floating
+         tag means two people loading the app on the same day can get different code, and the code that
+         runs in production is not the code that was tested. Supabase 2.117.2, chrono-node 1.4.9.
+
+         chrono-node is deliberately held on 1.x: 2.x publishes no browser bundle at dist/chrono.min.js,
+         so moving to it is a 404 and the app silently loses natural-language dates. That is why the
+         pin below was checked against the CDN rather than copied from `npm view`. -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2"></script>
     <!-- Natural-language date parsing ("tomorrow at 5pm", "in 2 hours"). If it fails to
-       load, script.js falls back to its own built-in date regexes. -->
-    <script src="https://cdn.jsdelivr.net/npm/chrono-node@1/dist/chrono.min.js"></script>
+       load, the app falls back to its own built-in date regexes. -->
+    <script src="https://cdn.jsdelivr.net/npm/chrono-node@1.4.9/dist/chrono.min.js"></script>
     <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
+    <!-- The brand mark as an animated favicon, so the tab is the brand working while the page loads
+         rather than a static snapshot of it. Chrome, Edge and Firefox all animate an SVG favicon;
+         browsers that do not fall back to the first frame, which is the plain mark.
+
+         It is the same path as the sidebar logo and the in-app loader, and the same travelling dash:
+         pathLength="1" normalises the curve so .18 is a fifth of the way round whatever the real path
+         length is. Without that the dash maths silently depends on measuring this particular shape.
+         SMIL rather than CSS, because a favicon stylesheet has no access to the page's tokens. -->
     <link
       rel="icon"
-      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><path d=%22M12 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%234361ee%22 stroke-width=%224%22/><path d=%22M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z%22 fill=%22none%22 stroke=%22%237b2ff7%22 stroke-width=%224%22/></svg>"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%234361ee'/%3E%3Cstop offset='100%25' stop-color='%237b2ff7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z' fill='none' stroke='%23c7ccf5' stroke-width='4.5' stroke-linecap='round' pathLength='1'/%3E%3Cpath d='M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z' fill='none' stroke='url(%23g)' stroke-width='4.5' stroke-linecap='round' pathLength='1' stroke-dasharray='0.18 0.82'%3E%3Canimate attributeName='stroke-dashoffset' from='0' to='-1' dur='1.4s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E"
     />
     <title>Everything</title>
     <link rel="stylesheet" href="style.css" />
@@ -20,8 +35,10 @@
     <meta name="theme-color" content="#4361ee" />
     <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-09-30.1" />
-    <link rel="apple-touch-icon" href="./icon.svg" />
+    <meta name="everything-build" content="2026-10-02.1" />
+    <!-- A PNG, not the SVG. iOS ignores an SVG here and silently falls back to a screenshot of the
+         page, so the installed icon was a picture of the app rather than the brand mark. -->
+    <link rel="apple-touch-icon" href="./icon-192.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <script>
       /* Applied before first paint. Without this the page would paint in the default theme and
@@ -38,6 +55,42 @@
           /* Private mode or an old browser: the app still picks these up on load. */
         }
       })();
+
+      /* The boot splash: the brand mark doing the waiting, in the gap between the browser's cached
+         icon and the app being ready to be used.
+
+         It is deliberately order-independent, because the obvious ways to sequence it are all wrong.
+         The app scripts are <script src> tags in <body>, so they run *during* parsing and js/init.js
+         is the last of them — which means both DOMContentLoaded and readyState "interactive" fire
+         *after* the app has finished initialising. A splash shown on either of those lands on top of
+         a working app that has already finished, and init.js has nothing left to hide it. That was the
+         first version, and it left a full-screen spinner over a finished app for ten seconds.
+
+         So ordering is not relied on at all. js/init.js sets `__appBooted` when the app is genuinely
+         up, and the show function refuses to run after that point. The show itself is called from a
+         script immediately after the splash element, so it happens the moment the element exists.
+
+         The ten-second timer is the safety net, so a future edit that throws in init.js cannot leave
+         someone staring at a spinner that will never resolve. */
+      (function () {
+        var shown = false;
+        // Set by js/init.js, the last app script, once the app is ready to be used.
+        window.__appBooted = false;
+
+        window.__showBootSplash = function () {
+          // Never cover an app that is already up, whatever order these two end up running in.
+          if (shown || window.__appBooted) return;
+          var el = document.getElementById("bootSplash");
+          if (!el) return;
+          shown = true;
+          el.style.display = "flex";
+        };
+        window.__hideBootSplash = function () {
+          var el = document.getElementById("bootSplash");
+          if (el) el.style.display = "none";
+        };
+        setTimeout(window.__hideBootSplash, 10000);
+      })();
     </script>
     <meta
       name="apple-mobile-web-app-status-bar-style"
@@ -46,6 +99,50 @@
   </head>
 
   <body>
+    <!-- The boot splash. This is the one moment the platform lets the app draw for itself: before it,
+         the browser is showing a static icon it cached; after it, the app is running. So the brand
+         mark is put in that gap, doing the waiting, on exactly the same path and the same travelling
+         dash as the sidebar logo and the in-app loader.
+
+         The element ships with `display: none` and the script below shows it. That ordering is
+         deliberate: the script is the very next thing in the document, so it runs the instant the
+         element exists — during parsing, before any stylesheet or app script is fetched. Showing it
+         from <head> on readyState or DOMContentLoaded was the first attempt and it is wrong in both
+         cases, because the app scripts sit in <body> and have already run by then; the splash then
+         lands on top of a finished app. `__appBooted` guards against that regardless of order.
+
+         Nothing here waits on the network and nothing here can stop the app loading: js/init.js
+         removes it, and a ten-second timer removes it even if that never runs. -->
+    <div id="bootSplash" class="boot-splash" style="display: none" aria-hidden="true">
+      <svg class="boot-splash-mark" viewBox="0 0 40 24" focusable="false" aria-hidden="true">
+        <path
+          class="loader-track"
+          d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
+          fill="none"
+          stroke="var(--accent)"
+          stroke-width="4.5"
+          stroke-linecap="round"
+          pathLength="1"
+        />
+        <path
+          class="loader-run"
+          d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
+          fill="none"
+          stroke="url(#logoGrad)"
+          stroke-width="4.5"
+          stroke-linecap="round"
+          pathLength="1"
+          stroke-dasharray="0.18 0.82"
+        />
+      </svg>
+    </div>
+    <script>
+      /* Shown here, immediately after the element, rather than from <head> on a load event. The parser
+         reaches this script the moment the splash exists, so the splash covers the wait for the
+         fifteen app scripts that follow — which is the entire point of it. An event listener set up
+         in <head> cannot do that: the app scripts would already have run by the time it fired. */
+      if (window.__showBootSplash) window.__showBootSplash();
+    </script>
     <div
       id="authScreen"
       style="
@@ -3092,7 +3189,12 @@
          name what it made and offer one tap to take it back. -->
     <div class="capture-undo" id="captureUndo" role="status" aria-live="polite" hidden></div>
 
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Pinned to an exact version, and to the UMD path explicitly. `@latest` is a floating tag: the
+         browser profile for this app is on record serving lucide 1.48.0 and then 1.49.0 on different
+         days from the same URL, so two people could run different code without anything changing here.
+         The bare package root resolves to the CommonJS build, which defines no browser global, so
+         the /dist/umd/ path is stated rather than left to the CDN's default. -->
+    <script src="https://unpkg.com/lucide@1.49.0/dist/umd/lucide.min.js"></script>
 
     <!-- The app logic, split by concern and loaded in this order. The order IS the contract: each
          file is a classic script sharing one global scope, so a file that reads a top-level const

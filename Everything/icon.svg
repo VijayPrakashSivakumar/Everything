@@ -1,5 +1,16 @@
+<!-- The brand mark, on a transparent background.
+
+     The only change from before is the missing <rect>. That filled a rounded square behind the mark,
+     and it is the single reason the app icon appeared to change shape: the splash showed the box,
+     then the app booted and replaced it with the bare mark. Two silhouettes for one brand, in the
+     half-second anyone actually notices.
+
+     The path, the gradient and the stroke are untouched — this is the mark exactly as it was drawn,
+     so the icon is the same drawing the sidebar shows. The mark already sits inside the maskable
+     safe zone (its furthest corner from centre is ~68 of the 80 the inner circle allows), so nothing
+     had to be rescaled to survive a platform mask, and rescaling it is exactly the kind of quiet
+     "adjustment" that makes an icon stop matching the thing it stands for. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-  <rect width="200" height="200" rx="40" fill="#10152b"/>
   <defs>
     <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#4361ee"/>
