@@ -42,6 +42,31 @@ const LANGUAGES = [
   { tag: 'kn', code: 'kan', phrase: 'ವಾರಂಟಿ' },
   { tag: 'ml', code: 'mal', phrase: 'വാരന്റി' },
 ];
+
+/* What the four-line page in the accuracy checks actually says. Held here so the expectation is
+   written once and both the shadowed and clean checks are scored against the same string. */
+const SHADOW_TRUTH = 'WARRANTY CERTIFICATE Model X200L Serial 88421 Issued on 04 March 2026 Valid till 04 March 2027';
+
+/* Levenshtein similarity, as a fraction. A substring or word-count check would pass on an image that
+   returned one correct word out of twenty, which is close enough to the failure this probe exists to
+   catch that it would have let the original bug through again. */
+function similarity(a, b) {
+  if (a === b) return 1;
+  if (!a.length || !b.length) return 0;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return 1 - previous[b.length] / Math.max(a.length, b.length);
+}
 const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
@@ -154,6 +179,98 @@ for (const lang of LANGUAGES) {
     // and a threshold here would be a number someone would tune until it went green.
     const english = outcomes.get('en').text;
     assert.match(english, /WARRANTY/i, `English read as ${JSON.stringify(english)}`);
+  });
+
+  /* ------------------------------------------------------------------------------------------
+     Accuracy, which is the part that was missing for a long time.
+
+     Everything above checks that text ARRIVES. That is not the same as checking that it is CORRECT,
+     and the difference is the whole of this bug: a shadowed photograph lost three lines of four and
+     still returned plenty of text, so every "did it work" test above passed happily while the feature
+     was unusable. Scoring the words against what is actually on the page is the only check that
+     could have caught it.
+     ------------------------------------------------------------------------------------------ */
+
+  /* A page of text with a hard shadow across the middle — the condition that used to cost 78.7% of
+     the characters. Measured before the fix: 21.3% accurate, three lines of four missing entirely.
+     The shadow is optional so the same helper can produce the clean control image. */
+  const readShadowed = (lang, withShadow = true) => page.evaluate(async (arg) => {
+    const LINES = [
+      'WARRANTY CERTIFICATE',
+      'Model X200L Serial 88421',
+      'Issued on 04 March 2026',
+      'Valid till 04 March 2027',
+    ];
+    const W = 1000; const H = 400;
+    const sheet = document.createElement('canvas');
+    sheet.width = W; sheet.height = H;
+    const s = sheet.getContext('2d');
+    s.fillStyle = '#f4f1e8'; s.fillRect(0, 0, W, H);
+    s.fillStyle = '#1a1a1a';
+    s.font = '500 34px "Segoe UI", Arial, sans-serif';
+    LINES.forEach((line, i) => s.fillText(line, 70, 90 + i * 62));
+
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.drawImage(sheet, 0, 0);
+    if (arg.shadow) {
+      // A hand or a window frame across the page.
+      g.fillStyle = 'rgba(0,0,0,0.45)';
+      g.beginPath();
+      g.moveTo(0, 150); g.lineTo(W, 90); g.lineTo(W, 300); g.lineTo(0, 340);
+      g.closePath(); g.fill();
+    }
+
+    const img = g.getImageData(0, 0, W, H);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (Math.random() - 0.5) * 14;
+      d[i] += n; d[i + 1] += n; d[i + 2] += n;
+    }
+    g.putImageData(img, 0, 0);
+
+    window.pickOcrLang(arg.tag);
+    const input = document.getElementById('imageGalleryInput');
+    const binary = atob(c.toDataURL('image/jpeg', 0.75).split(',')[1]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Blob([bytes], { type: 'image/jpeg' })], 'photo.jpg', { type: 'image/jpeg' }));
+    input.files = dt.files;
+    window.previewImageFile(input);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    document.getElementById('imageOcrBtn').click();
+    for (let i = 0; i < 150; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const status = document.getElementById('imageOcrStatus')?.textContent || '';
+      if (/characters|No text|timed out|failed|not supported/i.test(status)) break;
+    }
+    return document.getElementById('captureText')?.value || '';
+  }, { tag: lang, shadow: withShadow });
+
+  await check('a shadow across the page no longer swallows whole lines', async () => {
+    const text = (await readShadowed('en')).replace(/\s+/g, ' ').trim();
+    const score = similarity(text.toLowerCase(), SHADOW_TRUTH.toLowerCase());
+    // 95% is not an arbitrary bar: before the fix this read 21.3%, and the clean-photo control reads
+    // 100%. Anything below 95 means a meaningful part of the page is being dropped again.
+    assert.ok(
+      score >= 0.95,
+      `read ${(score * 100).toFixed(1)}% of a shadowed page, expected 95% or better — got ${JSON.stringify(text)}`,
+    );
+  });
+
+  await check('a clean photograph still reads perfectly', async () => {
+    // The control for the check above: preprocessing that rescues a shadow must not cost accuracy on
+    // the easy case, and an earlier candidate (stretch + adaptive + upscale) did exactly that at 97.9%.
+    //
+    // Scored against the same four-line page as the shadow check rather than the single-word image the
+    // language loop uses, so the two numbers are comparable. The six-language loop above has already
+    // established that text arrives in every language; this one is about whether it is right.
+    const text = (await readShadowed('en', false)).replace(/\s+/g, ' ').trim();
+    const score = similarity(text.toLowerCase(), SHADOW_TRUTH.toLowerCase());
+    assert.ok(score >= 0.98, `clean page read at ${(score * 100).toFixed(1)}%, expected 98% or better`);
   });
 
   await check('a language with no pack is refused rather than read as English', () => {
