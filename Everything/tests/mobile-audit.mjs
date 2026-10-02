@@ -11,13 +11,26 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolvePort } from './test-server.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const CHROME = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const VIEWPORT = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
+/* Both ports are allocated rather than hard-coded.
+
+   This used to be a fixed 8731 for the static server and 8732 for Chrome's debugging endpoint, and
+   that made this suite collide with anything else already on those ports: a Chrome left running by an
+   earlier run, or the second copy of this suite. The failure is nastier than a port error, because
+   `server.listen` on a busy port throws EADDRINUSE, the whole process dies with no report, and the
+   suite is recorded as FAILED — so an unrelated stale process made it look as though the phone layout
+   had regressed. It cost real time being diagnosed twice.
+
+   resolvePort() is the shared allocator every other probe already uses. It walks upward from the
+   requested base until it finds a genuinely free one, and writes the answer back into the binding —
+   which matters here because DEBUG_PORT is derived from PORT below and Chrome is launched with it. */
 let PORT = 8731;
-const DEBUG_PORT = PORT + 1;
+let DEBUG_PORT = PORT + 1;
 
 const results = [];
 function record(ok, name, detail) {
@@ -81,21 +94,43 @@ async function cdpConnect(wsUrl) {
   };
 }
 
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'everything-audit-'));
-const chrome = spawn(CHROME, [
-  '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-  '--disable-extensions', `--remote-debugging-port=${DEBUG_PORT}`,
-  `--user-data-dir=${profile}`, 'about:blank',
-], { stdio: 'ignore' });
+/* Chrome is started by launchChrome() from inside main(), not here at module scope.
+
+   It used to be spawned at the top level, which meant it was launched before the ports were allocated
+   and so always claimed the hard-coded 8732 — a stale Chrome already holding that port made this one
+   fail to start, and the suite reported a layout problem that had nothing to do with layout.
+
+   `chrome` is declared here and assigned later so cleanup() can still reach it on the way out. */
+let profile = null;
+let chrome = null;
+
+function launchChrome() {
+  profile = fs.mkdtempSync(path.join(os.tmpdir(), 'everything-audit-'));
+  chrome = spawn(CHROME, [
+    '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+    '--disable-extensions', `--remote-debugging-port=${DEBUG_PORT}`,
+    `--user-data-dir=${profile}`, 'about:blank',
+  ], { stdio: 'ignore' });
+}
 
 function cleanup() {
-  try { chrome.kill(); } catch (e) { /* already exited */ }
+  try { chrome?.kill(); } catch (e) { /* already exited */ }
   try { server.close(); } catch (e) { /* already closed */ }
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) { /* best effort */ }
+  try { if (profile) fs.rmSync(profile, { recursive: true, force: true }); } catch (e) { /* best effort */ }
 }
 process.on('exit', cleanup);
 
 async function main() {
+  /* Both ports are claimed before anything binds them, and before Chrome is started.
+
+     Two are needed and they have no reason to be adjacent — the earlier code simply assumed DEBUG_PORT
+     was PORT + 1, and that assumption is what made a stale Chrome on 8732 look like a layout
+     regression. resolvePort walks upward from the requested base to the first genuinely free port, and
+     writes it back into the binding, which is what Chrome is then launched with. */
+  PORT = await resolvePort(PORT, (p) => { PORT = p; });
+  DEBUG_PORT = await resolvePort(DEBUG_PORT, (p) => { DEBUG_PORT = p; });
+
+  launchChrome();
   await new Promise((resolve) => server.listen(PORT, resolve));
 
   let ready = null;
