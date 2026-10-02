@@ -6,11 +6,16 @@ inbox, calendar, projects, goals, and AI-assisted search.
 ## Files
 - `index.html` — page structure
 - `style.css` — all styling
-- `script.js` — app logic (local state + optional multi-user sync)
+- `js/` — the app logic, split by concern and loaded in the order `index.html` writes down. The order
+  is the contract: `core.js` holds config and the Supabase client, `model.js` the data layer, then the
+  UI and feature modules, with `init.js` last because it is what builds `state`. (There is no
+  `script.js`; it was one file until it was split — see commit `558deec`.)
 - `sw.js` — service worker (offline shell + push notifications)
 - `api/ask.js` — AI search endpoint (`/api/ask`)
-- `api/send-due-notifications.js` — cron/API that pushes due reminders to closed apps
-- `scripts/check-vapid.mjs` — verifies a VAPID key pair matches `script.js` (`cd Everything/api && npm run check:vapid`)
+- `api/send-due-notifications.js` — cron/API that pushes due reminders to a closed app, and the
+  server leg of the morning digest
+- `scripts/check-vapid.mjs` — verifies a VAPID key pair matches the public key in `js/core.js`
+  (`cd Everything/api && npm run check:vapid`)
 - `vercel.json` — declares that cron (also kept in `api/vercel.json`; see *Cron cadence*)
 
 ## Features
@@ -82,9 +87,9 @@ inbox, calendar, projects, goals, and AI-assisted search.
 
 ## What is built, and what is not
 
-Audited against the source on **30 September 2026**, not against a plan. Roughly half of the usual
-feature wishlist is already here, and the largest remaining item is not a feature at all but a
-correctness fix — so this table exists to stop anyone re-adding something that shipped.
+Audited against the source on **2 October 2026**, not against a plan. Roughly half of the usual
+feature wishlist is already here — so this table exists to stop anyone re-adding something that
+shipped.
 
 **🟢 Complete**
 
@@ -97,6 +102,7 @@ correctness fix — so this table exists to stop anyone re-adding something that
 | People | contacts; birthdays; important dates; notes; linked items; merge; rename |
 | Documents | photograph + OCR; receipts; bills; warranties; 30-day reminders |
 | Money | expenses; bills; subscriptions; payment reminders; recurring payments |
+| Morning digest | **both legs**: the client fires it while the app is open, and `api/send-due-notifications.js` computes and pushes it for a closed app, opted in through `digest_preferences` (migration 008). See *The server leg* |
 
 **🟡 Partial**
 
@@ -106,7 +112,7 @@ correctness fix — so this table exists to stop anyone re-adding something that
 | Projects | tasks; deadlines; progress; dashboard | **notes**, **files** |
 | Goals | goals → projects → tasks; progress | a real **weekly review** — there is a Review view, but no ritual |
 | Household | shared tasks and events; roles; private vs shared | **responsibilities** — items attach to a *person name*, not to a member's account |
-| Insights | patterns; unfinished tasks; deadlines; 14-day chart; a daily digest | a **weekly** rollup, and the daily digest is client-side only |
+| Insights | patterns; unfinished tasks; deadlines; 14-day chart; a daily digest | a **weekly** rollup |
 | Security | privacy; private/shared; backup; export; delivery history | **activity history** — no "who changed what, when" |
 | Mobile | quick capture; notification actions; voice; camera | **home-screen widgets** |
 
@@ -116,19 +122,16 @@ correctness fix — so this table exists to stop anyone re-adding something that
 | --- | --- |
 | Integrations | **nothing** — no calendar, email, contacts, cloud storage, maps or messaging |
 
-### The largest remaining item is a bug, not a feature
+### This table has already been wrong once
 
-The **morning digest is built on the client**, so it fires when the app is open or was opened that
-day. Real reminders *do* reach a closed app through the service worker and the server cron — the
-digest does not, and that inconsistency is the problem. It is the one entry here that is a
-correctness fix rather than a missing feature, which is why it outranks everything below it.
+The previous version of this section claimed the morning digest was client-side only and called it
+"the largest remaining item — a bug, not a feature". That was true when it was written and stopped
+being true once the server leg shipped: `digest_preferences`, `fetchDigestPreferences` and
+`deliverDailyDigests` all exist, and the *same document* documents them under *The server leg*. A
+status table that contradicts its own later sections is worse than no table, because it is read as
+current.
 
-The full reasoning, and the three things that have to be true before it can move, are in *The
-morning digest* → *What it does not do*. Nothing more is repeated here on purpose.
-
-### This table will go stale
-
-It is a point-in-time reading of the source, not a live fact, and nothing enforces it. It is
+So this is a point-in-time reading of the source, not a live fact, and nothing enforces it. It is
 correct **as of the date above** and should be re-audited rather than trusted indefinitely. A claim
 here is only as good as the search that produced it — the dead-code audit exists for the same
 reason, and a table nobody re-reads is a table that quietly starts lying.
@@ -1753,17 +1756,17 @@ turned back on, so the settings copy always says what it will do.
 Tapping the digest opens **Today**, where everything it lists already lives. That needed a
 `?view=today` deep link, added to the existing `?item=` / `?notifAction=` handler.
 
-### What it does not do
+### What it still does not do
 
-- **The digest is built on the client**, from the items the app has loaded. It therefore fires when
-  the app is open or has been opened that day. Items with a real reminder time are still delivered
-  by the service worker and the server cron with the app genuinely closed; the digest is not, yet.
-  Making it work fully closed means computing it in `api/send-due-notifications.js` from Supabase
-  and pushing to every device — the push machinery is all there, the query is not.
-- The **server** would need the same "stay quiet" rules, or it would disagree with the client about
-  whether a day is worth mentioning.
-- Per-user preference is `localStorage` on one device. A phone and a laptop each keep their own
-  setting, and only one of them sends.
+- Per-user preference is `localStorage` **and** a row in `digest_preferences`. The client toggles both,
+  best-effort, so a device that cannot reach the database still sends its own digest — but a phone and
+  a laptop can disagree about whether the digest is on at all until each is opened once.
+- The client leg reads the items the app has loaded; the server leg reads Supabase. They are written
+  to agree (same three counts, same quiet rules, same notification `tag`) but they are two
+  implementations of one rule, and nothing tests them against each other.
+- **Vercel Hobby allows one cron run a day**, at 01:00 UTC. That is the middle of the night for
+  London, so the server leg *declines* to deliver there rather than waking someone up — see *The
+  hour is a window, not a clock*. The digest is genuinely reliable only inside that window.
 
 `morning-digest-probe.mjs` is mostly about silence: that a quiet day returns no digest at all, that
 it stays quiet before the chosen hour and when switched off, that it never sends twice, and that a

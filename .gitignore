@@ -11,3 +11,9 @@ node_modules/
 tmp-*
 tmp/
 shot-*.png
+# A crash log or a one-off scratch note lands in the root under some arbitrary name — `z.txt` was a
+# Node stack trace that got committed, un-committed and committed again. The pattern above only catches
+# names that start with `tmp-`, so it cannot catch a file called anything else. These are two shapes a
+# `git add -A` should never be able to sweep in.
+*.log
+/z.txt
