@@ -87,6 +87,12 @@ const SUITES = [
   // feature nobody used — nothing errored and no suite noticed. This one reads real rendered text in
   // all six scripts through the real button, so the name cannot be wrong and nothing can be stubbed.
   { name: 'imageocr', file: 'image-ocr-probe.mjs', timeoutMs: 300000 },
+  // The menu was empty at boot, on every device. renderNav() is called from nine places but never from
+  // init, so nothing drew the navigation until the person happened to navigate somewhere else. Every
+  // other probe navigates in its own setup — which is itself a renderNav() call — so the menu was always
+  // drawn before they looked at it. This one asks what is on screen *at load*, and on a phone checks the
+  // drawer opens onto a list rather than onto nothing.
+  { name: 'menu', file: 'menu-audit-probe.mjs', timeoutMs: 240000 },
   // Money rests on one number. A float creeps in, a total is off by a paisa, and nobody notices for
   // a month. Every check here is one of the ways that happens.
   { name: 'money', file: 'money-probe.mjs', timeoutMs: 180000 },

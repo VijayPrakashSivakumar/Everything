@@ -18,6 +18,22 @@ restoreSidebarCollapse();
 syncSidebarMode();
 repairVersionMismatch();
 refreshIcons();
+/* Draw the menu.
+
+   This was missing, and it is the only thing that draws the menu at boot. renderNav() is called from
+   nine other places — switchView, the item panel, model writes, utils — but on none of them during
+   startup, so #navList sat empty until the person happened to navigate somewhere.
+
+   For a signed-in user the gap was invisible: Firestore's onSnapshot callbacks call renderNav() as
+   data arrives, so the menu appeared a moment after loading. It was therefore "always broken" for
+   anyone who never receives that data — a signed-out visitor, a Firestore stream that errors, or the
+   first paint before the connection is up — and on a phone the sidebar drawer opened onto nothing at
+   all, with no list to tap.
+
+   Calling it here costs one innerHTML write at boot and removes the dependency on data arriving to
+   draw the navigation. The active item is still decided by activeView, so this does not mark the wrong
+   one as current. */
+renderNav();
 updateNotifBtn();
 renderQuote();
 restoreNudge();
