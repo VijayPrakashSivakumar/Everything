@@ -14,7 +14,7 @@
 // symmetric about UTC cannot pass both.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp } from './test-server.mjs';
 
 const PORT = 4457;
 
@@ -38,8 +38,7 @@ try {
     timezoneId: 'Asia/Kolkata', // UTC+5:30, the zone the bug was reported from
   });
   page.setDefaultTimeout(8000);
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
   await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
 
   await check('the page really is running in the forced timezone', async () => {
@@ -191,8 +190,7 @@ await check('the fix holds west of UTC too', async () => {
     viewport: { width: 1280, height: 900 },
     timezoneId: 'America/Los_Angeles',
   });
-  await west.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await west.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(west, PORT);
   const r = await west.evaluate(() => {
     const box = '2026-10-05T17:30';
     return { box, shown: DATE_TIME.toDateTimeLocalValue(DATE_TIME.fromDateTimeLocal(box)) };

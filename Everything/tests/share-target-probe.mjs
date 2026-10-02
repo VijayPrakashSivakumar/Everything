@@ -7,7 +7,7 @@
 // drive the real service worker with a real multipart body and read what the page actually collects.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp, waitForApp } from './test-server.mjs';
 
 let PORT = 4416;
 
@@ -25,8 +25,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
   await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
   // Real writes are stubbed out so nothing reaches an account — but the share POST below must
   // genuinely reach the service worker, so the real fetch is kept under a separate name.
@@ -68,9 +67,7 @@ try {
        words as lost, when the share had worked perfectly. Waiting on the app itself is both the fix
        and the honest signal: if the sheet never opens, that is a real failure and the wait says so. */
     await page.waitForURL(/\?share=1/, { timeout: 15000 });
-    await page.waitForFunction(() => typeof window.setThemeConcept === 'function', null, {
-      timeout: 15000,
-    });
+    await waitForApp(page);
   };
 
   await check('the manifest actually declares a share target', async () => {
@@ -141,9 +138,7 @@ try {
     await page.reload({ waitUntil: 'commit' });
     // Same reasoning as share(): 'commit' returns before the document exists, so anything read next
     // would be read from a half-built page. Waiting for the app to boot is the readiness signal.
-    await page.waitForFunction(() => typeof window.setThemeConcept === 'function', null, {
-      timeout: 15000,
-    });
+    await waitForApp(page);
     await page.waitForTimeout(1500);
     const after = await page.evaluate(() => ({
       value: document.getElementById('captureText').value,

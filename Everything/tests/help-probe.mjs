@@ -9,7 +9,7 @@
 // bubble is genuinely visible rather than merely present in the DOM.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp } from './test-server.mjs';
 
 let PORT = 4411;
 const OUT = new URL('../tmp/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
@@ -32,8 +32,7 @@ try {
   // Playwright's default actionability wait is 30s per click. A selector that is present but
   // hidden would burn that silently and look like a hang, so a failure here surfaces in seconds.
   page.setDefaultTimeout(6000);
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
   await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
   await page.evaluate(() => { if (typeof renderNav === 'function') renderNav(); });
   // The capture fields live in a modal that starts closed, so without this every click below waits

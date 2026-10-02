@@ -93,7 +93,53 @@ for (const name of readdirSync(here)) {
   }
 }
 
-/* ---------- 3. The probes are shaped correctly ---------- */
+/* ---------- 3. Third-party CDN URLs are pinned ---------- */
+
+/* A floating tag means the code that runs in production is not necessarily the code that was tested.
+   index.html carried `lucide@latest` for most of this project's life, and this project's own browser
+   profile is on record serving 1.48.0 and then 1.49.0 from that one URL on different days.
+
+   The rule is an exact version and nothing looser — not a range, not `latest`, not a bare major. The
+   one exception is written down here rather than left to judgement: tesseract is fetched lazily at the
+   moment someone presses "Read text", it is explicitly allowed to fail, and a broken OCR path is a
+   one-line message rather than a failed boot. */
+// A version is acceptable only when it is exact. `latest` is the floating tag, and a range such as
+// 2.x or 1.3.x resolves to something different over time — both are rejected here. The test is on
+// the extracted version rather than the whole URL, because the tag sits in the middle of the path.
+const FLOATING_VERSION = /^(latest|next|canary|main|master)$|\.\.|[xX*]/;
+const VENDOR_HOSTS = ['cdn.jsdelivr.net', 'unpkg.com'];
+const vendorScripts = [...htmlSource.matchAll(/<script src="(https:\/\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+
+for (const url of vendorScripts) {
+  let host = '';
+  try { host = new URL(url).hostname; } catch { /* not a URL at all; reported below */ }
+  if (!VENDOR_HOSTS.includes(host)) continue;
+
+  // Version is the segment after the LAST @, because a scoped package name starts with one itself:
+  // `@supabase/supabase-js@2.117.2` carries an @ that is not a version. Reading the first @ makes the
+  // scope look like the package and the real version look exact by accident.
+  const spec = url.match(/\/npm\/(.+)@([^/@]+)|@([^/@]+)\/dist\//);
+  const version = spec ? (spec[2] || spec[3]) : '';
+  if (!version) {
+    note(`CDN    ${url}\n       could not read a version out of this CDN URL; state it explicitly.`);
+  } else if (FLOATING_VERSION.test(version)) {
+    note(`CDN    ${url}\n       a CDN script must name one exact version, not "${version}".`);
+  }
+}
+
+/* The service worker precaches those same files so the shell boots offline. It used to carry its own
+   copy of the list, and when index.html was pinned the list was not — so an offline install kept
+   fetching the old floating tag. It now derives them from the shell, and this asserts it still does,
+   because the failure is invisible: everything works online and only the cached copy is stale. */
+const swSource = readFileSync(path.join(appDir, 'sw.js'), 'utf8');
+if (/const\s+VENDOR_FILES\s*=\s*\[/.test(swSource)) {
+  note('CDN    sw.js still hard-codes its own vendor URL list; derive it from index.html instead.');
+}
+if (!/vendorFilesFromShell/.test(swSource)) {
+  note('CDN    sw.js no longer derives its precached vendor URLs from index.html.');
+}
+
+/* ---------- 4. The probes are shaped correctly ---------- */
 
 const probeFiles = readdirSync(here).filter((name) => name.endsWith('.mjs') && name !== 'run-all.mjs' && name !== 'verify.mjs');
 
@@ -135,7 +181,7 @@ for (const name of probeFiles) {
   }
 }
 
-/* ---------- 4. Every suite in the runner exists on disk ---------- */
+/* ---------- 5. Every suite in the runner exists on disk ---------- */
 
 const runner = readFileSync(path.join(here, 'run-all.mjs'), 'utf8');
 const onDisk = new Set(readdirSync(here));

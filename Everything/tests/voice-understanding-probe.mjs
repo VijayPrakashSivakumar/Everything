@@ -11,7 +11,7 @@
 // rules are what decide a plain "call Ravi tomorrow", and that is the case that has to work.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp } from './test-server.mjs';
 
 let PORT = 4413;
 
@@ -28,8 +28,7 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(6000);
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
   await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
   // Every item created here is thrown away by reloading, so nothing reaches a real account.
   await page.evaluate(() => { window.fetch = () => Promise.resolve({ ok: false, status: 0, json: async () => ({}) }); });

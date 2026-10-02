@@ -8,7 +8,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp, waitForApp } from './test-server.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -73,8 +73,7 @@ try {
     // stylesheet asks for, not the ones an environment happens to force.
     reducedMotion: 'no-preference',
   });
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
   await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
   // The nav is only built when someone signs in. Build it so the screenshots show the whole
   // app, and so a theme that makes sidebar text unreadable is visible rather than subtle.
@@ -229,7 +228,7 @@ try {
     assert.equal(atBoot.concept, 'premium', 'the head script must apply the concept');
     assert.ok(atBoot.scheme, 'the head script must resolve a scheme');
     await page.reload({ waitUntil: 'commit' });
-    await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+    await waitForApp(page);
     const after = await page.evaluate(tokens);
     assert.equal(after.concept, 'premium', 'the concept must survive a reload');
     assert.equal(after.accent, '#8a6d3b', 'the premium accent must still be in force');

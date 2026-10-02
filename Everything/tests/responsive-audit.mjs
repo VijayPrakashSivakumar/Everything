@@ -8,7 +8,7 @@
 // a phone, so 768px had no owner at all. Reading style.css does not show that, because each rule
 // looks correct on its own; the gap only shows up when the same page is measured at seven widths.
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp } from './test-server.mjs';
 
 let PORT = 4451;
 
@@ -34,8 +34,7 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(8000);
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
 
   await page.evaluate(() => {
     document.getElementById('authScreen').style.display = 'none';

@@ -12,7 +12,7 @@
 // unreachable, which is the exact failure the dead-code audit keeps catching elsewhere.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp } from './test-server.mjs';
 
 let PORT = 4423;
 const results = [];
@@ -28,8 +28,7 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(8000);
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
   await page.evaluate(() => {
     document.getElementById('authScreen').style.display = 'none';
     // Real writes are stubbed so nothing reaches an account; every item here is thrown away.

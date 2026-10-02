@@ -10,7 +10,7 @@
 // just makes the app flat again and nobody notices for a month.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { startTestServer, testUrl } from './test-server.mjs';
+import { startTestServer, testUrl, bootApp } from './test-server.mjs';
 
 let PORT = 4455;
 
@@ -38,8 +38,7 @@ const open = (reducedMotion) => browser.newPage({
 try {
   const page = await open('no-preference');
   page.setDefaultTimeout(8000);
-  await page.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(page, PORT);
   await page.evaluate(() => {
     document.getElementById('authScreen').style.display = 'none';
     state.items = [
@@ -258,8 +257,7 @@ await check('every motion keyframe uses tokens, not literal durations', async ()
   /* ---- reduced motion: the same page, asking for none ---- */
   const still = await open('reduce');
   still.setDefaultTimeout(8000);
-  await still.goto(testUrl(PORT), { waitUntil: 'commit' });
-  await still.waitForFunction(() => typeof window.setThemeConcept === 'function');
+  await bootApp(still, PORT);
   await still.evaluate(() => {
     document.getElementById('authScreen').style.display = 'none';
     if (typeof switchView === 'function') switchView('tasks', { history: 'none' });

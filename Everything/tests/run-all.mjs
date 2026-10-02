@@ -66,10 +66,16 @@ const SUITES = [
   { name: 'localmodel', file: 'local-model-url-probe.mjs', timeoutMs: 120000 },
   // The one thing that can lose data: two devices offline at the same time.
   { name: 'sync', file: 'sync-conflict-probe.mjs', timeoutMs: 120000 },
-// The Schedule view's day grid, the drag-to-reschedule engine, and the recurring series that rolls
-// itself forward. They share one probe because they share one file â€” a drag writes through the same
-// occurrence rules a completion does, and splitting them would let the two halves disagree.
-{ name: 'calendar', file: 'calendar-probe.mjs', timeoutMs: 180000 },
+  // projects-probe.mjs is deliberately NOT here. Every other suite in this file boots the app from
+  // the local static server, but that one drives a *deployed* URL in a throwaway profile — it exists
+  // to check what actually shipped. Listing it made `npm test` wait on the network, and it blew the
+  // suite budget, so it stays a separate command: `npm run probe:projects`.
+  //
+  // dead-code-audit.mjs knows about this and fails if it is ever added here.
+  // The Schedule view's day grid, the drag-to-reschedule engine, and the recurring series that rolls
+  // itself forward. They share one probe because they share one file — a drag writes through the same
+  // occurrence rules a completion does, and splitting them would let the two halves disagree.
+  { name: 'calendar', file: 'calendar-probe.mjs', timeoutMs: 180000 },
   // A document is reminded by its expiry, which means a date has to survive a round trip through
   // JSON, a jsonb column and a timezone without moving by a day. Every one of those failure modes
   // looks like a working feature and quietly lies about when something lapses.

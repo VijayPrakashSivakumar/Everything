@@ -99,3 +99,65 @@ export async function startTestServer(requestedPort, assignTo) {
   child.kill();
   throw new Error(`static server never came up on ${TEST_HOST}:${port} (${reason})`);
 }
+
+/* ---------- booting the app ---------- */
+
+/* Every probe opened the page the same way and waited for the same global:
+
+     await page.goto(testUrl(PORT), { waitUntil: 'commit' });
+     await page.waitForFunction(() => typeof window.setThemeConcept === 'function');
+
+   Two things were wrong with that, and both had to be fixed rather than papered over with a longer
+   timeout.
+
+   The gate was too early. `setThemeConcept` is declared in js/shell.js, but `state` is assigned in
+   js/init.js, which index.html loads *after* it. So the wait could return while the data layer did
+   not exist yet, and the next line — anything touching `state` — failed with `Cannot set properties
+   of null`. That race was invisible while the boot was slow, because the blocking CDN scripts gave
+   init plenty of time to finish first.
+
+   The diagnostic was useless. The gate depends on jsdelivr and unpkg answering, because those are
+   blocking <script src> tags ahead of every app script. When they were slow, four suites
+   (conversation, nextaction, documents, money) died on this line with a bare `TimeoutError`, which
+   reads as a logic failure in whatever feature the probe was written for. So a timeout now says
+   which of the two causes it was, by looking at what actually failed to load.
+
+   The libraries themselves are deliberately NOT stubbed. That was tried and reverted: chrono-node is
+   genuinely load-bearing for the date extraction several probes assert on, and signout-probe drives
+   `sb.auth.signOut`, so replacing the CDN with empty stubs would have deleted real coverage rather
+   than making the suite faster. The boot is a network dependency and pretending otherwise would be a
+   worse lie than the timeout was. */
+const APP_BOOTED = () => {
+  if (typeof window.setThemeConcept !== 'function') return false;
+  // `state` is a top-level `let`, reachable here in page scope but not as a property of `window`.
+  try { return typeof state !== 'undefined' && !!state; } catch { return false; }
+};
+
+/* Waits until the app has finished booting, without navigating. Use after a reload or a redirect
+   where `page.goto` is not the call that loaded the document.
+
+   Exported because the share target probe lands on the app twice — once by redirect, once by reload —
+   and both need the same signal as the initial boot. `bootApp` covers the first of those. */
+export async function waitForApp(page, { timeout = 30000 } = {}) {
+  await page.waitForFunction(APP_BOOTED, null, { timeout });
+}
+
+/* Loads the app and waits until it has finished booting, then says why if it did not. */
+export async function bootApp(page, port, { timeout = 45000 } = {}) {
+  const failedVendor = [];
+  page.on('requestfailed', (r) => {
+    if (/cdn\.jsdelivr\.net|unpkg\.com/.test(r.url())) failedVendor.push(r.url());
+  });
+
+  await page.goto(testUrl(port), { waitUntil: 'commit' });
+  try {
+    await page.waitForFunction(APP_BOOTED, null, { timeout });
+  } catch (err) {
+    const cause = failedVendor.length
+      ? `these third-party scripts did not load: ${failedVendor.join(', ')}. ` +
+        'That is a network or CDN problem, not a fault in the code under test.'
+      : 'no CDN request failed, so this looks like a broken or reordered script rather than a ' +
+        'slow network — check the script order in index.html.';
+    throw new Error(`the app never finished booting at ${testUrl(port)} within ${timeout}ms. ${cause} (${err.message})`);
+  }
+}

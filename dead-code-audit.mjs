@@ -9,6 +9,7 @@
 // something a grep for a call would miss. So every candidate is reported with the evidence that
 // cleared or convicted it, and "used only by tests" is a separate bucket from "used by nobody" —
 // a probe that exercises a function is a reason to keep it, not a reason to delete it.
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +55,8 @@ const out = {
   deadRoutes: [],
   brokenScripts: [],
   commentedOut: [],
+  orphanProbes: [],
+  strayFiles: [],
 };
 
 // ---- functions ---------------------------------------------------------------------------------
@@ -151,6 +154,65 @@ for (const file of ['Everything/script.js', 'Everything/sw.js', 'Everything/api/
   if (fs.existsSync(full)) out.commentedOut.push(...findCommentedOutCode(file, fs.readFileSync(full, 'utf8')));
 }
 
+// ---- probes the runner never starts ----------------------------------------------------------------
+/* A probe that exists but is not listed in run-all.mjs is coverage that silently does not happen.
+
+   The runner's own header describes exactly this failure: a suite that cannot start exits non-zero,
+   every suite chained after it never runs, and the output just stops mid-list. Nothing in this audit
+   could see that class of problem, because the dead-code checks ask whether *app* code is
+   unreferenced, and a probe nobody runs looks exactly like a probe that is thoroughly referenced.
+
+   So the question is asked directly. Every .mjs in tests/ must be accounted for: either the runner
+   starts it, or it is named in NOT_A_SUITE below as deliberately separate. An unlisted probe that
+   nobody claimed is a finding.
+
+   One probe is genuinely not a suite. test-server.mjs is a library the probes import. projects-probe
+   drives a *deployed* URL rather than the local static server, so it answers "did this actually
+   ship" instead of "is this source correct" — it needs the network and cannot share the runner's
+   hermetic budget. It is reachable as `npm run probe:projects`. */
+const runnerSource = fs.readFileSync(path.join(testDir, 'run-all.mjs'), 'utf8');
+const SHARED_HELPERS = new Set(['test-server.mjs', 'run-all.mjs']);
+const NOT_A_SUITE = new Map([
+  ['projects-probe.mjs', 'drives a deployed URL; run with: npm run probe:projects'],
+]);
+for (const file of fs.readdirSync(testDir).filter((f) => f.endsWith('.mjs'))) {
+  if (SHARED_HELPERS.has(file) || NOT_A_SUITE.has(file)) continue;
+  if (!runnerSource.includes(file)) out.orphanProbes.push(file);
+}
+
+// ---- stray files in the repository root ------------------------------------------------------------
+/* The root is for the app, its server and its tooling. A crash log or a one-off scratch note is not
+   any of those, and z.txt — a Node stack trace — was committed, removed and then committed again by a
+   revert before this check existed. Anything unrecognised in the root is reported by name.
+
+   Read through `git ls-files` so an ignored scratch file on one machine is not mistaken for a defect,
+   while a file that was actually committed still is one. */
+const KNOWN_ROOT = new Set([
+  '.env.example', '.gitignore', 'package.json', 'package-lock.json',
+  'serve.mjs', 'audit.mjs', 'dead-code-audit.mjs',
+]);
+const tracked = new Set(
+  (spawnSync('git', ['ls-files'], { cwd: here, encoding: 'utf8' }).stdout || '')
+    .split('\n').map((s) => s.trim()).filter(Boolean),
+);
+// Files `.gitignore` already covers cannot be swept in by `git add -A`, so reporting them would be
+// noise on every run — and noise in this report is what trains a reader to stop reading it. Only an
+// untracked file that git would actually stage is a finding.
+const ignored = new Set(
+  (spawnSync('git', ['status', '--porcelain', '--ignored', '--untracked-files=all'], {
+    cwd: here, encoding: 'utf8',
+  }).stdout || '')
+    .split('\n')
+    .filter((l) => l.startsWith('!! '))
+    .map((l) => l.slice(3).trim().replace(/\\/g, '/').split('/').pop()),
+);
+for (const name of fs.readdirSync(here)) {
+  if (KNOWN_ROOT.has(name) || tracked.has(name) || ignored.has(name)) continue;
+  if (fs.statSync(path.join(here, name)).isDirectory()) continue;
+  if (fs.existsSync(path.join(here, '.git', name))) continue;
+  out.strayFiles.push(name);
+}
+
 // ---- report ------------------------------------------------------------------------------------
 const line = (s) => console.log(s);
 if (process.argv.includes('--debug')) {
@@ -183,9 +245,18 @@ if (process.argv.includes('--json')) {
     (r) => `${r.name} -> ${r.missing}`);
   section('COMMENTED-OUT CODE — a whole-line comment that is really a statement', out.commentedOut,
     (r) => `${r.file}:${r.line}  ${r.text}`);
+  section('PROBES THE TEST RUNNER NEVER STARTS — coverage that does not happen', out.orphanProbes,
+    (r) => `${r}  (add it to Everything/tests/run-all.mjs)`);
+  // Deliberate exclusions are printed rather than kept quiet. A probe that is not a suite is a
+  // decision someone made, and a decision nobody can see is how it quietly stops being true.
+  section('PROBES DELIBERATELY NOT IN `npm test` — reachable another way',
+    [...NOT_A_SUITE].map(([file, why]) => ({ file, why })),
+    (r) => `${r.file}  (${r.why})`);
+  section('STRAY FILES IN THE REPOSITORY ROOT', out.strayFiles, (r) => r);
 
   const total = out.deadFunctions.length + out.deadClasses.length + out.deadRoutes.length
-    + out.brokenScripts.length + out.commentedOut.length;
+    + out.brokenScripts.length + out.commentedOut.length + out.orphanProbes.length
+    + out.strayFiles.length;
   if (out.testOnlyFunctions.length) {
     line(`\nKept alive by a probe, not dead: ${out.testOnlyFunctions.map((r) => r.name).join(', ')}`);
   }
