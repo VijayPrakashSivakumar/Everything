@@ -3,7 +3,7 @@ const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-09-30.1";
+const APP_BUILD = "2026-10-02.1";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a
@@ -29,7 +29,21 @@ function repairVersionMismatch() {
   location.replace(location.href.split("#")[0] + "?build=" + expected);
 }
 
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+/* The Supabase client, or null when the library is not there.
+
+   index.html says this app is offline-first and that a missing library degrades one feature rather
+   than breaking the app — but this line used to be `supabase.createClient(...)` with no guard, so a
+   blocked or failed CDN threw `supabase is not defined` here, at the top level of the first app
+   script. That killed every subsequent script in the page: no state, no rendering, a blank screen
+   and no way to capture anything offline. The offline promise was only ever true while the CDN was
+   reachable.
+
+   Every later use is already written as `sb?.…`, so null is the shape the rest of the file expects.
+   The one thing that must not happen is throwing here, because a top-level throw takes the page
+   down with it. */
+const sb = typeof supabase !== "undefined" && supabase?.createClient
+  ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null;
 
 /* Opening index.html straight from disk runs the app on the file:// protocol, where the
    browser refuses every fetch("/api/...") call with a bare 403. The server is never reached,
@@ -2107,7 +2121,15 @@ function handleAuthStateChange(event, session) {
   }
 }
 
-sb.auth.onAuthStateChange(handleAuthStateChange);
+/* Top-level, so it runs while core.js is still evaluating — and it used to throw
+   `Cannot read properties of null (reading 'auth')` when the Supabase library had not loaded, which
+   is the same blocked-CDN case as the client above. Nothing here may throw: an exception at the top
+   level of a script stops every line after it in that file from running.
+
+   Without a client there is no session to watch, so the app stays exactly where the offline path
+   leaves it: signed out, working from local storage. The auth screen is already visible by default,
+   so there is nothing to switch on and nothing to restore. */
+if (sb) sb.auth.onAuthStateChange(handleAuthStateChange);
 
 function showSettingsTab(tab) {
   const panel = document.getElementById("settingsTab-" + tab);

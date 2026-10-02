@@ -1,6 +1,6 @@
 // Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
 // phones keep serving the previous cached version and the new UI appears not to work.
-const CACHE_NAME = 'everything-shell-v46';
+const CACHE_NAME = 'everything-shell-v47';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed
@@ -40,11 +40,35 @@ const SHELL_FILES = [
   './icon.svg'
 ];
 
-/* Cross-origin libraries. Cached best-effort so the shell still boots offline. */
-const VENDOR_FILES = [
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
-  'https://cdn.jsdelivr.net/npm/chrono-node@1/dist/chrono.min.js'
-];
+/* Cross-origin libraries. Cached best-effort so the shell still boots offline.
+
+   These are read out of index.html during install rather than written out here, because a second
+   copy of a CDN URL is a second thing to forget — and it already was one: index.html moved to a
+   pinned version while this list still pointed at the old floating tag, so an offline install kept
+   serving whatever the CDN happened to return that day instead of the version under test.
+
+   Deriving them means a mismatch is impossible by construction. The shell file is fetched anyway,
+   and a CDN URL that has not loaded yet is simply not precached: the network-first path still gets
+   it, which is the same outcome as before this was derived. */
+const VENDOR_HOSTS = ['cdn.jsdelivr.net', 'unpkg.com'];
+
+function vendorFilesFromHtml(html) {
+  return [...html.matchAll(/<script src="(https:\/\/[^"]+)"><\/script>/g)]
+    .map(m => m[1])
+    .filter(url => {
+      try { return VENDOR_HOSTS.includes(new URL(url).hostname); } catch { return false; }
+    });
+}
+
+async function vendorFilesFromShell() {
+  try {
+    const res = await fetch('./index.html', { cache: 'reload' });
+    if (!res.ok) return [];
+    return vendorFilesFromHtml(await res.text());
+  } catch {
+    return [];
+  }
+}
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
@@ -53,7 +77,8 @@ self.addEventListener('install', event => {
     await cache.addAll(SHELL_FILES);
 
     // Never let a flaky CDN break the install.
-    await Promise.all(VENDOR_FILES.map(async url => {
+    const vendorFiles = await vendorFilesFromShell();
+    await Promise.all(vendorFiles.map(async url => {
       try {
         await cache.add(new Request(url, { mode: 'cors' }));
       } catch (e) { /* offline or blocked — the network-first path covers us later */ }
