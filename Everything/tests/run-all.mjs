@@ -80,6 +80,13 @@ const SUITES = [
   // JSON, a jsonb column and a timezone without moving by a day. Every one of those failure modes
   // looks like a working feature and quietly lies about when something lapses.
   { name: 'documents', file: 'documents-probe.mjs', timeoutMs: 180000 },
+  // Reading text off a photograph looked finished and had never succeeded once, in any language. The
+  // failure was a filename: the app stored two-letter tags and tesseract publishes three-letter packs,
+  // so all six languages were requested by a name that exists nowhere and the read timed out. Because
+  // the feature is opt-in and degrades to "type the note yourself", that looked exactly like a working
+  // feature nobody used — nothing errored and no suite noticed. This one reads real rendered text in
+  // all six scripts through the real button, so the name cannot be wrong and nothing can be stubbed.
+  { name: 'imageocr', file: 'image-ocr-probe.mjs', timeoutMs: 300000 },
   // Money rests on one number. A float creeps in, a total is off by a paisa, and nobody notices for
   // a month. Every check here is one of the ways that happens.
   { name: 'money', file: 'money-probe.mjs', timeoutMs: 180000 },

@@ -1,6 +1,6 @@
 // Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
 // phones keep serving the previous cached version and the new UI appears not to work.
-const CACHE_NAME = 'everything-shell-v47';
+const CACHE_NAME = 'everything-shell-v48';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed
@@ -156,7 +156,7 @@ async function stashSharedCapture(request) {
 const OCR_CACHE = `${CACHE_NAME}-ocr`;
 
 /* Caches this worker owns and must keep. OCR_CACHE is in the list deliberately: an omitted one is
-   deleted on every activation, so the ~11 MB language pack would be re-downloaded after each deploy —
+   deleted on every activation, so the language pack would be re-downloaded after each deploy —
    exactly the cost the cache exists to remove. */
 const KEPT_CACHES = new Set([CACHE_NAME, REMINDER_CACHE, OCR_CACHE]);
 
@@ -264,7 +264,7 @@ function isShellRequest(request) {
 
    An opaque or failed response is never stored. Caching one would poison every later read with the
    same failure, which is a slower way to reach the timeout this was meant to remove. */
-const OCR_HOSTS = ['cdn.jsdelivr.net', 'tessdata.projectnaptha.com', 'unpkg.com'];
+const OCR_HOSTS = ['cdn.jsdelivr.net', 'unpkg.com'];
 
 function isOcrVendorRequest(request) {
   try {
@@ -274,6 +274,25 @@ function isOcrVendorRequest(request) {
   }
 }
 
+/* Whether a response is worth keeping. A 200 is not enough: the language host answers a failed
+   fetch with an HTML error page, and caching that turns one bad moment into a permanent one — every
+   later read gets the same error page from Cache Storage and hangs at "loading language traineddata
+   0%" for ever, with no way to recover short of clearing site data. That is a strictly worse outcome
+   than the original failure, because the original was survivable by waiting.
+
+   The two things that must never be stored are a non-2xx status and an opaque response, because
+   neither says what the body is. Anything that is not actually the gzip it claims to be is refused
+   too, which is what catches an HTML error page served with a 200. */
+function isStorableVendorResponse(response) {
+  if (!response || !response.ok) return false;
+  if (response.type === 'opaque' || response.type === 'opaqueredirect') return false;
+  const type = (response.headers.get('content-type') || '').toLowerCase();
+  // The vendor scripts are JavaScript; the language pack is gzip. A text/html body in either place is
+  // an error page wearing the wrong content type.
+  if (type.includes('text/html')) return false;
+  return true;
+}
+
 async function cacheFirstVendor(request) {
   const cache = await caches.open(OCR_CACHE);
   const cached = await cache.match(request);
@@ -281,9 +300,110 @@ async function cacheFirstVendor(request) {
   // A rejected fetch is left to reject: a network error is something the caller can be told about,
   // and Response.error() is what it was given before.
   const response = await fetch(request);
-  if (response && response.ok && response.type !== 'opaque') {
+  if (isStorableVendorResponse(response)) {
     await cache.put(request, response.clone());
   }
+  return response;
+}
+
+/* The language packs, served same-origin from this worker.
+
+   tesseract fetches its language data itself, from whatever `langPath` names, with no retry and no
+   second chance: one failed request and the read hangs at "loading language traineddata 0%" until the
+   app's timeout, 90 seconds after a request that gave up in under one. Nothing in the page can fix
+   that, because the failing fetch belongs to the library and there is no hook for it.
+
+   Pointed at this origin, the fetching happens here instead, where a mirror list, a byte-level check
+   and Cache Storage are all available. Every language is tried against every mirror before the
+   request is allowed to fail.
+
+   All three mirrors were verified for all six languages by fetching the bytes and checking the gzip
+   magic number rather than trusting the status code. Sizes: eng 2,952,873 · tam 1,446,167 ·
+   hin 1,389,692 · tel 1,735,518 · kan 1,914,250 · mal 2,794,667.
+
+   The projectnaptha host is deliberately absent. It serves the full-size 4.0.0 packs but not the
+   _best_int ones this app asks for — measured, all six 404 there.
+
+   The names below are the three-letter ISO 639-2 codes. They are not the two-letter tags the app
+   stores: eng, not en. That distinction was the original bug, and getting it wrong here would
+   reintroduce it silently, since a wrong name simply 404s. */
+const OCR_LANG_MIRRORS = (code) => [
+  `https://cdn.jsdelivr.net/npm/@tesseract.js-data/${code}/4.0.0_best_int/${code}.traineddata.gz`,
+  `https://cdn.jsdelivr.net/npm/@tesseract.js-data/${code}@1.0.0/4.0.0_best_int/${code}.traineddata.gz`,
+  `https://unpkg.com/@tesseract.js-data/${code}@1.0.0/4.0.0_best_int/${code}.traineddata.gz`,
+];
+
+/* Same-origin path the app points tesseract at. tesseract appends "/<lang>.traineddata.gz" to whatever
+   langPath it is given, so this must be a directory, not a file. */
+const OCR_LANG_PATH = '/ocr-lang';
+
+function isOcrLangRequest(request) {
+  try {
+    const url = new URL(request.url);
+    return url.origin === self.location.origin && url.pathname.startsWith(OCR_LANG_PATH + '/');
+  } catch (e) {
+    return false;
+  }
+}
+
+/* Extracts the three-letter pack name from /ocr-lang/<code>.traineddata.gz.
+
+   Only three letters are accepted, and that is deliberate rather than strict for its own sake: a
+   two-letter name is the mistake this whole fix exists to correct, so it is refused here rather than
+   being passed upstream to 404 on every mirror in turn. */
+function ocrLangFromPath(pathname) {
+  const match = /\/ocr-lang\/([a-z]{3})\.traineddata\.gz$/.exec(pathname || '');
+  return match ? match[1] : null;
+}
+
+/* Fetches one language pack, trying each mirror in turn and validating the result.
+
+   The byte-level checks are not decoration. A mirror that cannot serve the file often answers with an
+   HTML error page and a 200, and handing that to tesseract produces a worker that reads garbage and
+   hangs exactly as it would on a 404 — while now looking like success. The gzip magic number is the
+   only thing that proves these are the bytes we asked for. */
+async function fetchOcrLang(code) {
+  for (const url of OCR_LANG_MIRRORS(code)) {
+    try {
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response || !response.ok) continue;
+      const type = (response.headers.get('content-type') || '').toLowerCase();
+      if (type.includes('text/html')) continue;
+      const body = await response.arrayBuffer();
+      const head = new Uint8Array(body.slice(0, 2));
+      // 0x1f 0x8b is the gzip signature. Anything else is not the file.
+      if (head[0] !== 0x1f || head[1] !== 0x8b) continue;
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/gzip',
+          'Content-Length': String(body.byteLength),
+          // Same-origin, so no CORS headers are needed; no-store only stops an intermediary cache
+          // from holding a pack that a later release might replace.
+          'Cache-Control': 'no-store',
+        },
+      });
+    } catch (e) {
+      // This mirror is unreachable. The next one is tried.
+    }
+  }
+  return null;
+}
+
+/* Cache first, because that is the whole point: the second read of a language must not touch the
+   network at all. Only bytes that passed the gzip check are ever written, so a hit is always real. */
+async function serveOcrLang(request) {
+  const cache = await caches.open(OCR_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
+  const code = ocrLangFromPath(new URL(request.url).pathname);
+  if (!code) return new Response('Not found', { status: 404 });
+
+  const response = await fetchOcrLang(code);
+  if (!response) return new Response('Language pack unavailable', { status: 504 });
+
+  await cache.put(request, response.clone());
   return response;
 }
 
@@ -293,6 +413,10 @@ self.addEventListener('fetch', event => {
   // Never intercept writes (e.g. POST /api/ask) or API traffic.
   if (request.method !== 'GET') return;
   if (isApiRequest(request)) return;
+  if (isOcrLangRequest(request)) {
+    event.respondWith(serveOcrLang(request));
+    return;
+  }
   if (isOcrVendorRequest(request)) {
     event.respondWith(cacheFirstVendor(request));
     return;
@@ -311,20 +435,26 @@ self.addEventListener('message', event => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
-  /* Warm the language pack so the first real read is fast rather than a 30 second download. The page
-     asks; the worker fetches, because the page cannot name this cache and guessing would put 11 MB in
-     the wrong place. Not waited on by the page — a failure here costs nothing, because the read
-     simply downloads it itself. */
+  /* Warm the language pack so the first real read is fast rather than a multi-megabyte download.
+
+     The page sends the three-letter pack name, not a URL and not the two-letter tag. It used to send a
+     URL, checked with `startsWith('https://')` — which the same-origin URL now fails, so the warm-up
+     was dropped in silence every time. It sent the two-letter tag before that, which warmed a name
+     that does not exist. Only the code is accepted now, and the URL is built here from the one
+     definition of it, so the warm-up and the read cannot drift apart again.
+
+     Not waited on by the page — a failure here costs nothing, because the read simply downloads it. */
   const data = event.data || {};
-  if (data.type === 'WARM_OCR_LANGUAGE' && typeof data.url === 'string' && data.url.startsWith('https://')) {
+  if (data.type === 'WARM_OCR_LANGUAGE' && typeof data.code === 'string' && /^[a-z]{3}$/.test(data.code)) {
     event.waitUntil((async () => {
       try {
         const cache = await caches.open(OCR_CACHE);
-        if (await cache.match(data.url)) return;
-        const response = await fetch(data.url, { mode: 'cors' });
-        if (response && response.ok && response.type !== 'opaque') {
-          await cache.put(data.url, response);
-        }
+        const url = `${self.location.origin}${OCR_LANG_PATH}/${data.code}.traineddata.gz`;
+        if (await cache.match(url)) return;
+        // fetchOcrLang is the same function the read path uses, so this warms exactly the bytes the
+        // read will ask for and goes through the same mirror fallback and gzip validation.
+        const response = await fetchOcrLang(data.code);
+        if (response) await cache.put(url, response);
       } catch (e) { /* offline or blocked — the read will fetch it itself */ }
     })());
   }

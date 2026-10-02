@@ -399,33 +399,99 @@ function previewImageFile(input) {
    download fails (offline, blocked CDN) the capture sheet carries on working exactly as before
    with a plain one-line explanation. */
 const OCR_LANGUAGES = [
-  { tag: "en", label: "English" },
-  { tag: "ta", label: "தமிழ்" },
-  { tag: "hi", label: "हिन्दी" },
-  { tag: "te", label: "తెలుగు" },
-  { tag: "kn", label: "ಕನ್ನಡ" },
-  { tag: "ml", label: "മലയാളം" },
+  { tag: "en", code: "eng", label: "English" },
+  { tag: "ta", code: "tam", label: "தமிழ்" },
+  { tag: "hi", code: "hin", label: "हिन्दी" },
+  { tag: "te", code: "tel", label: "తెలుగు" },
+  { tag: "kn", code: "kan", label: "ಕನ್ನಡ" },
+  { tag: "ml", code: "mal", label: "മലയാളം" },
 ];
-const OCR_SCRIPT_SRC = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+
+/* The tag above is what the chips and the stored setting use — two letters, matching the language
+   codes the rest of the app already speaks (voice recognition uses the same). `code` is what
+   tesseract's language packs are actually named, and those are three letters: ISO 639-2.
+
+   This distinction was the entire reason image text reading did not work, and it is worth stating
+   plainly because it is not an intermittent failure that a retry can paper over. The two-letter tag was
+   passed straight through to the pack filename, so the app asked every host for files that do not
+   exist anywhere:
+
+     @tesseract.js-data/en/4.0.0_best_int/en.traineddata.gz     404   (no such package)
+     @tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz   200   2,952,873 bytes of gzip
+
+   All six languages verified in both forms: every two-letter name 404s, every three-letter name returns
+   a real pack. So the read never had a chance — it was waiting on a file that could never arrive, and
+   the 90-second timeout was the only thing that ever ended it.
+
+   The old comment blamed an intermittent CDN and a slow pack. Both of those were real measurements, and
+   both were measured against a URL that was already wrong. Nothing is intermittent here. */
+/* Where the language packs come from.
+
+   Our own origin, and that is deliberate rather than tidy. tesseract fetches its language data itself
+   from whatever `langPath` names, with no retry and no second chance: one failed request and the read
+   sits at "loading language traineddata 0%" until the timeout, 90 seconds after a request that gave up
+   in under one. Retrying from the page cannot fix that, because the failing fetch belongs to the
+   library and there is no hook for it.
+
+   Pointed at this origin, the service worker does the fetching, where a mirror list, a gzip check and
+   Cache Storage are all available. See OCR_LANG_MIRRORS in sw.js.
+
+   The previous value, `https://tessdata.projectnaptha.com/4.0.0`, also named the full-size packs — eng
+   is 10,923,060 bytes there against 2,952,873 for the `_best_int` variant now in use, measured at
+   19.8s versus 2.9s for the same read. Both hosts are legitimate; the smaller variant is simply the
+   better default for text read off a photograph.
+
+   workerPath and corePath are pinned to exact versions, because those must match the library exactly
+   and a floating tag there is the supply-chain risk the rest of this app now avoids. */
+const OCR_SCRIPT_SRC = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+const OCR_WORKER_PATH = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js";
+const OCR_CORE_PATH = "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1";
+
+/* The path tesseract is given, and the one the warm-up pre-caches. These two must agree exactly, and
+   once they did not: the warm-up warmed a projectnaptha URL while the read fetched a jsDelivr one, so
+   the pack was downloaded twice and the pre-cache bought nothing.
+
+   tesseract appends "/<code>.traineddata.gz" to this itself, so it names a directory and not a file,
+   and the `.gz` suffix is already handled — `gzip` defaults to true. */
+const OCR_LANG_PATH = `${self.location.origin}/ocr-lang`;
+const OCR_LANG_PACK = (code) => `${OCR_LANG_PATH}/${code}.traineddata.gz`;
+
+/* Resolves a stored two-letter tag to the three-letter name its pack is published under.
+
+   This goes through OCR_LANGUAGES rather than constructing a name from letters, so an unrecognised tag
+   yields null and is reported as unsupported — instead of becoming a request for a file that cannot
+   exist, which is the mistake being replaced: every tag was forwarded verbatim and every one 404'd. */
+function ocrLangCode(tag) {
+  return OCR_LANGUAGES.find((entry) => entry.tag === tag)?.code || null;
+}
+
+/* How many times a failed worker build is retried. Belt to the service worker's braces: the worker
+   already tries three mirrors, so reaching this means all of them failed at once. One retry still earns
+   its place because it costs a few seconds in a rare case and removes the only remaining way this
+   feature can fail outright. Two attempts in total, so the worst case is bounded rather than a loop. */
+const OCR_SETUP_ATTEMPTS = 1;
 
 let captureOcrLang = "en";
 let ocrScriptPromise = null;
 let ocrWorker = null;
+/* Which language ocrWorker was built for. Kept beside the worker itself because the two must always
+   agree: a worker holds exactly one language model for its whole life, so this is what makes it
+   possible to notice when a new choice has been made and the cached worker is stale. */
+let ocrWorkerLang = null;
 let ocrBusy = false;
 let imageOcrText = "";
-/* The language pack is warmed once per page, not once per read: repeating it would re-check an
-   11 MB download on every capture. The worker skips anything already cached. */
-let ocrLangWarm = false;
 
-/* The first read fetches a ~11 MB language pack (eng.traineddata.gz alone is 10,923,060 bytes).
+/* The first read fetches a language pack (eng, the largest of the six, is 2,952,873 bytes).
+
    Three things were missing, and all three cost the same thing: the user's afternoon. There was
    no ceiling, so a connection that neither loaded nor errored held the promise open for ever and
    the button sat on "Reading…"; there was no cancel, so the wait was compulsory; and there was no
    warm-up, so the download was charged to the person who actually pressed the button.
 
-   OCR_LOAD_TIMEOUT_MS is deliberately generous. 11 MB on mobile data is genuinely slow, and a
-   timeout that fires early would turn a working read into a failure. This is a backstop against
-   "never", not a target. */
+   OCR_LOAD_TIMEOUT_MS is deliberately generous: several megabytes on mobile data is genuinely slow,
+   and a timeout that fires early would turn a working read into a failure. This is a backstop against
+   "never", not a target — and a failure that fires it is now retried once, so the worst case is two
+   of these rather than one followed by nothing. */
 const OCR_LOAD_TIMEOUT_MS = 90000;
 let ocrAbort = null;
 
@@ -458,6 +524,7 @@ function cancelImageOcr() {
       // A worker that has already gone is not a failure worth reporting.
     }
     ocrWorker = null;
+    ocrWorkerLang = null;
   }
   ocrBusy = false;
   setOcrButtonBusy(false);
@@ -465,42 +532,85 @@ function cancelImageOcr() {
   setImageOcrStatus("Reading stopped. The photo is still attached — type what it says if you need it now.");
 }
 
-/* Fetches the engine in the background when the capture sheet opens, so the 11 MB is spent while
+/* Fetches the engine in the background when the capture sheet opens, so the download is spent while
    the person is reading the sheet rather than while they are waiting on a button. Swallowed
    completely: a failed warm-up is not an error the user has to dismiss, and the real read will
    retry it and report properly if it fails again. */
 /* Pulls the language pack into the service worker's cache during idle time.
 
-   The read is not the problem — the 11 MB on the tap is. Because the worker now serves these
+   The read is not the problem — the download on the tap is. Because the worker now serves these
    cache-first, anything fetched here makes the first real read fast instead of slow, and the cost
    lands while the capture sheet is open and idle rather than while someone watches a button.
 
    Fire-and-forget by design. This is a convenience, not part of reading an image: if it fails, is
    blocked, or is still running when the person presses the button, the read simply downloads it
    itself and nothing is lost. */
-const OCR_LANG_URL = "https://tessdata.projectnaptha.com/4.0.0";
+/* Whether the warm-up has been attempted. Kept separate from "succeeded" on purpose: a warm-up that
+   failed once must not be retried on every capture sheet, but it must be retried when the reason it
+   failed goes away — which is what a service worker that was not yet active is. */
+let ocrLangWarm = false;
 
 function warmOcrLanguage() {
   if (ocrLangWarm) return;
   if (!("serviceWorker" in navigator)) return;
-  ocrLangWarm = true;
 
-  const send = () => {
+  const send = (reg) => {
     /* The page cannot fill that cache itself: only the worker knows what it is called, and it changes
        whenever the shell version does. So the request goes to the worker that owns the cache and the
        worker does the fetching. Warming the chosen language and not merely English matters too — a
-       Tamil or Hindi speaker warming the wrong pack would leave their first read exactly as slow. */
-    const post = (reg) => reg?.active?.postMessage({
+       Tamil or Hindi speaker warming the wrong pack would leave their first read exactly as slow.
+
+       An unknown tag resolves to null, and nothing is sent: there is no pack to warm, and pretending
+       otherwise would cache a URL that can only ever 404. */
+    const code = ocrLangCode(captureOcrLang);
+    if (!code) return false;
+    if (!reg?.active) return false;
+    reg.active.postMessage({
       type: "WARM_OCR_LANGUAGE",
-      url: `${OCR_LANG_URL}/${captureOcrLang}.traineddata.gz`,
+      // The three-letter pack name, resolved here. Sending the two-letter tag warmed a URL that does
+      // not exist, which is a second way of asking for a file that was never going to arrive.
+      code: ocrLangCode(captureOcrLang),
     });
-    const controller = navigator.serviceWorker.controller;
-    if (controller) post({ active: controller });
-    else navigator.serviceWorker.ready.then((reg) => post(reg)).catch(() => {});
+    return true;
   };
 
-  if (typeof requestIdleCallback === "function") requestIdleCallback(send, { timeout: 8000 });
-  else setTimeout(send, 2500);
+  /* This used to be posted once, on the first capture sheet, and that was the whole bug.
+
+     The service worker registers during init and is NOT yet active when the capture sheet first
+     opens — measured here: `active: null, controller: false` at that moment. `reg.active` is null, so
+     `postMessage` was never sent, the promise branch checked `navigator.serviceWorker.controller`
+     which was also false, and the warm-up was silently dropped. Nothing errored and nothing was cached,
+     so the pack download landed on the button on every single read for the life of the install.
+
+     So it is retried until it actually lands, and `ocrLangWarm` is set only once a post has really
+     gone out. `ready` resolves as soon as there is an active worker, which is what makes the retry
+     terminate rather than spin. */
+  const attempt = () => {
+    const controller = navigator.serviceWorker.controller;
+    if (controller) {
+      if (send({ active: controller })) ocrLangWarm = true;
+      return;
+    }
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        if (send(reg)) ocrLangWarm = true;
+      })
+      .catch(() => {
+        // No service worker at all (private mode, or a browser without one). The read fetches the
+        // pack itself, so there is nothing to warm and nothing to report.
+      });
+  };
+
+  if (typeof requestIdleCallback === "function") requestIdleCallback(attempt, { timeout: 8000 });
+  else setTimeout(attempt, 2500);
+
+  // The first open is too early. Try again once the worker has taken control, which is the only
+  // point at which a message can be delivered.
+  navigator.serviceWorker.ready
+    .then(() => {
+      if (!ocrLangWarm) setTimeout(attempt, 0);
+    })
+    .catch(() => {});
 }
 
 /* Fetches the engine in the background when the capture sheet opens, so the work is spent while the
@@ -587,10 +697,130 @@ function setOcrButtonBusy(busy) {
   setImageOcrCancelVisible(busy);
 }
 
+/* Whether a service worker is in a position to answer /ocr-lang/*.
+
+   This is the last gap in the fix, and it is a real one: a fetch only reaches the service worker if
+   the worker is *controlling* the page. On the very first load after registration it is not — measured
+   here, `controller: false` while the registration is still activating — so a read fired in that
+   window is answered by the web server instead, which has no /ocr-lang route and replies 404. That is
+   the identical failure the mirrors were introduced to remove, arriving by a different door.
+
+   Waiting is the fix, and it is bounded: by the time someone has chosen an image, typed a note and
+   pressed a button, the worker is normally in control long ago, so this resolves immediately in
+   practice and only actually waits on a first-ever load. Without a service worker at all — private
+   mode, or a browser without one — this resolves at once, because there is nothing to wait for and the
+   read simply goes to the network. */
+function waitForOcrLangEndpoint() {
+  if (!("serviceWorker" in navigator)) return Promise.resolve(false);
+  if (navigator.serviceWorker.controller) return Promise.resolve(true);
+  return Promise.race([
+    navigator.serviceWorker.ready
+      .then(() => !!navigator.serviceWorker.controller)
+      .catch(() => false),
+    // A hard ceiling, so a browser that never activates its worker cannot stall the read itself.
+    new Promise((resolve) => setTimeout(() => resolve(!!navigator.serviceWorker.controller), 10000)),
+  ]);
+}
+
+/* Builds the worker, retrying once if the language pack does not arrive.
+
+   The failure this covers is the one thing nothing upstream can catch: tesseract does not reject when
+   its language pack fails to load — the promise simply never settles, and the read sits at "loading
+   language traineddata 0%" until the app's timeout, 90 seconds after a request that failed in under a
+   second. Waiting longer cannot help, because the wait is not the problem.
+
+   So the worker is built through withTimeout as before, but a failure tears it down, drops the pack
+   from the cache, and makes one more attempt. `code` is the three-letter pack name, already resolved
+   by the caller, so this never has to guess. */
+async function createOcrWorker(Tesseract, lang, attempt) {
+  try {
+    // Before the worker can answer /ocr-lang/*, it must control the page. Asking first costs nothing
+    // when it already does, which is every load after the first.
+    await waitForOcrLangEndpoint();
+    if (ocrAbort.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+    return await withTimeout(
+      Tesseract.createWorker(lang, 1, {
+        /* cacheMethod: "none" is the documented remedy for a hang this feature actually had.
+
+           Tesseract caches the language pack in IndexedDB. When that write or read fails —
+           private browsing, a full or restricted store, a stale entry from an older version — the
+           worker sits at "loading language traineddata" with progress 0 and never moves. The library
+           raises nothing: naptha/tesseract.js#901 reports errorHandler never firing, and #528 confirms
+           a failure between createWorker and load() cannot be caught at all. So the promise simply
+           never settles, which is why this read timed out identically on WiFi and on mobile data —
+           it was never a bandwidth problem.
+
+           Disabling that cache costs a re-download per session. The service worker still caches the
+           response, so the bytes come back from Cache Storage on the next read; what is given up is
+           IndexedDB, which is the part that hangs. */
+        cacheMethod: "none",
+        /* Spelled out rather than derived. Left to itself the library resolves these against its
+           own bundle URL, and a service worker or an extension that answers for that origin can
+           produce a script that loads but cannot importScripts (#851) — again with no error. */
+        workerPath: OCR_WORKER_PATH,
+        corePath: OCR_CORE_PATH,
+        /* Our own origin. See the note on OCR_LANG_PATH: this is the whole reason the read no longer
+           hangs when a CDN has a bad minute, because the service worker behind this URL retries across
+           three mirrors instead of tesseract making one unretried request and giving up silently. */
+        langPath: OCR_LANG_PATH,
+        logger: (message) => {
+          // Progress is reported by Tesseract as a 0..1 fraction per stage.
+          if (message?.status && typeof message.progress === "number") {
+            const percent = Math.round(message.progress * 100);
+            setImageOcrStatus(`${message.status} ${percent}%`);
+          }
+        },
+      }),
+      OCR_LOAD_TIMEOUT_MS,
+      "Preparing the text reader timed out. Try again, or type the note yourself.",
+    );
+  } catch (error) {
+    // A cancelled read must not be retried: the person was told it stopped, and starting again would
+    // be the app contradicting itself. The abort is thrown by this function, not by the network.
+    if (error?.name === "AbortError") throw error;
+
+    // A worker that failed to build is not reusable, and its half-built state is why a retry has to
+    // start from nothing rather than call createWorker again on the same object.
+    try { await ocrWorker?.terminate(); } catch (e) { /* already gone */ }
+    ocrWorker = null;
+    ocrWorkerLang = null;
+    if (attempt >= OCR_SETUP_ATTEMPTS) throw error;
+
+    setImageOcrStatus("The text reader did not start. Trying again…");
+    // Drop anything already cached for this language, so the retry goes to the network rather than
+    // being handed the same bad response again.
+    try {
+      if ("caches" in window) {
+        const pack = OCR_LANG_PACK(code);
+        const names = await caches.keys();
+        await Promise.all(
+          names
+            .filter((name) => name.endsWith("-ocr"))
+            .map((name) => caches.open(name).then((cache) => cache.delete(pack))),
+        );
+      }
+    } catch (e) {
+      // A cache we cannot clear is not a reason to give up; the fetch below still happens.
+    }
+
+    return createOcrWorker(Tesseract, code, attempt + 1);
+  }
+}
+
 async function runImageOcr() {
   if (ocrBusy) return;
   if (!pendingBlob) {
     setImageOcrStatus("Choose an image first.");
+    return;
+  }
+
+  /* Resolved before anything is fetched, and reported rather than guessed at. An unrecognised tag can
+     only come from a stale stored value or a hand-edited one; either way there is no pack to ask for,
+     and quietly substituting English would read the wrong script and report success. */
+  const code = ocrLangCode(captureOcrLang);
+  if (!code) {
+    setImageOcrStatus("That language is not supported for reading images. Pick another one.");
     return;
   }
 
@@ -599,12 +829,12 @@ async function runImageOcr() {
   setOcrButtonBusy(true);
   try {
     /* The old wording — "Loading the text reader…" — was true and useless. The first run fetches
-       ~11 MB of language data; saying so is the difference between a wait the user understands
-       and a button they assume is broken. */
+       the language pack; saying so is the difference between a wait the user understands and a
+       button they assume is broken. */
     setImageOcrStatus(
       window.Tesseract
         ? "Preparing the text reader…"
-        : "First run downloads the text reader (~11 MB, once). On mobile data this can take a minute — you can stop it below.",
+        : "First run downloads the text reader (~3 MB, once). On mobile data this can take a minute — you can stop it below.",
     );
     const Tesseract = await withTimeout(
       loadOcrEngine(),
@@ -614,40 +844,18 @@ async function runImageOcr() {
     if (ocrAbort.signal.aborted) return;
 
     setImageOcrStatus("Preparing the reader and language pack…");
+    /* A worker is built for one language and carries it for life, so a cached worker from a previous
+       language cannot be reused. This never showed up before only because the read never got far
+       enough to build one; once reads actually work, switching language and pressing the button again
+       would silently keep reading in the old one. Terminating is what makes the new choice take
+       effect, and it is also the honest outcome: the engine holds the previous language's model. */
+    if (ocrWorker && ocrWorkerLang !== code) {
+      try { await ocrWorker.terminate(); } catch (e) { /* already gone */ }
+      ocrWorker = null;
+    }
     if (!ocrWorker) {
-      ocrWorker = await withTimeout(
-        Tesseract.createWorker(captureOcrLang, 1, {
-          /* cacheMethod: "none" is the documented remedy for the hang this feature actually had.
-
-             Tesseract caches the ~11 MB language pack in IndexedDB. When that write or read fails —
-             private browsing, a full or restricted store, a stale entry from an older version — the
-             worker sits at "loading language traineddata" with progress 0 and never moves. The
-             library raises nothing: naptha/tesseract.js#901 reports errorHandler never firing, and
-             #528 confirms a failure between createWorker and load() cannot be caught at all. So the
-             promise simply never settles, which is why this read timed out identically on WiFi and
-             on mobile data — it was never a bandwidth problem.
-
-             Disabling that cache costs a re-download per session. The service worker still caches the
-             response, so the bytes come back from Cache Storage on the next read; what is given up
-             is IndexedDB, which is the part that hangs. */
-          cacheMethod: "none",
-          /* Spelled out rather than derived. Left to itself the library resolves these against its
-             own bundle URL, and a service worker or an extension that answers for that origin can
-             produce a script that loads but cannot importScripts (#851) — again with no error. */
-          workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
-          corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5",
-          langPath: "https://tessdata.projectnaptha.com/4.0.0",
-          logger: (message) => {
-            // Progress is reported by Tesseract as a 0..1 fraction per stage.
-            if (message?.status && typeof message.progress === "number") {
-              const percent = Math.round(message.progress * 100);
-              setImageOcrStatus(`${message.status} ${percent}%`);
-            }
-          },
-        }),
-        OCR_LOAD_TIMEOUT_MS,
-        "Preparing the text reader timed out. Try again, or type the note yourself.",
-      );
+      ocrWorker = await createOcrWorker(Tesseract, code, 0);
+      ocrWorkerLang = code;
     }
     if (ocrAbort.signal.aborted) return;
 
@@ -906,7 +1114,7 @@ function openCapture() {
      look like it needs choosing from thirteen options again, which is the thing being fixed. */
   captureMoreTypesOpen = false;
   /* Warm the image reader while the sheet is opening. The sheet is on screen and the person is
-     reading it, so the ~11 MB first-run download is spent in the background rather than in
+     reading it, so the first-run download is spent in the background rather than in
      front of them — which is what turns "stuck on Reading" into an instant result later. */
   warmOcrEngine();
   // The channel resets with it, or the next capture opens with the last one's voice recorder, image
