@@ -150,10 +150,17 @@ async function stashSharedCapture(request) {
   return Response.redirect('./?share=1', 303);
 }
 
-/* Declared here, above the activation handler, because KEPT_CACHES reads it while initialising.
-   Declared next to its own use further down it would be a temporal dead zone reference — and that
-   throws while the worker is starting, which takes the service worker down rather than one feature. */
-const OCR_CACHE = `${CACHE_NAME}-ocr`;
+/* Deliberately NOT derived from CACHE_NAME.
+
+   The shell cache is versioned by CACHE_NAME and must be, because the app's own assets change with
+   every deploy. Tying the language pack to it would re-download 11 MB on every release - the exact
+   cost this cache exists to remove - and it is the reason this line does not simply read
+   `${CACHE_NAME}-ocr`.
+
+   Nothing here changes between deploys. The pack is pinned to one immutable tessdata version, so it
+   outlives the shell and is versioned by its own name instead. Cached data for older packs is left to
+   be swept up by the activation handler below. */
+const OCR_CACHE = 'everything-ocr-v1';
 
 /* Caches this worker owns and must keep. OCR_CACHE is in the list deliberately: an omitted one is
    deleted on every activation, so the language pack would be re-downloaded after each deploy —
