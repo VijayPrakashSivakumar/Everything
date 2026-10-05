@@ -1327,9 +1327,24 @@ function itemCollectionFor(item) {
   return db.collection("items");
 }
 
+/* The date wins over the stored status.
+
+   isTaskToday treats a task as today's if EITHER the stored status says today OR the date is today.
+   That OR is what made this stick: every capture made before the status stopped being hardcoded
+   wrote "today" into the database, and from then on the date could never correct it. A task due
+   tomorrow with "today" saved against it reported itself as today's work forever, and no amount of
+   fixing the capture path could touch items that had already been written.
+
+   So the status is trusted only where the date does not contradict it. There is no migration here
+   and none is needed: this reads the date the item already has, which is why it takes effect for
+   items that already exist rather than only for new ones. */
 function taskStatusFromItem(item) {
   if (!item || item.kind !== "task") return "inbox";
   if (item.done) return "completed";
+  const due = item.dueDate || item.due_date;
+  const stored = normalizeTaskStatus(item.status);
+  // A task marked "today" that is dated for another day is dated for another day.
+  if (stored === "today" && due && !isArchived(item) && !isToday(due)) return "planned";
   return normalizeTaskStatus(item.status, isTaskToday(item) ? "today" : "planned");
 }
 
