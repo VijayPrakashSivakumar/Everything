@@ -5209,6 +5209,42 @@ body.overlay-open .content {
   max-height: min(75vh, calc(100dvh - 24px));
 }
 
+/* Priority signal: a dot that reads at a glance, with the name one tap away. Sized in em so it sits
+   on the text baseline whatever the panel's type scale is doing. */
+.priority-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.priority-dot {
+  width: 0.85em;
+  height: 0.85em;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  /* Large enough to hit with a thumb, while still reading as a dot rather than a button. */
+  min-width: 22px;
+  min-height: 22px;
+  background: transparent;
+  box-shadow: inset 0 0 0 5px currentColor;
+}
+
+.priority-dot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.priority-dot--high { color: var(--red, #e5484d); }
+.priority-dot--medium { color: var(--amber, #f5a524); }
+.priority-dot--low { color: var(--green, #30a46c); }
+
+.priority-signal-name {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
 .ask-box > .close-x {
   position: absolute;
   top: 10px;
