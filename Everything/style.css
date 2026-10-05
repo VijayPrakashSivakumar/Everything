@@ -4285,6 +4285,54 @@ h1.page-title {
   font-weight: var(--fw-semibold);
 }
 
+/* Month event peek. Sized in `rem` rather than `px` because the whole problem it solves is that a
+   fixed-pixel card stops fitting once the reader has enlarged their text - the same reason the rest
+   of the type on this page is not measured in pixels either. Max-width is what keeps it a small
+   module rather than a dialog that fills a phone. */
+.month-peek {
+  position: fixed;
+  z-index: 300;
+  width: max-content;
+  max-width: min(20rem, calc(100vw - 16px));
+  background: var(--card);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-tag);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.28);
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.month-peek-title {
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.month-peek-when,
+.month-peek-meta {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.month-peek-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 0.25rem;
+}
+
+@media (max-width: 480px) {
+  .cal-event {
+    /* The title is unreadable at this width however it is styled, and a tap now reveals the whole
+       one. Truncating it cleanly makes the cell legible as a count of what is on rather than a
+       half-word that looks like a rendering fault. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 .cal-event {
   font-size: var(--fs-micro);
   padding: 2px 5px;

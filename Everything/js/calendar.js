@@ -29,6 +29,9 @@ function calNav(dir) {
 }
 
 function renderCalendar() {
+  // Re-rendering rebuilds every event element, so an open peek would be left anchored to a node that
+  // no longer exists, hovering over a cell whose contents have changed underneath it.
+  closeMonthEventPeek();
   const dayTab = document.getElementById("calTabDay");
   const wTab = document.getElementById("calTabWeek");
   const mTab = document.getElementById("calTabMonth");
@@ -248,13 +251,121 @@ function renderMonthView() {
         const ev = document.createElement("div");
         ev.className = "cal-event cal-drag-event";
         ev.dataset.calId = item.id;
-        ev.onclick = () => openPanel(item.id);
+        ev.onclick = () => monthEventPeek(item.id, ev);
         ev.textContent = fmtTime(item.dueDate) + " " + item.title;
         c.appendChild(ev);
       });
     grid.appendChild(c);
   }
   attachCalendarDrag(grid);
+}
+
+/* ---------- Month event peek ----------
+
+   A month cell on a phone is about 50px wide, so the title in it is truncated to a few characters.
+   The fix for that is not smaller text; it is not showing the title in the cell at all. Tapping an
+   event now opens this - a small card with the whole title and enough context to recognise it -
+   and tapping anywhere else puts it away.
+
+   It deliberately does not open the editing panel. A panel is for changing something, and this is
+   for reading something; sending every tap on a calendar entry to an editor made the month view feel
+   like a form. Opening the panel stays one tap away, for the times you do mean to edit.
+
+   The card is a child of the body rather than of the cell. The grid clips its own overflow, and a
+   peek anchored inside a clipped box is a peek that loses its own edges near the bottom of a month -
+   which is exactly where a calendar is most full. Fixed positioning off the anchor's rectangle also
+   means no recalculation when the calendar scrolls underneath it. */
+
+let monthPeekEl = null;
+
+function closeMonthEventPeek() {
+  if (!monthPeekEl) return;
+  monthPeekEl.remove();
+  monthPeekEl = null;
+  document.removeEventListener("pointerdown", monthPeekOutside, true);
+  document.removeEventListener("keydown", monthPeekOnKey, true);
+  // The trigger is given back its focus, so the keyboard does not lose its place after a mouse tap.
+  if (monthPeekReturnFocus && document.contains(monthPeekReturnFocus)) {
+    monthPeekReturnFocus.focus?.();
+  }
+  monthPeekReturnFocus = null;
+}
+
+let monthPeekOutside = () => {};
+let monthPeekOnKey = () => {};
+let monthPeekReturnFocus = null;
+
+function monthEventPeek(id, anchor) {
+  const item = state.items.find((i) => i.id === id);
+  if (!item) return;
+  closeMonthEventPeek();
+
+  const card = document.createElement("div");
+  card.className = "month-peek";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", item.title);
+  card.tabIndex = -1;
+
+  const time = fmtTime(item.dueDate);
+  const when = item.dueDate
+    ? new Date(item.dueDate).toLocaleDateString(undefined, {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      })
+    : "";
+  const bits = [item.kind, item.person, item.project]
+    .filter(Boolean)
+    .map((v) => String(v).charAt(0).toUpperCase() + String(v).slice(1));
+
+  card.innerHTML = `
+    <div class="month-peek-title">${escapeHtml(item.title)}</div>
+    <div class="month-peek-when">${escapeHtml([when, time].filter(Boolean).join(" · "))}</div>
+    ${bits.length ? `<div class="month-peek-meta">${escapeHtml(bits.join(" · "))}</div>` : ""}
+    <div class="month-peek-actions">
+      <button type="button" class="btn btn-sm" data-peek-open>Open</button>
+      <button type="button" class="btn btn-sm" data-peek-close>Close</button>
+    </div>`;
+  card.querySelector("[data-peek-open]").onclick = () => {
+    closeMonthEventPeek();
+    openPanel(id);
+  };
+  card.querySelector("[data-peek-close]").onclick = closeMonthEventPeek;
+
+  document.body.appendChild(card);
+  monthPeekEl = card;
+  monthPeekReturnFocus = anchor;
+
+  /* Placed against the anchor's box and then flipped when it would run past an edge. A card that
+     hangs off the bottom of the screen is a card nobody reads, and the bottom row of a month is
+     where the entries are. */
+  const a = anchor.getBoundingClientRect();
+  const r = card.getBoundingClientRect();
+  const pad = 8;
+  let left = a.left;
+  if (left + r.width > window.innerWidth - pad) left = window.innerWidth - r.width - pad;
+  if (left < pad) left = pad;
+  let top = a.bottom + 6;
+  if (top + r.height > window.innerHeight - pad) {
+    const above = a.top - r.height - 6;
+    top = above >= pad ? above : Math.max(pad, window.innerHeight - r.height - pad);
+  }
+  card.style.left = `${Math.round(left)}px`;
+  card.style.top = `${Math.round(top)}px`;
+
+  monthPeekOutside = (event) => {
+    if (card.contains(event.target)) return;
+    closeMonthEventPeek();
+  };
+  monthPeekOnKey = (event) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeMonthEventPeek();
+    }
+  };
+  document.addEventListener("pointerdown", monthPeekOutside, true);
+  document.addEventListener("keydown", monthPeekOnKey, true);
+  card.focus();
 }
 
 /* ---------- Drag to reschedule ----------

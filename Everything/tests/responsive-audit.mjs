@@ -8,6 +8,7 @@
 // a phone, so 768px had no owner at all. Reading style.css does not show that, because each rule
 // looks correct on its own; the gap only shows up when the same page is measured at seven widths.
 import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
 import { startTestServer, testUrl, bootApp } from './test-server.mjs';
 
 let PORT = 4451;
@@ -186,6 +187,47 @@ try {
       `scrolledTo=${m.reachedEnd} lastCellRight=${m.lastCellRightAfterScroll} scrollerRight=${m.scrollerRight}`,
     );
   }
+/* Month event peek: tap opens it, tap away closes it, and it does not open the editing panel. The
+     last part is the design decision worth pinning - a tap on a calendar entry used to jump straight
+     into an editor, which made reading a month feel like filling in a form. */
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.evaluate(() => {
+    switchView('schedule');
+    setCalView('month');
+  });
+  await new Promise((r) => setTimeout(r, 120));
+  const peek = await page.evaluate(async () => {
+    const ev = document.querySelector('#calGrid .cal-drag-event');
+    if (!ev) return { noEvent: true };
+    ev.click();
+    await new Promise((r) => setTimeout(r, 80));
+    const card = document.querySelector('.month-peek');
+    if (!card) return { opened: false };
+    const title = card.querySelector('.month-peek-title')?.textContent || '';
+    const r = card.getBoundingClientRect();
+    const onScreen = r.left >= -1 && r.top >= -1 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1;
+    const panelOpen = Boolean(document.querySelector('#itemPanel')?.classList.contains('open'));
+    // Tapping empty space must put it away.
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 5, clientY: 5 }));
+    await new Promise((r2) => setTimeout(r2, 60));
+    const closedByOutsideTap = !document.querySelector('.month-peek');
+    // And Escape must too, since a keyboard user has no outside tap to make.
+    ev.click();
+    await new Promise((r2) => setTimeout(r2, 60));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise((r2) => setTimeout(r2, 60));
+    const closedByEscape = !document.querySelector('.month-peek');
+    return { opened: true, title, onScreen, panelOpen, closedByOutsideTap, closedByEscape,
+             width: Math.round(r.width), cellWidth: Math.round(ev.getBoundingClientRect().width) };
+  });
+  assert.ok(!peek.noEvent, 'the month grid had no event to tap');
+  assert.ok(peek.opened, 'tapping a month event did not open the peek card');
+  assert.ok(peek.title && peek.title.length > 6, `the peek showed no usable title (${peek.title})`);
+  assert.ok(peek.onScreen, `the peek card sat outside the viewport (${JSON.stringify(peek)})`);
+  assert.ok(!peek.panelOpen, 'tapping a month event opened the editing panel instead of the peek');
+  assert.ok(peek.closedByOutsideTap, 'tapping away left the peek card open');
+  assert.ok(peek.closedByEscape, 'Escape did not close the peek card');
+
 } finally {
   await browser.close();
   server.kill();
