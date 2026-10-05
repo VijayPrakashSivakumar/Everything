@@ -46,14 +46,34 @@ initBackNavigation();
 initInfoTips();
 applyLaunchShortcut();
 applySharedCapture();
+/* updateViaCache: "none" is the part that matters.
+
+   By default the browser is free to satisfy the worker script from its own HTTP cache and only
+   revalidate on its own schedule, which can be hours. That produces the worst possible failure for
+   this app: the device keeps running last week's sw.js, which serves last week's cache, while the
+   deployment is correct and the network is fine. Nothing is visibly broken and nothing is visibly
+   new.
+
+   "none" makes the browser fetch the worker from the network every time it checks, so a deploy is
+   visible on the next load rather than the next day. The explicit update() below does the same thing
+   for the already-registered case, where register() on an existing registration returns immediately
+   without checking anything. */
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker
-    .register("./sw.js", { scope: "./" })
+    .register("./sw.js", { scope: "./", updateViaCache: "none" })
     .then((reg) => {
       swRegistration = reg;
+      reg.update().catch(() => {});
       return reg;
     })
     .catch((err) => console.warn("Service worker registration failed:", err));
+  /* Coming back to an installed app, and switching back to it, are the moments a stale worker is
+     most likely to survive: the tab was never closed, so nothing prompted a check. */
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      navigator.serviceWorker.getRegistration().then((reg) => reg?.update()).catch(() => {});
+    }
+  });
 }
 initReminderDelivery();
 setInterval(renderToday, 60000);
