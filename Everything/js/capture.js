@@ -480,6 +480,10 @@ let ocrWorker = null;
 let ocrWorkerLang = null;
 let ocrBusy = false;
 let imageOcrText = "";
+/* What the last read put in the box, so a second read can tell its own earlier result apart from work
+   the person typed or edited. Without it, "replace the box" cannot tell the difference between
+   throwing away something nobody wrote and throwing away something they did. */
+let lastOcrWritten = "";
 
 /* The first read fetches a language pack (eng, the largest of the six, is 2,952,873 bytes).
 
@@ -1039,8 +1043,32 @@ async function runImageOcr() {
     // treats a photographed receipt or note exactly like typed text: same suggestions, same
     // duplicate protection, same Task/Event/Reminder outcome. No new code path to maintain.
     const input = document.getElementById("captureText");
-    input.value = text;
-    setImageOcrStatus(`Read ${text.length} characters. Edit anything that looks wrong, then save.`);
+    /* Reading a second image used to overwrite the box outright, which threw away the first read -
+       and anything typed or corrected since - with nothing said and no way back. Photographing a
+       second receipt is an ordinary thing to want, and it silently deleted the first one.
+
+       So the difference that matters is whose work is in the box. Text this same flow wrote, still
+       untouched, is replaceable without asking: nobody composed it. Anything else is the person's,
+       and replacing it is theirs to decide. Keeping both is offered first because photographing
+       several receipts in a row is the normal reason to come back here. */
+    const existing = input.value;
+    const isOursAndUntouched = existing === lastOcrWritten;
+    let append = false;
+    if (existing.trim() && !isOursAndUntouched) {
+      append = await confirmDialog({
+        title: "Keep what is already here?",
+        body: "The box is not empty, and what is in it is not the previous read. Choosing Keep adds this image on a new line. Choose Replace to use this image's text on its own.",
+        confirmLabel: "Keep both",
+        cancelLabel: "Replace",
+      });
+    }
+    input.value = append ? `${existing.replace(/\s+$/, "")}\n\n${text}` : text;
+    lastOcrWritten = append ? `${existing.replace(/\s+$/, "")}\n\n${text}` : text;
+    setImageOcrStatus(
+      append
+        ? `Read ${text.length} characters and added it to what was already there. Edit anything that looks wrong, then save.`
+        : `Read ${text.length} characters. Edit anything that looks wrong, then save.`,
+    );
     onCaptureInput();
   } catch (error) {
     // Soft failure: the capture sheet must stay usable with no text read at all.
@@ -1360,6 +1388,7 @@ function openCapture() {
   document.getElementById("imageOcrStatus").textContent = "";
   setOcrButtonBusy(false);
   imageOcrText = "";
+  lastOcrWritten = "";
   renderOcrLanguages();
   // Document fields reset with everything else, or the previous capture's expiry would be waiting
   // under the next one — and it would be indistinguishable from a value the person had typed.
