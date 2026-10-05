@@ -5536,9 +5536,20 @@ body.overlay-open .content {
     margin-left: auto !important;
   }
 
+  /* All seven date columns fit the screen, rather than being pushed off the right edge.
+
+     This had min-width: 560px, which on a 375px phone left 37% of the grid past the edge. It was
+     scrollable, so no overflow check ever complained, and it looked deliberate on a laptop. But
+     nothing on a phone says there is more to the right: the week runs off the edge with no hint, and
+     the only way to find Saturday is a horizontal swipe nobody thinks to try, across a grid whose
+     natural gesture is vertical. Measured at seven widths, this was the one place the layout needed
+     the person to know something the screen did not tell them.
+
+     Seven columns in ~350px is about 50px each, which fits the date number comfortably. Losing
+     breathing room is a far smaller cost than a date column that does not exist until you guess. */
   .cal-grid {
     width: 100%;
-    min-width: 560px;
+    min-width: 0;
   }
 
   .cal-grid,

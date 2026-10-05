@@ -31,6 +31,49 @@ function record(ok, name, detail) {
 const server = await startTestServer(PORT, (p) => { PORT = p; });
 const browser = await chromium.launch();
 
+/* Measures the month grid directly, because the audit above can never see it.
+
+   The view loop visits each view once, in whatever mode it was left in, and the calendar opens on Day.
+   Month is only ever reached by tapping a tab, so its grid - the one element on the page with a
+   deliberate min-width wider than a phone - was never measured at any width. That is exactly where
+   the clipping was reported from, and it stayed invisible because the view was never in that mode. */
+async function measureMonth(page, width) {
+  await page.setViewportSize({ width, height: 780 });
+  return page.evaluate(() => {
+    const view = document.getElementById('view-schedule');
+    if (view) view.classList.add('active');
+    setCalView('month');
+    const scroller = document.querySelector('.calendar-month-scroll');
+    const grid = document.getElementById('calGrid');
+    if (!scroller || !grid) return null;
+    const s = scroller.getBoundingClientRect();
+    const g = grid.getBoundingClientRect();
+    const cells = grid.querySelectorAll('.cal-cell');
+    const last = cells.length ? cells[cells.length - 1].getBoundingClientRect() : null;
+    const out = {
+      clientWidth: Math.round(scroller.clientWidth),
+      scrollWidth: Math.round(scroller.scrollWidth),
+      gridWidth: Math.round(g.width),
+      overflowX: getComputedStyle(scroller).overflowX,
+      canScroll: scroller.scrollWidth > scroller.clientWidth,
+      cellCount: cells.length,
+      lastCellRight: last ? Math.round(last.right) : 0,
+      scrollerRight: Math.round(s.right),
+      gridLeft: Math.round(g.left),
+    };
+    /* Whether the final column can actually be reached, measured by scrolling rather than assumed
+       from the numbers — an element can report scrollable width and still refuse to move. */
+    scroller.scrollLeft = 9999;
+    out.reachedEnd = Math.round(scroller.scrollLeft);
+    out.scrolledToEnd = out.reachedEnd >= out.scrollWidth - out.clientWidth - 1;
+    const after = cells.length ? cells[cells.length - 1].getBoundingClientRect() : null;
+    out.lastCellRightAfterScroll = after ? Math.round(after.right) : 0;
+    out.scrollerLeft = Math.round(scroller.getBoundingClientRect().left);
+    scroller.scrollLeft = 0;
+    return out;
+  });
+}
+
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(8000);
@@ -126,6 +169,22 @@ try {
       record(m.overflowing.length === 0, tag + ': nothing pushed past the right edge',
         m.overflowing.map((o) => o.sel + ' right=' + o.right + ' w=' + o.width).join('\n        '));
     }
+  }
+/* The month grid, measured on its own. Recorded as checks rather than printed, so a month grid that
+     stops scrolling fails this suite instead of being noticed by hand on a phone. */
+  for (const { w, label } of WIDTHS) {
+    const m = await measureMonth(page, w);
+    if (!m) { record(false, `month grid measured at ${label}`, 'the month grid was not in the DOM'); continue; }
+    /* Reachability is the wrong bar, and it is why this survived. A swiped-to column is technically
+       reachable and practically missing: nothing on screen says to swipe sideways. So the check is
+       that the whole week is already on screen, before any scrolling. */
+    const wholeWeekVisible = m.scrollWidth <= m.clientWidth + 1 && m.lastCellRight <= m.scrollerRight + 1;
+    record(
+      wholeWeekVisible,
+      `month grid: the whole week fits on screen at ${label} (${w}px)`,
+      `client=${m.clientWidth} scroll=${m.scrollWidth} grid=${m.gridWidth} overflowX=${m.overflowX} ` +
+      `scrolledTo=${m.reachedEnd} lastCellRight=${m.lastCellRightAfterScroll} scrollerRight=${m.scrollerRight}`,
+    );
   }
 } finally {
   await browser.close();
