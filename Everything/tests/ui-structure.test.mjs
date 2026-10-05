@@ -2797,6 +2797,15 @@ check('a wait a person watches shows the brand mark, not a line of text', () => 
     'reading an image no longer shows the brand loader');
   // The loader is built once, from the logo's own path, rather than copied into each waiting place.
   assert.match(js, /function brandLoaderHTML/, 'the brand loader helper is missing');
+
+  /* The date has to beat the stored status. Every capture made before the capture path stopped
+     hardcoding "today" wrote that into the database, and the OR in isTaskToday meant those items
+     could never be corrected by a later capture fix — they read as today's work forever. This is
+     asserted because nothing else in the suite reaches it: the tests check what a capture reads and
+     what it writes, never what an already-stored item reports. */
+  const statusFn = between('function taskStatusFromItem', '\n}');
+  assert.match(statusFn, /stored === "today" && due && !isArchived\(item\) && !isToday\(due\)/,
+    'a task stored as "today" but dated for another day is still reported as today');
   assert.match(js, /pathLength="1"/,
     'the loader stroke is not normalised, so its dash maths depends on the curve length');
 });
