@@ -1,6 +1,13 @@
-// Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
+s// Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
 // phones keep serving the previous cached version and the new UI appears not to work.
-const CACHE_NAME = 'everything-shell-v50';
+/* v51 — every asset below this line changed while the name was still v50.
+
+   This is the deployment trap in this app: index.html is fetched network-first, so new markup
+   arrives, while style.css and the js modules are served stale-while-revalidate from the shell
+   cache. Bump this whenever either changes. A mixed build renders - the element is there and the
+   rule that styles it is not - which is far harder to spot than an old build, because part of it is
+   visibly current. */
+const CACHE_NAME = 'everything-shell-v51';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed
