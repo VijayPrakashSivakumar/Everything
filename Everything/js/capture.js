@@ -1929,6 +1929,18 @@ async function undoCaptureSave() {
 }
 
 /* Extra plan rows as real items, linked back via planOf so the group stays traceable. */
+/* The status a captured task starts in follows the date it was given, not the fact that it was typed
+   today. Hardcoding "today" put every captured task in the Today list whatever its due date, so a
+   note for next week read as work for this afternoon, and the person trusted the list rather than
+   the date they had just written. Only a task actually due today belongs there; everything else is
+   Planned until they move it. This is the same rule model.js and recurring.js already apply. */
+function captureTaskStatus(dueISO) {
+  if (!dueISO) return "planned";
+  const d = new Date(dueISO);
+  if (Number.isNaN(d.getTime())) return "planned";
+  return d.toDateString() === new Date().toDateString() ? "today" : "planned";
+}
+
 function buildCapturePlanItems(main) {
   return capturePlan
     .map((entry, index) => {
@@ -1947,7 +1959,7 @@ function buildCapturePlanItems(main) {
         due: dueISO ? formatDueDisplay(dueISO) : "",
         dueDate: dueISO,
         recurrence: "none",
-        status: entry.kind === "task" ? "today" : "inbox",
+        status: entry.kind === "task" ? captureTaskStatus(dueISO) : "inbox",
         project: entry.project || main.project,
         created: Date.now(),
         done: false,
