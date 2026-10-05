@@ -2791,7 +2791,7 @@ check('a wait a person watches shows the brand mark, not a line of text', () => 
   /* The two waits long enough to be stared at. Both were static text, which is indistinguishable
      from a hung app — and unlike a layout bug, removing the loader fails nothing and breaks nothing,
      it just makes the app look broken again with no test noticing. So the wiring is asserted. */
-  assert.match(js, /brandLoaderHTML\(\{ label: "Thinking…" \}\)/,
+  assert.match(js, /brandLoaderHTML\(\{ label: "Thinking…", size: "md" \}\)/,
     'the Ask overlay went back to a bare "Thinking…" with nothing moving');
   assert.match(js, /function setImageOcrStatus[\s\S]{0,1200}brandLoaderHTML/,
     'reading an image no longer shows the brand loader');

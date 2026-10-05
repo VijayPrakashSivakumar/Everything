@@ -646,7 +646,7 @@ async function askAI(q, opts = {}) {
   // round trip on a phone — and it was a line of static text, which is indistinguishable from a
   // hung app. The words stay, because "Thinking…" says what is happening and a moving shape only
   // says that something is; the motion is what proves the app is still alive.
-  first.innerHTML = `<div class="ask-answer">${brandLoaderHTML({ label: "Thinking…" })}</div>`;
+  first.innerHTML = `<div class="ask-answer">${brandLoaderHTML({ label: "Thinking…", size: "md" })}</div>`;
 
   // Only a newer call supersedes this one; a re-render is not a newer question.
   const isSuperseded = () => ticket !== askRequestSeq;

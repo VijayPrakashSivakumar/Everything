@@ -12,7 +12,11 @@
    status line that already has words next to it. */
 function brandLoaderHTML(options = {}) {
   const label = options.label || "";
-  const size = options.size === "lg" ? " brand-loader--lg" : options.size === "sm" ? " brand-loader--sm" : "";
+  const size =
+    options.size === "lg" ? " brand-loader--lg"
+    : options.size === "md" ? " brand-loader--md"
+    : options.size === "sm" ? " brand-loader--sm"
+    : "";
   const tag = options.block ? "div" : "span";
   // role=status announces the change once, rather than on every tick, and the label is read out
   // rather than the word "loading" being implied by a moving shape that a screen reader cannot see.

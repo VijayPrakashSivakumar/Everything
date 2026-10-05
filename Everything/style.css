@@ -2267,6 +2267,13 @@ h1.page-title,
   --loader-size: 18px;
 }
 
+/* Medium. The Ask overlay is a panel holding nothing but a wait, so the default 22px read as a
+   smudge beside the words and 56px would take the room over from the thing being waited for. 34px is
+   the size that is clearly the brand mark and still leaves "Thinking…" the louder of the two. */
+.brand-loader--md {
+  --loader-size: 34px;
+}
+
 .brand-loader--lg {
   --loader-size: 56px;
 }
