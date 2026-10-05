@@ -2170,6 +2170,10 @@ h1.page-title,
   inset: 0;
   z-index: 9999;
   display: flex;
+  /* Column, so the name sits under the mark rather than beside it. The mark and the word together
+     are the identity; stacked, they are a lockup, and a lockup read left-to-right puts the word
+     first, which is not what the app is showing the person yet. */
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   /* The app's own background tokens, so the splash is the same colour the app is about to become.
@@ -2184,6 +2188,18 @@ h1.page-title,
   width: 84px;
   height: 50px;
   overflow: visible;
+}
+
+/* The word under the mark. Held at a fixed size rather than tracking the theme's type scale: the
+   splash is the one screen that has to look right before any of the app's own styles have settled,
+   and a token that has not loaded yet would leave this invisible. */
+.boot-splash-name {
+  margin-top: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text, #1c1f2b);
 }
 
 /* The track behind the travelling segment, matching the in-app loader so the two are the same mark
