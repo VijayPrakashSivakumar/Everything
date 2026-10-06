@@ -114,7 +114,22 @@
          Nothing here waits on the network and nothing here can stop the app loading: js/init.js
          removes it, and a ten-second timer removes it even if that never runs. -->
     <div id="bootSplash" class="boot-splash" style="display: none" aria-hidden="true">
+      <!-- The gradient lives inside this svg, and that is the whole fix for "the animation does not run".
+
+           The mark used to borrow the sidebar's #logoGrad, which is defined 280 lines further down this
+           file, inside the sidebar svg. The show call below fires the moment the parser reaches it —
+           long before the sidebar exists — and an SVG paint reference to an id that is not in the
+           document yet resolves to nothing, which per spec renders *nothing at all*. So the travelling
+           dash was invisible and all that was left on screen was the 20%-opacity track: a still mark,
+           which reads as a hung page. Self-contained defs cannot go stale that way, and they are the
+           same two stops as the sidebar mark, so both are still one logo. -->
       <svg class="boot-splash-mark" viewBox="0 0 40 24" focusable="false" aria-hidden="true">
+        <defs>
+          <linearGradient id="bootSplashGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#4361ee" />
+            <stop offset="100%" stop-color="#7b2ff7" />
+          </linearGradient>
+        </defs>
         <path
           class="loader-track"
           d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
@@ -128,7 +143,7 @@
           class="loader-run"
           d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
           fill="none"
-          stroke="url(#logoGrad)"
+          stroke="url(#bootSplashGrad)"
           stroke-width="4.5"
           stroke-linecap="round"
           pathLength="1"

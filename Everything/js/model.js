@@ -811,10 +811,26 @@ function checklistProgress(item) {
   return { total: checklist.length, completed };
 }
 
+/* The date alone, never the stored status.
+
+   This is the narrow half of the rule, kept as its own function so taskStatusFromItem can ask it
+   without asking isTaskToday — which asks taskStatusFromItem. Two functions that each need the
+   other's answer is how that cycle appears in the first place. */
+function dueIsToday(item) {
+  return isToday(item?.dueDate || item?.due_date);
+}
+
+/* One rule, and it is the badge's rule.
+
+   This used to ask a different question from the badge: "the stored status says today OR the date is
+   today", while taskStatusFromItem — which draws the badge, fills the panel's Workflow dropdown and
+   decides every Tasks tab — asks whether the date contradicts the status, and believes the date. Two
+   answers to one question is how a task dated for Friday could sit in Today's list wearing a Today
+   badge: the same item, in both places, with no way for a person to see that the two disagreed.
+   Asking the one function that decides means they cannot drift apart again. */
 function isTaskToday(item) {
-  if (isArchived(item)) return false;
-  const due = item?.dueDate || item?.due_date;
-  return !item?.done && (normalizeTaskStatus(item?.status) === "today" || isToday(due));
+  if (!item || isArchived(item) || item?.done) return false;
+  return taskStatusFromItem(item) === "today";
 }
 
 async function changePanelTaskStatus(value) {
@@ -1080,6 +1096,78 @@ function formatDueDisplay(iso) {
     timeStr
   );
 }
+
+/* The due date as written next to an item, everywhere an item is drawn.
+
+   This is the other half of the fix, and it is the half that was missing.
+
+   `formatDueDisplay` was called once — when the item was captured — and the answer was then written
+   onto the item and into the `items.due` column, to be read back verbatim on every later render. So
+   it was never a date at all: it was a snapshot of a date, taken once, that nothing could refresh.
+   A task captured on Monday saying "tomorrow, 10:00" was still labelled "Tomorrow, 10:00 AM" on
+   Friday, about a day that had already gone — and the list and the panel both believed it, because
+   both were reading the snapshot rather than the date.
+
+   So the label is derived here, from dueDate, on every render, and the stored string is never read.
+
+   Two halves, on purpose. The relative word is what makes a list scannable — "Today", "Tomorrow",
+   "3d late" — and the real date beside it is what stops that word from quietly going stale: a bare
+   relative word cannot be checked against anything, which is exactly how "tomorrow" survived a week.
+   The year is carried only when it is not this one, so the common case stays short.
+
+   No date, no label. An item carrying only the old snapshot has nothing true to say about when it is
+   due, and printing the snapshot anyway would put the very lie this removes back on screen. The
+   panel's Due field already behaves this way — it shows an em dash for an undated item — so this
+   also makes the row and the panel agree. */
+function dueLabel(item) {
+  const d = toDate(item?.dueDate || item?.due_date);
+  if (!d) return "";
+  const now = new Date();
+  // Both sides are local midnight, so the difference is a whole number of days except across a
+  // daylight-saving change, where it is 23 or 25 hours — and Math.round still lands on the right
+  // day. Comparing toDateString() cannot tell Tuesday from the Tuesday after next.
+  const days = Math.round(
+    (new Date(d.getFullYear(), d.getMonth(), d.getDate()) -
+      new Date(now.getFullYear(), now.getMonth(), now.getDate())) /
+      864e5,
+  );
+  const word =
+    days === 0
+      ? "Today"
+      : days === 1
+        ? "Tomorrow"
+        : days === -1
+          ? "Yesterday"
+          : days < 0
+            ? `${-days}d late`
+            : `in ${days}d`;
+  const date = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `${word} · ${date}, ${fmtTime(d)}`;
+}
+/* The due date as an exact calendar date, for the agenda's dated list beyond Tomorrow.
+
+   Today and Tomorrow keep their usual words (see dueLabel) because they are checked daily and
+   read at a glance. Anything further out keeps no relative word at all — "6d late" and "in 5d"
+   both go stale the same way the old snapshot did, and cannot be checked against a calendar.
+   So the row shows the exact date and time instead, e.g. "Mon, 12 Jan, 9:00 AM". No date, no
+   label, same as dueLabel. */
+function dueExactLabel(item) {
+  const d = toDate(item?.dueDate || item?.due_date);
+  if (!d) return "";
+  const date = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
+  const time = fmtTime(d);
+  return time ? `${date}, ${time}` : date;
+}
 /* Steps whole months, clamping to the last valid day of the target month.
 
    Date#setMonth overflows: 31 January plus one month is 3 March, so a bill due on the 31st would
@@ -1329,15 +1417,17 @@ function itemCollectionFor(item) {
 
 /* The date wins over the stored status.
 
-   isTaskToday treats a task as today's if EITHER the stored status says today OR the date is today.
-   That OR is what made this stick: every capture made before the status stopped being hardcoded
-   wrote "today" into the database, and from then on the date could never correct it. A task due
-   tomorrow with "today" saved against it reported itself as today's work forever, and no amount of
-   fixing the capture path could touch items that had already been written.
+   isTaskToday used to treat a task as today's if EITHER the stored status said today OR the date was
+   today, while this function asked whether the date contradicts the status and believed the date.
+   Those two rules disagreed about the same item: every capture made before the status stopped being
+   hardcoded wrote "today" into the database, so those items passed the OR forever and reported
+   themselves as today's work whatever their date said, and fixing only the capture path could never
+   reach an item that had already been written.
 
-   So the status is trusted only where the date does not contradict it. There is no migration here
-   and none is needed: this reads the date the item already has, which is why it takes effect for
-   items that already exist rather than only for new ones. */
+   isTaskToday now asks this function rather than answering alongside it, so this is the only rule.
+
+   No migration is needed and none is possible: it reads the date the item already carries, which is
+   why it takes effect for items that were written before the rule existed. */
 function taskStatusFromItem(item) {
   if (!item || item.kind !== "task") return "inbox";
   if (item.done) return "completed";
@@ -1345,7 +1435,8 @@ function taskStatusFromItem(item) {
   const stored = normalizeTaskStatus(item.status);
   // A task marked "today" that is dated for another day is dated for another day.
   if (stored === "today" && due && !isArchived(item) && !isToday(due)) return "planned";
-  return normalizeTaskStatus(item.status, isTaskToday(item) ? "today" : "planned");
+  // dueIsToday, not isTaskToday: asking isTaskToday here would call this function straight back.
+  return normalizeTaskStatus(item.status, dueIsToday(item) ? "today" : "planned");
 }
 
 function buildEntryDraftFromItem(item) {

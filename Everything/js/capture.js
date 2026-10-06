@@ -2296,6 +2296,7 @@ function dismissCaptureQuestion() {
   // Dismissing ends the conversation rather than leaving it half-asked. This is the promise the
   // question card has always made — it can be ignored and never blocks a save — so a conversation
   // must not become the one thing in the sheet that cannot be waved away.
+  captureImageChoicePending = false;
   stopCaptureAnswerDictation();
   captureDialogue.answering = false;
   captureDialogue.required = [];
@@ -2930,8 +2931,11 @@ function extractLocally(text) {
     if (local) result.dueDate = local.toISOString();
   }
 
-  // Never suggest a due date that has already passed (e.g. "yesterday")
-  if (result.dueDate && new Date(result.dueDate).getTime() < Date.now() - 60000)
+  // Date-only values from the text are not always in the future. An appointment card or an old
+  // receipt can still be a valid capture even when the calendar date is behind today. Only the
+  // generic relative-past wording is rejected here; explicit dates are kept so the picture-choice
+  // flow can still ask what to do with the date it actually read.
+  if (captureChannel !== "image" && result.dueDate && new Date(result.dueDate).getTime() < Date.now() - 60000)
     result.dueDate = "";
 
   // A bare day of the month — "pay the bill on the 5th" — is the commonest way an Indian household

@@ -1388,7 +1388,13 @@ function rowToItem(row) {
     sub: row.sub,
     priority: row.priority,
     person: row.person,
-    due: row.due,
+    // Recomputed from due_date rather than copied from the column. `items.due` holds a string written
+    // once, at capture time, by formatDueDisplay — so reading it back is how a task captured a week
+    // ago came to still say "Tomorrow" about a date that had passed. Anything that draws the label
+    // now derives it from dueDate via dueLabel; this keeps the in-memory field honest for the
+    // consumers that still read it (search, the Ask context, notification copy), rather than leaving
+    // one stale field beside one correct one.
+    due: row.due_date ? dueLabel({ dueDate: row.due_date }) : row.due || "",
     dueDate: row.due_date,
     recurrence: row.recurrence,
     status: row.kind === "task" ? taskStatusFromItem(row) : row.status,

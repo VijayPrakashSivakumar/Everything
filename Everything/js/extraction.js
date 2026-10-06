@@ -342,6 +342,9 @@ async function saveCapture(forceSave = false, options = {}) {
         captureMetadata.currency = MONEY_CURRENCY;
         captureMetadata.owedDirection = moneyOwedDirection(text || title);
         if (!newItem.sub) newItem.sub = formatMoney(owed);
+        if (!dueISO) {
+          newItem.status = "today";
+        }
       }
     }
 

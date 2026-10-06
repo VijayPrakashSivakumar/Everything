@@ -2179,23 +2179,33 @@ h1.page-title,
   /* The app's own background tokens, so the splash is the same colour the app is about to become.
      A white flash on a dark theme is its own brand failure. */
   background: var(--bg, #f5f6fb);
+  /* One knob for the lockup, because the mark and the word are sized as a pair. min() against the
+     viewport rather than a fixed px: the splash is the first thing seen on the widest range of
+     screens in the app, and a fixed size is either a speck on a phone or a poster on a tablet. */
+  --splash-mark-size: min(52vw, 210px);
   /* Removed from the a11y tree and from the tab order: it is decoration, and a control nobody can
      reach is a control that traps focus on a keyboard. */
   pointer-events: none;
 }
 
+/* 84px was a mark with about 50px of actual ink on it, because the curve fills only 24 of the
+   viewBox's 40 units — barely bigger than the sidebar logo, on the one screen a person stares at
+   while waiting. The box has to be large for the logo to read as large. */
 .boot-splash-mark {
-  width: 84px;
-  height: 50px;
+  width: var(--splash-mark-size);
+  height: calc(var(--splash-mark-size) * 0.6);
   overflow: visible;
 }
 
-/* The word under the mark. Held at a fixed size rather than tracking the theme's type scale: the
+/* The word under the mark. Scaled off the mark rather than tracking the theme's type scale: the
    splash is the one screen that has to look right before any of the app's own styles have settled,
-   and a token that has not loaded yet would leave this invisible. */
+   and a token that has not loaded yet would leave this invisible. The fallback in each clamp() arm
+   is what makes it safe either way. */
 .boot-splash-name {
-  margin-top: 14px;
-  font-size: 15px;
+  /* Tracked off the mark rather than fixed, so the lockup holds together from a small phone to a
+     tablet: a 15px word under a 210px mark reads as a caption rather than as the name of the app. */
+  margin-top: calc(var(--splash-mark-size) * 0.075);
+  font-size: clamp(15px, 4.4vw, 21px);
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2210,8 +2220,12 @@ h1.page-title,
   opacity: 0.2;
 }
 
+/* The gradient is the splash's own (defined in its svg in index.html), not the sidebar's #logoGrad:
+   the sidebar is parsed after the splash is already showing, so borrowing its id left this stroke
+   pointing at nothing — which renders as no stroke at all, and a loader you cannot see is a splash
+   that looks hung. */
 .boot-splash .loader-run {
-  stroke: url(#logoGrad);
+  stroke: url(#bootSplashGrad);
   stroke-dasharray: 0.18 0.82;
   animation: brand-loader-run 1.4s linear infinite;
 }
@@ -2488,6 +2502,59 @@ h1.page-title {
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-width: thin;
+}
+
+/* Today & Tomorrow render as plain rows with no headers, as before; days beyond
+   Tomorrow get one exact-date header each, so no relative word ever appears here. */
+.agenda-group + .agenda-group {
+  margin-top: 10px;
+}
+
+.agenda-group--plain .task-row:first-child {
+  margin-top: 0;
+}
+
+.agenda-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.agenda-group-label {
+  font-size: var(--fs-body-s);
+  font-weight: var(--fw-semibold);
+  color: var(--muted);
+}
+
+.agenda-group-count {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-semibold);
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.agenda-more {
+  color: var(--accent);
+  font-size: var(--fs-body-s);
+  font-weight: var(--fw-semibold);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+/* Agenda rows stay compact: the priority is one small emoji dot instead of a
+   word badge, because the card is narrow on a phone. The title carries the
+   name for screen readers; the colour is a convenience, never the only channel. */
+.agenda-priority {
+  font-size: var(--fs-lead);
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .link-btn {
@@ -5207,42 +5274,6 @@ body.overlay-open .content {
   width: min(600px, 100%);
   max-width: 100%;
   max-height: min(75vh, calc(100dvh - 24px));
-}
-
-/* Priority signal: a dot that reads at a glance, with the name one tap away. Sized in em so it sits
-   on the text baseline whatever the panel's type scale is doing. */
-.priority-signal {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.priority-dot {
-  width: 0.85em;
-  height: 0.85em;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  /* Large enough to hit with a thumb, while still reading as a dot rather than a button. */
-  min-width: 22px;
-  min-height: 22px;
-  background: transparent;
-  box-shadow: inset 0 0 0 5px currentColor;
-}
-
-.priority-dot:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.priority-dot--high { color: var(--red, #e5484d); }
-.priority-dot--medium { color: var(--amber, #f5a524); }
-.priority-dot--low { color: var(--green, #30a46c); }
-
-.priority-signal-name {
-  font-size: var(--fs-small);
-  color: var(--muted);
 }
 
 .ask-box > .close-x {

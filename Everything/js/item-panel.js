@@ -107,46 +107,6 @@ async function removeChecklistItem(itemId, index) {
   }
 }
 
-/* Priority as a coloured dot rather than a word.
-
-   "Medium" occupies as much width as the title it sits beside and says nothing faster. A dot says it
-   in a glance, which is the only reason it is on screen: red, amber, green, read without reading.
-   The name is one tap away for the times it is actually needed, which is also the only honest place
-   for it - a colour alone is not accessible, so it is never the only thing carrying the meaning. */
-const PRIORITY_SIGNAL = { high: "var(--red, #e5484d)", medium: "var(--amber, #f5a524)", low: "var(--green, #30a46c)" };
-
-function prioritySignalEl(item) {
-  const wrap = document.createElement("span");
-  wrap.className = "priority-signal";
-  const key = PRIORITY_SIGNAL[item.priority] ? item.priority : "";
-  if (!key) {
-    wrap.textContent = "—";
-    return wrap;
-  }
-  // aria-label carries the name for a screen reader, and the button's own label carries it for the
-  // tap, so the colour is a convenience and never the only channel.
-  const dot = document.createElement("button");
-  dot.type = "button";
-  dot.className = `priority-dot priority-dot--${key}`;
-  dot.setAttribute("aria-label", `Priority: ${key}. Tap to show the name.`);
-  dot.title = `Priority: ${key}`;
-  dot.onclick = () => {
-    const shown = wrap.querySelector(".priority-signal-name");
-    if (shown) {
-      shown.remove();
-      dot.hidden = false;
-      return;
-    }
-    dot.hidden = true;
-    const name = document.createElement("span");
-    name.className = "priority-signal-name";
-    name.textContent = key.charAt(0).toUpperCase() + key.slice(1);
-    wrap.appendChild(name);
-  };
-  wrap.appendChild(dot);
-  return wrap;
-}
-
 function openPanel(id) {
   currentItemId = id;
   const item = state.items.find((i) => i.id === id);
@@ -165,42 +125,25 @@ function openPanel(id) {
    cannot be checked against anything. The person cannot tell whether it means the day they think it
    does, and "tomorrow" written on Tuesday becomes wrong by Wednesday while still reading the same.
 
-   So both: the relative word for the moment, and the real date beside it. The date is derived from
-   dueDate rather than from the stored display string, so this cannot drift out of step with the field
-   it is describing. */
+   So both: the relative word for the moment, and the real date beside it.
+
+   That rule now lives in dueLabel, next to the date helpers, and the list rows use it too. This used
+   to be a second implementation written here — and a second implementation of a rule about dates is
+   how the row and the panel came to disagree about the same item, which is the problem dueLabel was
+   written to end. One formatter, every place a due date is drawn. The em dash for an undated item is
+   this field's own convention and stays here rather than in dueLabel, because a list row that shows
+   an em dash is a row with a stray dash in it, while a panel field showing one reads as "no date". */
 function panelDueText(item) {
-  if (!item?.dueDate) return "—";
-  const d = new Date(item.dueDate);
-  if (Number.isNaN(d.getTime())) return item.due || "—";
-  const now = new Date();
-  const tmrw = new Date(now);
-  tmrw.setDate(now.getDate() + 1);
-  const yday = new Date(now);
-  yday.setDate(now.getDate() - 1);
-  const same = (a, b) => a.toDateString() === b.toDateString();
-  const word = same(d, now)
-    ? "Today"
-    : same(d, tmrw)
-      ? "Tomorrow"
-      : same(d, yday)
-        ? "Yesterday"
-        : "";
-  const absolute = d.toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  return word ? `${word} · ${absolute}` : absolute;
+  return dueLabel(item) || "—";
 }
 
   document.getElementById("panelDue").textContent = panelDueText(item);
   document.getElementById("panelPerson").textContent = item.person || "—";
   document.getElementById("panelProject").textContent = item.project || "—";
   document.getElementById("panelGoal").textContent = item.goal || "—";
-  document.getElementById("panelPriority").replaceChildren(prioritySignalEl(item));
+  document.getElementById("panelPriority").textContent = item.priority
+    ? item.priority.charAt(0).toUpperCase() + item.priority.slice(1)
+    : "—";
   if (isArchived(item)) {
     document.getElementById("panelStatus").textContent = "Archived";
   } else {

@@ -110,6 +110,10 @@ const SUITES = [
   // at 1180/900/480/381/335 and nothing at all for 640px-900px, so a tablet was served the phone
   // layout. Only a measurement across seven widths would have shown it, and nothing measured one.
   { name: 'responsive', file: 'responsive-audit.mjs', timeoutMs: 180000 },
+  // The one screen that exists before the app does, and therefore before every other suite here can
+  // see it. It had a mark too small to read as a logo and a travelling dash whose gradient was
+  // defined 280 lines further down the page, so the animation ran on a stroke that painted nothing.
+  { name: 'splash', file: 'boot-splash-probe.mjs', timeoutMs: 180000 },
   // Four features that each looked finished and were each one step short of working: a palette
   // that could not be reached by touch, contacts that could not be found, bulk actions the Inbox
   // did not have, and a drag that a native HTML5 drag kept cancelling.

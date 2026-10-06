@@ -234,6 +234,138 @@ function kindColor(kind) {
   );
 }
 
+/* How far ahead this card looks.
+
+   Seven days is what makes the word "upcoming" in the card's title worth having: long enough to plan
+   a week, short enough that the card is not a second copy of the Tasks list sitting above it. */
+const AGENDA_WINDOW_DAYS = 7;
+
+/* Each group shows at most this many rows. A card that grows without bound stops being the thing you
+   glance at on opening the app and becomes the thing you have to scroll, which is what the Tasks view
+   is for. Anything over the cap says so rather than silently stopping, because a list that ends
+   without saying why reads as "that is everything". */
+const AGENDA_GROUP_CAP = 4;
+
+/* Today and Tomorrow read as plain rows, as they always have; anything dated beyond Tomorrow
+   is drawn under its own exact date, one dated group per day, so no relative word like "6d late"
+   or "in 5d" ever appears here. Compact rows (see taskRow): the priority is one emoji dot,
+   coloured by the same scale the Tasks list already uses, keeping the card narrow on a phone. */
+const AGENDA_EMOJI = { urgent: "🔴", high: "🔴", medium: "🟡", low: "🟢" };
+const AGENDA_PRIORITY_COLOR = {
+  urgent: "var(--red, #e5484d)",
+  high: "var(--red, #e5484d)",
+  medium: "var(--amber, #f5a524)",
+  low: "var(--green, #30a46c)",
+};
+function agendaPrioritySignal(item) {
+  const key = String(item?.priority || "").toLowerCase();
+  if (!AGENDA_EMOJI[key]) return null;
+  const s = document.createElement("span");
+  s.className = `agenda-priority agenda-priority--${key}`;
+  s.textContent = AGENDA_EMOJI[key];
+  s.style.color = AGENDA_PRIORITY_COLOR[key];
+  s.title = key.charAt(0).toUpperCase() + key.slice(1);
+  s.setAttribute("aria-label", `Priority: ${key}`);
+  return s;
+}
+/* One dated bucket per calendar day beyond Tomorrow, labelled with the exact date. */
+function agendaDateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function agendaDateLabel(d) {
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+function agendaGroups() {
+  const today = [];
+  const tomorrow = [];
+  const dated = new Map();
+  const byDueThenNewest = (a, b) => {
+    if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
+    if (a.dueDate) return -1;
+    if (b.dueDate) return 1;
+    return (b.created || 0) - (a.created || 0);
+  };
+  const horizon = Date.now() + AGENDA_WINDOW_DAYS * 864e5;
+  for (const item of state.items) {
+    if (item.done || isArchived(item)) continue;
+    // A date that cannot be read is treated as no date rather than as the epoch: the latter would
+    // file the item under a real day and quietly accuse the person of missing a deadline nobody set.
+    const due = toDate(item.dueDate || item.due_date);
+    const stamp = due ? due.getTime() : 0;
+    if (!stamp || stamp > horizon) continue;
+    const now = new Date();
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dayIndex = Math.round((new Date(due.getFullYear(), due.getMonth(), due.getDate()) - startToday) / 864e5);
+    if (dayIndex <= 0) today.push(item);
+    else if (dayIndex === 1) tomorrow.push(item);
+    else {
+      const key = agendaDateKey(due);
+      if (!dated.has(key)) dated.set(key, { key, stamp: new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime(), label: agendaDateLabel(due), items: [] });
+      dated.get(key).items.push(item);
+    }
+  }
+  today.sort(byDueThenNewest);
+  tomorrow.sort(byDueThenNewest);
+  const datedGroups = [...dated.values()]
+    .sort((a, b) => a.stamp - b.stamp)
+    .map((g) => ({ id: `dated-${g.key}`, label: g.label, tone: "dated", items: g.items.sort(byDueThenNewest) }));
+  // Today and Tomorrow keep their plain rows with no styled headers, exactly as before; dated days
+  // carry their exact date as the header so nothing relative ("6d late", "in 5d") ever appears here.
+  const groups = [
+    { id: "today", label: "Today", tone: "plain", plain: true, items: today },
+    { id: "tomorrow", label: "Tomorrow", tone: "plain", plain: true, items: tomorrow },
+    ...datedGroups,
+  ];
+  return groups.filter((g) => g.items.length);
+}
+
+function renderAgenda() {
+  const list = document.getElementById("todayList");
+  if (!list) return;
+  const groups = agendaGroups();
+  list.innerHTML = "";
+  // A card with nothing in it says so once. The alternative — headings with nothing under them
+  // — teaches nothing and takes the room a real list would need.
+  if (!groups.length) {
+    list.insertAdjacentHTML("beforeend", emptyNoteHTML("Nothing due today or in the week ahead."));
+    return;
+  }
+  for (const group of groups) {
+    const wrap = document.createElement("div");
+    wrap.className = "agenda-group" + (group.plain ? " agenda-group--plain" : "");
+    if (!group.plain) {
+      const head = document.createElement("div");
+      head.className = `agenda-group-head agenda-group-head--${group.tone}`;
+      head.innerHTML =
+        `<span class="agenda-group-label">${escapeHtml(group.label)}</span>` +
+        `<span class="agenda-group-count">${group.items.length}</span>`;
+      wrap.appendChild(head);
+    }
+    const shown = group.items.slice(0, AGENDA_GROUP_CAP);
+    shown.forEach((item) => wrap.appendChild(taskRow(item, { agenda: true })));
+    const hidden = group.items.length - shown.length;
+    if (hidden > 0) {
+      const more = document.createElement("button");
+      more.className = "agenda-more";
+      more.type = "button";
+      more.textContent = `+${hidden} more`;
+      // Opens the list already filtered to this group, so "more" is somewhere to go rather than a
+      // number that has to be found by hand.
+      more.onclick = () => {
+        switchView("tasks");
+        renderTasks(group.id === "today" ? "today" : "upcoming");
+      };
+      wrap.appendChild(more);
+    }
+    list.appendChild(wrap);
+  }
+}
+
 function renderToday() {
   document.getElementById("todayDate").textContent =
     new Date().toLocaleDateString(undefined, {
@@ -242,23 +374,6 @@ function renderToday() {
       month: "long",
       day: "numeric",
     });
-  const todays = state.items
-    .filter(
-      (i) =>
-        !i.done &&
-        !isArchived(i) &&
-        ((i.kind === "task" && isTaskToday(i)) ||
-          (i.kind === "event" && i.dueDate) ||
-          i.kind === "waiting"),
-    )
-    .sort((a, b) => {
-      if (a.dueDate && b.dueDate)
-        return new Date(a.dueDate) - new Date(b.dueDate);
-      if (a.dueDate) return -1;
-      if (b.dueDate) return 1;
-      return b.created - a.created;
-    })
-    .slice(0, 8);
   document.getElementById("statTasks").textContent = state.items.filter(
     (i) => i.kind === "task" && !i.done && !isArchived(i),
   ).length;
@@ -272,11 +387,7 @@ function renderToday() {
     (i) => i.kind === "openloop",
   ).length;
 
-  const list = document.getElementById("todayList");
-  list.innerHTML = "";
-  todays.forEach((item) => {
-    list.appendChild(taskRow(item));
-  });
+  renderAgenda();
 
   const recent = document.getElementById("recentList");
   recent.innerHTML = "";
@@ -852,12 +963,29 @@ function taskRow(item, options = {}) {
   meta.innerHTML = `<div class="task-title">${item.scope === "private" ? icon("lock") + " " : ""}${escapeHtml(item.kind === "link" ? "Link" : item.title)}</div><div class="task-sub">${escapeHtml(item.sub || "")}${item.person ? ` · <span>${icon("user")} ${escapeHtml(item.person)}</span>` : ""}</div>${progressHtml}${mediaHtml}`;
   row.appendChild(meta);
 
-  if (item.due) {
+  // In the agenda card Today and Tomorrow read with their usual words; anything else shows
+  // the exact date instead, so no relative word like "6d late" or "in 5d" ever appears here.
+  // dueExactLabel lives next to dueLabel with the date helpers.
+  const dueDateObj = toDate(item.dueDate || item.due_date);
+  let due = "";
+  if (dueDateObj) {
+    const nowD = new Date();
+    const dayIdx = Math.round(
+      (new Date(dueDateObj.getFullYear(), dueDateObj.getMonth(), dueDateObj.getDate()) -
+        new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate())) /
+        864e5,
+    );
+    due =
+      !options.agenda || dayIdx === 0 || dayIdx === 1
+        ? dueLabel(item)
+        : dueExactLabel(item);
+  }
+  if (due) {
     const t = document.createElement("div");
     t.className = "task-time";
     t.innerHTML =
       (item.recurrence && item.recurrence !== "none" ? icon("repeat") + " " : "") +
-      escapeHtml(item.due);
+      escapeHtml(due);
     row.appendChild(t);
   }
   if (item.kind === "task") {
@@ -867,6 +995,12 @@ function taskRow(item, options = {}) {
       archived.className = "badge archived";
       archived.textContent = "Archived";
       row.appendChild(archived);
+    } else if (options.agenda) {
+      // Agenda rows stay compact: one coloured emoji dot instead of a word badge, because the
+      // card is narrow on a phone and "High" beside every title pushes the date off screen.
+      // Everywhere else keeps its usual badges, so nothing outside this card changes.
+      const signal = agendaPrioritySignal(item);
+      if (signal) row.appendChild(signal);
     } else if (item.priority) {
       const priority = document.createElement("span");
       const priorityClass = ["low", "medium", "high", "urgent"].includes(String(item.priority).toLowerCase())
