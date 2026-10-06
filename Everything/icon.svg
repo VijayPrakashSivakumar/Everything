@@ -1,19 +1,5 @@
-<!-- The brand mark, on a transparent background.
-
-     The only change from before is the missing background rectangle. That filled a rounded square
-     behind the mark, and it is the single reason the app icon appeared to change shape: the splash
-     showed the box, then the app booted and replaced it with the bare mark. Two silhouettes for one
-     brand, in the half-second anyone actually notices.
-
-     The path, the gradient and the stroke are untouched - this is the mark exactly as it was drawn,
-     so the icon is the same drawing the sidebar shows. The mark already sits inside the maskable
-     safe zone (its furthest corner from centre is ~68 of the 80 the inner circle allows), so nothing
-     had to be rescaled to survive a platform mask, and rescaling it is exactly the kind of quiet
-     adjustment that makes an icon stop matching the thing it stands for.
-
-     No element name is written inside this comment on purpose: a file that is an XML document should
-     not contain markup-looking text, because the next tool to read it with a strict parser will
-     either choke or mistake the comment for real geometry. -->
+<!-- The brand mark on a transparent background, enlarged within the canvas so it reads more clearly
+     in the small icon slot Android uses on its native PWA launch screen. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
   <defs>
     <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -21,6 +7,12 @@
       <stop offset="100%" stop-color="#7b2ff7"/>
     </linearGradient>
   </defs>
-  <path d="M50,100 C50,75 75,75 100,100 C125,125 150,125 150,100 C150,75 125,75 100,100 C75,125 50,125 50,100 Z"
-        fill="none" stroke="url(#g)" stroke-width="18" stroke-linecap="round"/>
+  <path
+    transform="translate(100 100) scale(1.25) translate(-100 -100)"
+    d="M50,100 C50,75 75,75 100,100 C125,125 150,125 150,100 C150,75 125,75 100,100 C75,125 50,125 50,100 Z"
+    fill="none"
+    stroke="url(#g)"
+    stroke-width="18"
+    stroke-linecap="round"
+  />
 </svg>
