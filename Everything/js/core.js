@@ -2104,7 +2104,10 @@ function handleAuthStateChange(event, session) {
     switchView("today");
     if (syncedUserId !== session.user.id) {
       syncedUserId = session.user.id;
-      syncReadyPromise = startSupabaseSync(session.user.id);
+      if (window.__showLoadingOverlay) window.__showLoadingOverlay();
+      syncReadyPromise = startSupabaseSync(session.user.id).finally(() => {
+        if (window.__hideLoadingOverlay) window.__hideLoadingOverlay();
+      });
       showInviteCode();
       loadHouseholdName();
       loadProfile();

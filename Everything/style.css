@@ -2183,9 +2183,14 @@ h1.page-title,
      viewport rather than a fixed px: the splash is the first thing seen on the widest range of
      screens in the app, and a fixed size is either a speck on a phone or a poster on a tablet. */
   --splash-mark-size: min(52vw, 210px);
-  /* Removed from the a11y tree and from the tab order: it is decoration, and a control nobody can
-     reach is a control that traps focus on a keyboard. */
+  /* The overlay is not a control. Its status label is announced, while keyboard focus stays where
+     the person left it. */
   pointer-events: none;
+}
+
+.boot-splash[aria-hidden="false"] {
+  pointer-events: auto;
+  cursor: wait;
 }
 
 /* 84px was a mark with about 50px of actual ink on it, because the curve fills only 24 of the

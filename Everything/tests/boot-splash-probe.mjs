@@ -212,6 +212,60 @@ try {
     }
   });
 
+  await check('signed-in data sync shows and then hides the full-screen loader', async () => {
+    const fresh = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    try {
+      await fresh.goto(testUrl(PORT), { waitUntil: 'commit' });
+      await fresh.waitForFunction(() => window.__appBooted === true, null, { timeout: 45000 });
+      const shown = await fresh.evaluate(() => {
+        window.startSupabaseSync = () =>
+          new Promise((resolve) => { window.__resolveInitialSync = resolve; });
+        window.showInviteCode = () => {};
+        window.loadHouseholdName = () => {};
+        window.loadProfile = () => {};
+        handleAuthStateChange("SIGNED_IN", {
+          user: { id: "loading-probe-user", email: "loading-probe@example.com" },
+        });
+        const el = document.getElementById('bootSplash');
+        return {
+          display: getComputedStyle(el).display,
+          accessible: el.getAttribute('aria-hidden') === 'false',
+          busy: document.body.getAttribute('aria-busy') === 'true',
+        };
+      });
+      assert.notEqual(shown.display, 'none', 'sign-in did not show the full-screen loader');
+      assert.ok(shown.accessible, 'the loading status is hidden from assistive technology');
+      assert.ok(shown.busy, 'the page is not marked busy while loading');
+      await fresh.evaluate(() => window.__resolveInitialSync());
+      await fresh.waitForFunction(
+        () => getComputedStyle(document.getElementById('bootSplash')).display === 'none',
+      );
+      const hidden = await fresh.evaluate(() => ({
+        display: getComputedStyle(document.getElementById('bootSplash')).display,
+        busy: document.body.hasAttribute('aria-busy'),
+      }));
+      assert.equal(hidden.display, 'none', 'the loader did not hide when data loading finished');
+      assert.ok(!hidden.busy, 'the page remained marked busy after data loading finished');
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  await check('ordinary view switches do not show the full-screen loader', async () => {
+    const fresh = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    try {
+      await fresh.goto(testUrl(PORT), { waitUntil: 'commit' });
+      await fresh.waitForFunction(() => window.__appBooted === true, null, { timeout: 45000 });
+      const display = await fresh.evaluate(() => {
+        switchView('tasks');
+        return getComputedStyle(document.getElementById('bootSplash')).display;
+      });
+      assert.equal(display, 'none', 'a normal view switch showed the full-screen loader');
+    } finally {
+      await fresh.close();
+    }
+  });
+
   await page.close();
 } finally {
   await browser.close();
@@ -221,4 +275,3 @@ try {
 console.log(results.join('\n'));
 console.log(process.exitCode ? `\n${results.filter((r) => r.startsWith('FAIL')).length} FAILED`
   : `\nALL ${results.length} TESTS PASSED`);
-

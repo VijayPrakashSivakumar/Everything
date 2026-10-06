@@ -56,8 +56,8 @@
         }
       })();
 
-      /* The boot splash: the brand mark doing the waiting, in the gap between the browser's cached
-         icon and the app being ready to be used.
+      /* The page-level splash: the brand mark doing the waiting while the document starts up.
+         An installed PWA may first show its own native launch screen, which page code cannot style.
 
          It is deliberately order-independent, because the obvious ways to sequence it are all wrong.
          The app scripts are <script src> tags in <body>, so they run *during* parsing and js/init.js
@@ -70,26 +70,40 @@
          up, and the show function refuses to run after that point. The show itself is called from a
          script immediately after the splash element, so it happens the moment the element exists.
 
-         The ten-second timer is the safety net, so a future edit that throws in init.js cannot leave
-         someone staring at a spinner that will never resolve. */
+         The ten-second timer is the startup safety net, so a future edit that throws in init.js
+         cannot leave someone staring at a spinner that will never resolve. It does not time out a
+         later signed-in data sync. */
       (function () {
         var shown = false;
         // Set by js/init.js, the last app script, once the app is ready to be used.
         window.__appBooted = false;
 
+        window.__showLoadingOverlay = function () {
+          var el = document.getElementById("bootSplash");
+          if (!el) return;
+          el.style.display = "flex";
+          el.setAttribute("aria-hidden", "false");
+          document.body.setAttribute("aria-busy", "true");
+        };
+        window.__hideLoadingOverlay = function () {
+          var el = document.getElementById("bootSplash");
+          if (el) {
+            el.style.display = "none";
+            el.setAttribute("aria-hidden", "true");
+          }
+          document.body.removeAttribute("aria-busy");
+        };
+
         window.__showBootSplash = function () {
           // Never cover an app that is already up, whatever order these two end up running in.
           if (shown || window.__appBooted) return;
-          var el = document.getElementById("bootSplash");
-          if (!el) return;
           shown = true;
-          el.style.display = "flex";
+          window.__showLoadingOverlay();
         };
-        window.__hideBootSplash = function () {
-          var el = document.getElementById("bootSplash");
-          if (el) el.style.display = "none";
-        };
-        setTimeout(window.__hideBootSplash, 10000);
+        window.__hideBootSplash = window.__hideLoadingOverlay;
+        setTimeout(function () {
+          if (!window.__appBooted) window.__hideBootSplash();
+        }, 10000);
       })();
     </script>
     <meta
@@ -99,10 +113,10 @@
   </head>
 
   <body>
-    <!-- The boot splash. This is the one moment the platform lets the app draw for itself: before it,
-         the browser is showing a static icon it cached; after it, the app is running. So the brand
-         mark is put in that gap, doing the waiting, on exactly the same path and the same travelling
-         dash as the sidebar logo and the in-app loader.
+    <!-- The page-level loading overlay. An installed PWA can show its own platform launch screen
+         before this document runs; page CSS cannot change that screen. Once the page can draw, this
+         brand mark covers startup and signed-in data sync, using the same path and travelling dash
+         as the sidebar logo and in-app loader.
 
          The element ships with `display: none` and the script below shows it. That ordering is
          deliberate: the script is the very next thing in the document, so it runs the instant the
@@ -111,9 +125,17 @@
          cases, because the app scripts sit in <body> and have already run by then; the splash then
          lands on top of a finished app. `__appBooted` guards against that regardless of order.
 
-         Nothing here waits on the network and nothing here can stop the app loading: js/init.js
-         removes it, and a ten-second timer removes it even if that never runs. -->
-    <div id="bootSplash" class="boot-splash" style="display: none" aria-hidden="true">
+         js/init.js removes the startup overlay once initialization finishes. Signed-in data sync can
+         show it again afterward; the ten-second timer only guards against stuck startup. -->
+    <div
+      id="bootSplash"
+      class="boot-splash"
+      style="display: none"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading Everything"
+      aria-hidden="true"
+    >
       <!-- The gradient lives inside this svg, and that is the whole fix for "the animation does not run".
 
            The mark used to borrow the sidebar's #logoGrad, which is defined 280 lines further down this
