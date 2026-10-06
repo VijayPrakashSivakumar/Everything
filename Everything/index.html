@@ -75,6 +75,8 @@
          later signed-in data sync. */
       (function () {
         var shown = false;
+        var hideTimer = 0;
+        var minimumVisibleMs = 1400;
         // Set by js/init.js, the last app script, once the app is ready to be used.
         window.__appBooted = false;
 
@@ -100,9 +102,16 @@
           shown = true;
           window.__showLoadingOverlay();
         };
-        window.__hideBootSplash = window.__hideLoadingOverlay;
+        window.__hideBootSplash = function () {
+          if (hideTimer) return;
+          // Let the first loader cycle finish after app initialization, even on a warm PWA launch.
+          hideTimer = setTimeout(function () {
+            hideTimer = 0;
+            window.__hideLoadingOverlay();
+          }, minimumVisibleMs);
+        };
         setTimeout(function () {
-          if (!window.__appBooted) window.__hideBootSplash();
+          if (!window.__appBooted) window.__hideLoadingOverlay();
         }, 10000);
       })();
     </script>

@@ -43,10 +43,10 @@ const browser = await chromium.launch();
    screen — rather than a version of it rebuilt for the test. */
 const SPLASH_HOLD_MS = 8000;
 
-async function openSplash(viewport, reducedMotion = 'no-preference') {
+async function openSplash(viewport, reducedMotion = 'no-preference', initDelay = SPLASH_HOLD_MS) {
   const page = await browser.newPage({ viewport, reducedMotion });
   await page.route('**/js/init.js', async (route) => {
-    await new Promise((r) => setTimeout(r, SPLASH_HOLD_MS));
+    await new Promise((r) => setTimeout(r, initDelay));
     // Every check closes its page while this delay is still pending, so the continuation has to be
     // allowed to fail quietly. An unhandled rejection inside a route handler takes the whole process
     // down with it, and the run would report a crash on assertions that had all passed.
@@ -196,6 +196,31 @@ try {
     }
   });
 
+  await check('the startup animation plays before the login screen is exposed', async () => {
+    const fresh = await openSplash({ width: 1280, height: 900 }, 'no-preference', 50);
+    try {
+      await fresh.waitForFunction(() => window.__appBooted === true, null, { timeout: 45000 });
+      const startup = await fresh.evaluate(() => ({
+        display: getComputedStyle(document.getElementById('bootSplash')).display,
+        animation: getComputedStyle(document.querySelector('.boot-splash .loader-run')).animationName,
+        authDisplay: getComputedStyle(document.getElementById('authScreen')).display,
+      }));
+      assert.notEqual(startup.display, 'none',
+        'the startup splash disappeared as soon as initialization completed');
+      assert.equal(startup.animation, 'brand-loader-run',
+        'the brand animation is not running during initial app load');
+      assert.equal(startup.authDisplay, 'flex',
+        'the login screen should be ready behind the startup animation');
+      await fresh.waitForFunction(
+        () => getComputedStyle(document.getElementById('bootSplash')).display === 'none',
+        null,
+        { timeout: 3000 },
+      );
+    } finally {
+      await fresh.close();
+    }
+  });
+
   /* ---------- the app still comes up ---------- */
 
   await check('the splash still gets out of the way when the app boots', async () => {
@@ -203,10 +228,11 @@ try {
     try {
       await fresh.goto(testUrl(PORT), { waitUntil: 'commit' });
       await fresh.waitForFunction(() => window.__appBooted === true, null, { timeout: 45000 });
-      const hidden = await fresh.evaluate(
-        () => getComputedStyle(document.getElementById('bootSplash')).display,
+      await fresh.waitForFunction(
+        () => getComputedStyle(document.getElementById('bootSplash')).display === 'none',
+        null,
+        { timeout: 3000 },
       );
-      assert.equal(hidden, 'none', 'the splash is still covering a fully booted app');
     } finally {
       await fresh.close();
     }
@@ -256,6 +282,11 @@ try {
     try {
       await fresh.goto(testUrl(PORT), { waitUntil: 'commit' });
       await fresh.waitForFunction(() => window.__appBooted === true, null, { timeout: 45000 });
+      await fresh.waitForFunction(
+        () => getComputedStyle(document.getElementById('bootSplash')).display === 'none',
+        null,
+        { timeout: 3000 },
+      );
       const display = await fresh.evaluate(() => {
         switchView('tasks');
         return getComputedStyle(document.getElementById('bootSplash')).display;
