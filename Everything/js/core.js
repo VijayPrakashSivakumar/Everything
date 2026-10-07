@@ -1660,19 +1660,44 @@ async function startSupabaseSync(userId) {
     return;
   }
   clearSyncProblem();
-  hasCompletedAt = await detectCompletedAtColumn();
-  hasReminderColumns = await detectReminderColumns();
-  hasChecklistColumn = await detectChecklistColumn();
-  hasRecurrenceKeyColumn = await detectRecurrenceKeyColumn();
-  hasArchivedAtColumn = await detectArchivedAtColumn();
-  hasUpdatedAt = await detectUpdatedAtColumn();
-  await detectSmartCaptureColumns();
-  await detectDocumentColumns();
-  const { data, error } = await sb
+  /* One wave, not nine. These probes are independent schema checks (each catches its own
+     failure and returns false), and the items fetch does not depend on their results — the
+     flags are only read later, when itemToRow writes and when rowToItem normalises document
+     fields, both of which happen after this await. Sequential awaits cost one round trip
+     each, which on mobile data is the whole of the post-sign-in wait. */
+  const itemsQuery = sb
     .from("items")
     .select("*")
     .eq("household_id", currentHouseholdId)
     .order("created", { ascending: false });
+  const [
+    completedAtColumn,
+    reminderColumns,
+    checklistColumn,
+    recurrenceKeyColumn,
+    archivedAtColumn,
+    updatedAtColumn,
+    ,
+    ,
+    itemsResult,
+  ] = await Promise.all([
+    detectCompletedAtColumn(),
+    detectReminderColumns(),
+    detectChecklistColumn(),
+    detectRecurrenceKeyColumn(),
+    detectArchivedAtColumn(),
+    detectUpdatedAtColumn(),
+    detectSmartCaptureColumns(),
+    detectDocumentColumns(),
+    itemsQuery,
+  ]);
+  hasCompletedAt = completedAtColumn;
+  hasReminderColumns = reminderColumns;
+  hasChecklistColumn = checklistColumn;
+  hasRecurrenceKeyColumn = recurrenceKeyColumn;
+  hasArchivedAtColumn = archivedAtColumn;
+  hasUpdatedAt = updatedAtColumn;
+  const { data, error } = itemsResult;
   if (!error && data) {
     /* Merge, never replace. This line used to be `state.items = data.map(rowToItem)`, which
        threw away anything captured or edited while the server was unreachable — the item was
@@ -1748,9 +1773,16 @@ async function startSupabaseSync(userId) {
     )
     .subscribe();
 
+  /* Reveal fast: the items view is painted by renderAll() above, so the overlay can lift
+     now with no empty flash, while the collections below keep merging and repaint when they
+     arrive. The .finally() in handleAuthStateChange stays as the backstop — hiding twice is
+     harmless because __hideLoadingOverlay is idempotent. */
+  if (window.__hideLoadingOverlay) window.__hideLoadingOverlay();
+
   /* Merge each structured collection, never replace it. See mergeRecordLists() for why: the
      three `.map()` assignments this replaced deleted every person, goal and project that had
-     been created or edited while the server was unreachable. */
+     been created or edited while the server was unreachable. Still awaited — not detached —
+     so writes keep waiting for the full sync exactly as before. */
   for (const kind of ["project", "goal", "person"]) {
     const key = RECORD_LIST_KEY[kind];
     const rows = await loadStructuredCollection(key, key);

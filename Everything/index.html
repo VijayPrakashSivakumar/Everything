@@ -76,23 +76,64 @@
       (function () {
         var shown = false;
         var hideTimer = 0;
-        var minimumVisibleMs = 1400;
+        /* Generation token: __hideBootSplash re-arms the minimum timer, and a sign-in can
+           re-show the overlay while that timer is pending. The token makes the timer
+           order-shaped: a stale boot timer can never cut a newer sign-in show short. */
+        var showToken = 0;
+        /* Short on purpose: the loop below is 0.9s, so 600ms lands just past half a sweep —
+           long enough to read as a deliberate beat, never a flicker. 1400ms was a full loop
+           plus dead air, which is the hang this change removes. */
+        var minimumVisibleMs = 600;
+        /* Premium exit: a 250ms ease-out fade instead of an instant cut. Set in JS rather
+           than CSS so the probe's display==='none' assertion still passes once it lands. */
+        var fadeOutMs = 250;
         // Set by js/init.js, the last app script, once the app is ready to be used.
         window.__appBooted = false;
 
         window.__showLoadingOverlay = function () {
           var el = document.getElementById("bootSplash");
           if (!el) return;
+          /* A re-show during a fade (sign-in while a boot hide is mid-flight, sign-out right
+             after a sync hide) must reset the fade state, or the overlay comes back invisible
+             and the app looks hung. */
+          el.removeAttribute("data-hiding");
+          el.style.transition = "";
+          el.style.opacity = "";
+          /* A re-show while the boot minimum timer is still pending must cancel it, or the
+             timer fires mid-sync and cuts the loading overlay short. */
+          if (hideTimer) {
+            clearTimeout(hideTimer);
+            hideTimer = 0;
+          }
+          shown = true;
+          showToken += 1;
           el.style.display = "flex";
           el.setAttribute("aria-hidden", "false");
           document.body.setAttribute("aria-busy", "true");
         };
         window.__hideLoadingOverlay = function () {
           var el = document.getElementById("bootSplash");
-          if (el) {
+          if (!el) {
+            document.body.removeAttribute("aria-busy");
+            return;
+          }
+          if (el.style.display === "none") {
+            document.body.removeAttribute("aria-busy");
+            return;
+          }
+          /* Idempotent: a second call (sync backstop, sign-in .finally()) while fading just
+             finishes the fade — it never re-shows or double-hides. */
+          if (el.getAttribute("data-hiding") === "1") return;
+          el.setAttribute("data-hiding", "1");
+          el.style.transition = "opacity " + fadeOutMs + "ms ease-out";
+          el.style.opacity = "0";
+          window.setTimeout(function () {
             el.style.display = "none";
             el.setAttribute("aria-hidden", "true");
-          }
+            el.style.opacity = "";
+            el.style.transition = "";
+            el.removeAttribute("data-hiding");
+          }, fadeOutMs);
           document.body.removeAttribute("aria-busy");
         };
 
@@ -105,8 +146,12 @@
         window.__hideBootSplash = function () {
           if (hideTimer) return;
           // Let the first loader cycle finish after app initialization, even on a warm PWA launch.
+          var myToken = showToken;
           hideTimer = setTimeout(function () {
             hideTimer = 0;
+            /* Stale boot timer + fresh sign-in show = do nothing. The newer show owns the
+               overlay now; only it may schedule its own hide. */
+            if (myToken !== showToken) return;
             window.__hideLoadingOverlay();
           }, minimumVisibleMs);
         };

@@ -2232,7 +2232,9 @@ h1.page-title,
 .boot-splash .loader-run {
   stroke: url(#bootSplashGrad);
   stroke-dasharray: 0.18 0.82;
-  animation: brand-loader-run 1.4s linear infinite;
+  /* 0.9s, not 1.4s: ~55% faster sweep, same linear travel so the join stays seamless.
+     The minimum hold above (600ms) lands just past half a sweep — a full deliberate beat. */
+  animation: brand-loader-run 0.9s linear infinite;
 }
 
 /* ---------- The brand loader ----------
