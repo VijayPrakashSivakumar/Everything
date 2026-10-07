@@ -76,6 +76,7 @@ if ("serviceWorker" in navigator) {
   });
 }
 initReminderDelivery();
+initDayBoundaryRefresh();
 setInterval(renderToday, 60000);
 setInterval(shuffleQuote, 60000);
 

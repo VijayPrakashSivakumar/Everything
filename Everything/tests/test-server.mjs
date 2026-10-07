@@ -142,7 +142,15 @@ export async function waitForApp(page, { timeout = 30000 } = {}) {
   await page.waitForFunction(APP_BOOTED, null, { timeout });
 }
 
-/* Loads the app and waits until it has finished booting, then says why if it did not. */
+/* Loads the app and waits until it has finished booting, then says why if it did not.
+
+   "Booted" includes the startup overlay leaving the screen. js/init.js sets `__appBooted` when the
+   app is ready, but index.html only *arms* the splash hide at that moment - a minimum visible beat
+   plus a fade (~850ms) - and until it lands a fixed z-index:9999 layer covers the whole page. A
+   probe that hit-tests straight after this return (the phone menu does, 450ms in) would be tapping
+   the splash rather than the app. Waiting it out here means every probe starts at the point a
+   person actually reaches: app up, overlay gone, nothing left to race. The splash probe drives the
+   overlay itself and never calls this, so its show/hide assertions are untouched. */
 export async function bootApp(page, port, { timeout = 45000 } = {}) {
   const failedVendor = [];
   page.on('requestfailed', (r) => {
@@ -160,4 +168,18 @@ export async function bootApp(page, port, { timeout = 45000 } = {}) {
         'slow network — check the script order in index.html.';
     throw new Error(`the app never finished booting at ${testUrl(port)} within ${timeout}ms. ${cause} (${err.message})`);
   }
+  /* The overlay's own wait: __hideBootSplash only arms a minimum-visible timer at __appBooted,
+     and __hideLoadingOverlay's fade is what finally takes the layer off the page. */
+  try {
+    await page.waitForFunction(() => {
+      const el = document.getElementById('bootSplash');
+      return !el || getComputedStyle(el).display === 'none';
+    }, null, { timeout });
+  } catch (err) {
+    throw new Error(
+      `the app booted at ${testUrl(port)} but its startup splash never left the screen within ${timeout}ms. ` +
+      `__hideBootSplash (index.html) arms a minimum-visible timer at __appBooted and __hideLoadingOverlay ` +
+      `does the fade - one of those is not running (${err.message})`);
+  }
+
 }

@@ -393,7 +393,10 @@ function askContextPayload(items) {
       status: taskStatusLabel(status),
       priority: item.priority || "",
       recurrence: item.recurrence && item.recurrence !== "none" ? item.recurrence : "",
-      due: item.due || (item.dueDate ? formatDueDisplay(item.dueDate) : ""),
+      /* Live label, never the stored snapshot. `item.due` was written once at capture by
+         formatDueDisplay, so by tomorrow it is yesterday's word for the date; dueLabel()
+         re-derives it from dueDate against today's date on every call. */
+      due: item.dueDate ? dueLabel(item) : "",
       dueDate: item.dueDate || item.due_date || "",
       done: Boolean(item.done),
       checklist: steps.total ? `${steps.completed}/${steps.total} done` : "",

@@ -206,6 +206,59 @@ function renderAll() {
   )
     sq.textContent = '"' + MOTIVATION_QUOTES[currentQuoteIndex] + '"';
 }
+
+/* The day-boundary heartbeat. Every date label in this app is computed from `new Date()` at
+   render time (dueLabel, isOverdue, agendaGroups, the greeting in handleAuthStateChange, …),
+   so nothing goes stale while the tab stays open — as long as something re-renders when the
+   calendar day actually turns over. renderToday already ticks every 60s via init.js, but the
+   open Tasks/Inbox/Schedule/People/Reports/Review/notif-panel otherwise keeps yesterday's
+   rows until the person taps something. Cheap by design: it only re-renders on the actual
+   day change, detected against the local day key, and it goes through the same render paths
+   a navigation would take. */
+let dayBoundaryLastKey = "";
+function dayBoundaryKey(date) {
+  const d = date instanceof Date ? date : new Date(date ?? Date.now());
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function initDayBoundaryRefresh() {
+  dayBoundaryLastKey = dayBoundaryKey(new Date());
+  const onTick = () => {
+    const key = dayBoundaryKey(new Date());
+    if (key === dayBoundaryLastKey) return;
+    dayBoundaryLastKey = key;
+    refreshForDayBoundary();
+  };
+  setInterval(onTick, 30000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) onTick();
+  });
+}
+function refreshForDayBoundary() {
+  /* Same renders a navigation would trigger: the Today card (which owns the date header,
+     agenda, greeting-side stats and digest inputs) plus the notif dot, the active view, and
+     an open notif panel. The calendar only re-renders when it is showing — it owns scroll
+     state worth keeping otherwise. */
+  renderNav();
+  renderToday();
+  renderNotifDot();
+  if (activeView === "schedule") renderCalendar();
+  else if (activeView === "reports") renderReports();
+  else if (activeView === "review") renderReview();
+  else if (activeView === "projects") renderProjects();
+  else if (activeView === "goals") renderGoals();
+  else if (activeView === "tasks") renderTasks();
+  else if (activeView === "inbox") renderInbox();
+  else if (activeView === "memory") renderMemory();
+  else if (activeView === "documents") renderDocuments();
+  else if (activeView === "money") renderMoney();
+  else if (activeView === "people") renderPeople();
+  else if (activeView === "insights") renderInsights();
+  else if (activeView === "settings") renderSettings();
+  const panel = document.getElementById("notifPanel");
+  if (panel && panel.style.display === "block") renderNotifPanel();
+  if (typeof runReminderCheck === "function") runReminderCheck("day-boundary");
+}
 let notifiedIds = new Set(
   JSON.parse(localStorage.getItem("notified_ids") || "[]"),
 );
@@ -354,7 +407,7 @@ function renderNotifPanel() {
           (i) => `
     <div class="task-row" style="padding:9px 14px;" onclick="toggleNotifPanel();openPanel(${jsStr(i.id)})">
       <div class="task-meta"><div class="task-title">${isOverdue(i) ? icon("triangle-alert") + " " : ""}${escapeHtml(i.title)}</div>
-      <div class="task-sub">${isOverdue(i) ? "Overdue" : i.due || "Waiting for"}</div></div>
+      <div class="task-sub">${isOverdue(i) ? "Overdue" : dueLabel(i) || "Waiting for"}</div></div>
     </div>`,
         )
         .join("")
@@ -613,7 +666,7 @@ function reminderPayload(item) {
     // have been the generic "Tap to open Everything". The expiry is the reason to tap, so it says so.
     body: isDocument(item)
       ? item.sub || documentLabel(item)
-      : item.sub || item.due || "Tap to open Everything",
+      : item.sub || dueLabel(item) || "Tap to open Everything",
     url: `./?item=${item.id}`,
     priority: item.priority || "",
     time,

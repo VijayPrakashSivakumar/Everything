@@ -2461,8 +2461,11 @@ check('the conversation never invents a value, and never blocks a save', () => {
     'an answer that resolves to nothing must be refused, not accepted');
   assert.match(js, /could not read/, 'a refusal has to say what went wrong');
   // Dismiss has to end the conversation, or this becomes the one thing in the sheet that cannot be
-  // waved away — the opposite of what the question card has always promised.
-  assert.match(js, /function dismissCaptureQuestion\(\)[\s\S]{0,400}?captureDialogue\.required = \[\];/,
+  // waved away — the opposite of what the question card has always promised. The window is measured
+  // on comment-free code, because the function documents its own promise in a comment and prose
+  // must not be able to push the clearing out of the window.
+  const dismissFn = stripComments(between('function dismissCaptureQuestion()', '\n}'));
+  assert.match(dismissFn, /function dismissCaptureQuestion\(\)[\s\S]{0,400}?captureDialogue\.required = \[\];/,
     'dismissing must end the conversation');
   // While a value is still being asked for, nothing may decide on the person's behalf.
   assert.match(js, /function scheduleAutoSave[\s\S]{0,700}?captureDialogue\.required\.length\) return;/,
@@ -2826,6 +2829,48 @@ check('the service worker cache is versioned and current', () => {
   const version = sw.match(/CACHE_NAME = 'everything-shell-v(\d+)'/);
   assert.ok(version, 'the shell cache is not versioned');
   assert.ok(Number(version[1]) >= 13, `shell cache is v${version[1]}, expected at least v13`);
+});
+
+check('secondary surfaces never read the stored due snapshot', () => {
+  /* `item.due` is written once at capture by formatDueDisplay and is never refreshed — the exact
+     snapshot bug dueLabel was written to end. Any display path that reads it shows yesterday's
+     word for the date from tomorrow on. The payload builders and panels must re-derive from
+     dueDate via dueLabel() at render time instead. Comment prose is stripped first, so the
+     explanation of the rule cannot trip the check. */
+  const codeOf = (fn, end) => stripComments(betweenBlock(fn, end));
+  const payload = codeOf('function askContextPayload', '/* The single prompt used by both AI paths');
+  assert.doesNotMatch(payload, /item\.due(?![\w$])/,
+    'askContextPayload reads the stored snapshot instead of re-deriving the label');
+  assert.match(payload, /dueLabel\(item\)/,
+    'askContextPayload must label from dueDate at send time');
+  const notif = codeOf('function renderNotifPanel', 'document.addEventListener("click"');
+  assert.doesNotMatch(notif, /\bi\.due\b/,
+    'the notification panel reads the stored snapshot instead of re-deriving the label');
+  assert.match(notif, /dueLabel\(i\)/,
+    'the notification panel must label from dueDate at render time');
+  const reminder = codeOf('function reminderPayload', 'function logNotification');
+  assert.doesNotMatch(reminder, /item\.due(?![\w$])/,
+    'reminderPayload reads the stored snapshot instead of re-deriving the label');
+  assert.match(reminder, /dueLabel\(item\)/,
+    'reminder bodies must label from dueDate at send time');
+});
+
+check('the app re-renders when the calendar day turns over', () => {
+  /* Every label is computed from `new Date()` at render time, so an app left open overnight
+     keeps yesterday's rows unless something re-renders on the day change. The heartbeat must
+     exist, run on boot, detect the change against the local day (never UTC), and re-render
+     through the same paths a navigation takes. */
+  assert.match(js, /function initDayBoundaryRefresh\(\)/, 'the day-boundary heartbeat is missing');
+  assert.match(js, /function refreshForDayBoundary\(\)/, 'the day-boundary refresh is missing');
+  assert.match(js, /initDayBoundaryRefresh\(\);/, 'the heartbeat is never started at boot');
+  const hb = js.slice(js.indexOf('function initDayBoundaryRefresh'));
+  assert.match(hb, /visibilitychange/, 'returning to the tab must re-check the day');
+  assert.match(hb, /refreshForDayBoundary\(\)/, 'a detected day change must re-render');
+  const refresh = between('function refreshForDayBoundary', '\n}');
+  assert.match(refresh, /renderToday\(\)/, 'the Today card must re-render on a day change');
+  assert.match(refresh, /renderNotifDot\(\)/, 'the notification dot must re-render on a day change');
+  assert.match(refresh, /renderNotifPanel\(\)/, 'an open notification panel must re-render on a day change');
+  assert.match(refresh, /runReminderCheck/, 'reminders must be re-checked on a day change');
 });
 
 check('CSS braces are balanced', () => {
