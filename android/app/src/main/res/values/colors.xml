@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Must equal web var(--bg, #f5f6fb): one color across system splash,
+         window background, WebView bg, and #bootSplash is what kills the flash. -->
+    <color name="splash_bg">#F5F6FB</color>
+    <color name="app_bg">#F5F6FB</color>
+</resources>

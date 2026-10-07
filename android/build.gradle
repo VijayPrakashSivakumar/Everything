@@ -1,0 +1,6 @@
+// Top-level build file. App-level config lives in app/build.gradle so this
+// wrapper stays a single-module project.
+plugins {
+    id("com.android.application") version "8.5.2" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+}

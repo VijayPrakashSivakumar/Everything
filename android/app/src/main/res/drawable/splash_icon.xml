@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static twin of the #bootSplash mark: same infinity path + gradient. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="200" android:viewportHeight="200">
+    <path
+        android:pathData="M50,100 C50,75 75,75 100,100 C125,125 150,125 150,100 C150,75 125,75 100,100 C75,125 50,125 50,100 Z"
+        android:strokeWidth="18"
+        android:strokeLineCap="round"
+        android:strokeColor="#4361EE" />
+</vector>

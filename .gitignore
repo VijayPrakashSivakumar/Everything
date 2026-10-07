@@ -17,3 +17,13 @@ shot-*.png
 # `git add -A` should never be able to sweep in.
 *.log
 /z.txt
+# Android wrapper build outputs — the android/ shell is source, its
+# compiled artefacts are not.
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+
