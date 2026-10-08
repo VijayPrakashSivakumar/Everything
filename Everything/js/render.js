@@ -426,32 +426,125 @@ function renderToday() {
   renderExpiringDocuments();
 }
 
+/* Insights hub state. The filter and the expanded cards are per-tab conveniences, like the
+   bulk selection: they describe what this device is looking at, not the data, so neither is
+   synced and neither is an item field. Dismissals persist per device in localStorage so a
+   pattern the person has dealt with stays quiet. */
+let activeInsightFilter = "all";
+let expandedInsights = new Set();
+const INSIGHT_DISMISS_KEY = "everything_insights_dismissed_v1";
+function readDismissedInsights() {
+  try {
+    const raw = localStorage.getItem(INSIGHT_DISMISS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(list) ? list : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+function dismissInsight(id, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  try {
+    const set = readDismissedInsights();
+    set.add(String(id));
+    localStorage.setItem(INSIGHT_DISMISS_KEY, JSON.stringify([...set]));
+  } catch (e) {}
+  expandedInsights.delete(String(id));
+  renderInsights();
+}
+function clearDismissedInsights() {
+  try {
+    localStorage.removeItem(INSIGHT_DISMISS_KEY);
+  } catch (e) {}
+  renderInsights();
+}
+function setInsightFilter(f) {
+  activeInsightFilter = f || "all";
+  renderInsights();
+}
+function toggleInsightExpand(id, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const key = String(id);
+  if (expandedInsights.has(key)) expandedInsights.delete(key);
+  else expandedInsights.add(key);
+  renderInsights();
+}
+/* Jump to the view an insight is about. switchView already re-renders the target, so this is
+   one call plus the Tasks/Inbox filter the card promises. */
+function openInsightTarget(view, filter) {
+  if (!view) return;
+  switchView(view);
+  if (view === "tasks" && filter) renderTasks(filter);
+  else if (view === "inbox" && filter) renderInbox(filter);
+}
+function openInsightPerson(name) {
+  if (!name) return;
+  if (typeof openPersonModal === "function") openPersonModal(null, name);
+  else switchView("people");
+}
+async function toggleInsightDone(id, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  await toggleDone(id);
+  renderInsights();
+  if (typeof renderToday === "function") renderToday();
+}
 /* Renders the Insights view. This was the tail of renderToday(), so Insights was only ever populated
    as a side effect of visiting Today, and showed an empty page when opened first. */
 function renderInsights() {
-  const insightData = getInsights();
+  const dismissed = readDismissedInsights();
+  const allData = getInsights().filter((i) => !dismissed.has(String(i.id)));
+  const insightData =
+    activeInsightFilter === "all"
+      ? allData
+      : allData.filter((i) => i.group === activeInsightFilter);
+  const counts = {
+    all: allData.length,
+    action: allData.filter((i) => i.group === "action").length,
+    pattern: allData.filter((i) => i.group === "pattern").length,
+  };
+  const tabs = [
+    ["all", "All"],
+    ["action", "Needs action"],
+    ["pattern", "Patterns"],
+  ];
   const full = document.getElementById("insightsFull");
   if (full) {
-    full.innerHTML = insightData.length
-      ? insightData
-          .map(
-            (i) =>
-              `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div></div></div>`,
-          )
-          .join("")
-      : emptyStateHTML({
-          /* The rule this copy follows: name the state in the person's words, then say what will
-             happen — in the same breath. A title that describes the app ("Nothing to show yet") is
-             about the database. What someone recognises is the state itself — a clear board — so that
-             is the title, and the body carries the explanation.
+    const tabRow = `<div class="tabs" style="margin-bottom:12px;">${tabs
+      .map(
+        ([id, label]) =>
+          `<div class="tab ${id === activeInsightFilter ? "active" : ""}" onclick="setInsightFilter(${jsStr(id)})">${escapeHtml(label)}${id === "all" ? ` (${counts.all})` : id === "action" ? ` (${counts.action})` : ` (${counts.pattern})`}</div>`,
+      )
+      .join("")}</div>`;
+    full.innerHTML =
+      tabRow +
+      (insightData.length
+        ? insightData.map((i) => insightCardHTML(i)).join("")
+        : activeInsightFilter === "all"
+          ? emptyStateHTML({
+              /* The rule this copy follows: name the state in the person's words, then say what will
+                 happen — in the same breath. A title that describes the app ("Nothing to show yet") is
+                 about the database. What someone recognises is the state itself — a clear board — so that
+                 is the title, and the body carries the explanation.
 
-             The body also does the reassuring part: "you don't have to" is what stops a dashboard
-             from reading as homework. It works the patterns out by itself. */
-          title: "A clear board",
-          body: "Anything overdue, waiting on someone, or due today would land here. Right now there's none of that — so capture something, and this fills itself in.",
-          action: "openCapture()",
-          actionLabel: "Capture something",
-        });
+                 The body also does the reassuring part: "you don't have to" is what stops a dashboard
+                 from reading as homework. It works the patterns out by itself. */
+              title: "A clear board",
+              body: "Anything overdue, waiting on someone, or due today would land here. Right now there's none of that — so capture something, and this fills itself in.",
+              action: "openCapture()",
+              actionLabel: "Capture something",
+            })
+          : emptyStateHTML({
+              title: "Nothing here under this filter",
+              body: "Try All to see everything Everything has noticed so far, or capture something new to change what shows up here.",
+              action: "openCapture()",
+              actionLabel: "Capture something",
+            }));
+    if (dismissed.size) {
+      full.insertAdjacentHTML(
+        "beforeend",
+        `<p class="empty">Dismissed ${dismissed.size} · <button class="link-btn" onclick="clearDismissedInsights()">Show again</button></p>`,
+      );
+    }
   }
 
   const activeItems = state.items.filter((i) => !isArchived(i));
@@ -460,16 +553,47 @@ function renderInsights() {
   const activeDays = new Set(
     activeItems.map((i) => new Date(i.created).toDateString()),
   ).size;
+  const needsAction = activeItems.filter(
+    (i) => !i.done && (isOverdue(i) || isTaskToday(i)),
+  ).length;
 
   const statsEl = document.getElementById("insightsStats");
   if (statsEl) {
     statsEl.innerHTML = `
-      <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${totalItems}</div><div class="stat-label">Total captured</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${completedCount}</div><div class="stat-label">Completed</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);"><i data-lucide="calendar-days"></i></div><div><div class="stat-num">${activeDays}</div><div class="stat-label">Active days</div></div></div>
+      <div class="stat-card" onclick="openInsightTarget('inbox','all')" style="cursor:pointer" title="Open Inbox"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${totalItems}</div><div class="stat-label">Total captured</div></div></div>
+      <div class="stat-card" onclick="openInsightTarget('tasks','completed')" style="cursor:pointer" title="Open completed tasks"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${completedCount}</div><div class="stat-label">Completed</div></div></div>
+      <div class="stat-card" onclick="openInsightTarget('tasks','overdue')" style="cursor:pointer" title="Open tasks needing action"><div class="stat-icon" style="background:var(--red-bg);color:var(--red-fg);"><i data-lucide="triangle-alert"></i></div><div><div class="stat-num">${needsAction}</div><div class="stat-label">Needs action</div></div></div>
+      <div class="stat-card" onclick="openInsightTarget('reports')" style="cursor:pointer" title="Open Reports"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);"><i data-lucide="calendar-days"></i></div><div><div class="stat-num">${activeDays}</div><div class="stat-label">Active days</div></div></div>
     `;
   }
   refreshIcons();
+}
+/* One card per insight. The title/sub markup keeps the same escaped shape the Today strip
+   uses, so the escaping test covers both render sites:
+   insight-title">${escapeHtml(i.title)} */
+function insightCardHTML(i) {
+  const isOpen = expandedInsights.has(String(i.id));
+  const rows = Array.isArray(i.itemIds) ? i.itemIds : [];
+  const shown = rows
+    .slice(0, 5)
+    .map((id) => state.items.find((x) => x.id === id))
+    .filter(Boolean);
+  const hidden = rows.length - shown.length;
+  const itemsHTML = shown.length
+    ? `<div class="insight-items">${shown.map((it) => `<div class="task-row"><div class="checkbox ${it.done ? "checked" : ""}" onclick="toggleInsightDone(${jsStr(it.id)}, event)">${it.done ? icon("check") : ""}</div><div class="task-meta" onclick="openPanel(${jsStr(it.id)})" style="cursor:pointer"><div class="task-title">${escapeHtml(it.title)}</div><div class="task-sub">${escapeHtml(it.sub || "")}</div></div></div>`).join("")}${
+        hidden > 0
+          ? `<button class="link-btn" onclick="openInsightTarget(${jsStr(i.view || "tasks")},${jsStr(i.viewFilter || "all")})">+${hidden} more — open list</button>`
+          : ""
+      }</div>`
+    : "";
+  const viewBtn = i.view
+    ? `<button class="btn btn-sm" onclick="event.stopPropagation();openInsightTarget(${jsStr(i.view)},${jsStr(i.viewFilter || "")})">${escapeHtml(i.viewLabel || "Open list")}</button>`
+    : "";
+  const personBtn = i.personName
+    ? `<button class="btn btn-sm" onclick="event.stopPropagation();openInsightPerson(${jsStr(i.personName)})">Open person</button>`
+    : "";
+  const toggleLabel = isOpen ? "Hide items" : shown.length ? `Show items (${rows.length})` : "";
+  return `<div class="insight-card"><div class="insight-item" onclick="toggleInsightExpand(${jsStr(i.id)}, event)" style="cursor:pointer"><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div></div><button class="link-btn" title="Dismiss" onclick="dismissInsight(${jsStr(i.id)}, event)">Dismiss</button></div><div class="insight-actions">${viewBtn}${personBtn}${toggleLabel ? `<button class="link-btn" onclick="toggleInsightExpand(${jsStr(i.id)}, event)">${toggleLabel}</button>` : ""}</div>${isOpen ? itemsHTML : ""}</div>`;
 }
 
 function getInsights() {
@@ -479,12 +603,18 @@ function getInsights() {
   );
   if (openLoops.length)
     arr.push({
+      id: "open-loops",
+      group: "action",
       icon: "sparkles",
       title: `You have ${openLoops.length} open loop${openLoops.length > 1 ? "s" : ""}`,
       sub: openLoops
         .map((o) => o.title)
         .slice(0, 3)
         .join(", "),
+      itemIds: openLoops.slice(0, 12).map((o) => o.id),
+      view: "inbox",
+      viewFilter: "openloop",
+      viewLabel: "Open loops",
     });
 
   // Most active project
@@ -496,12 +626,21 @@ function getInsights() {
   const topProject = Object.entries(projectCounts).sort(
     (a, b) => b[1] - a[1],
   )[0];
-  if (topProject)
+  if (topProject) {
+    const inProject = state.items.filter(
+      (i) => !isArchived(i) && sameName(i.project, topProject[0]),
+    );
     arr.push({
+      id: `project:${topProject[0]}`,
+      group: "pattern",
       icon: "folder-kanban",
       title: `Most active project: ${topProject[0]}`,
       sub: `${topProject[1]} item${topProject[1] > 1 ? "s" : ""} linked`,
+      itemIds: inProject.slice(0, 12).map((i) => i.id),
+      view: "projects",
+      viewLabel: "Open projects",
     });
+  }
 
   // Most mentioned person
   const personCounts = {};
@@ -509,12 +648,22 @@ function getInsights() {
     if (!isArchived(i) && i.person) personCounts[i.person] = (personCounts[i.person] || 0) + 1;
   });
   const topPerson = Object.entries(personCounts).sort((a, b) => b[1] - a[1])[0];
-  if (topPerson)
+  if (topPerson) {
+    const withPerson = state.items.filter(
+      (i) => !isArchived(i) && sameName(i.person, topPerson[0]),
+    );
     arr.push({
+      id: `person:${topPerson[0]}`,
+      group: "pattern",
       icon: "user",
       title: `You mention ${topPerson[0]} most often`,
       sub: `${topPerson[1]} linked item${topPerson[1] > 1 ? "s" : ""}`,
+      itemIds: withPerson.slice(0, 12).map((i) => i.id),
+      personName: topPerson[0],
+      view: "people",
+      viewLabel: "Open people",
     });
+  }
 
   // Busiest day of week (by creation)
   const dayCounts = [0, 0, 0, 0, 0, 0, 0];
@@ -533,9 +682,14 @@ function getInsights() {
       "Saturday",
     ];
     arr.push({
+      id: `busy-day:${maxDay}`,
+      group: "pattern",
       icon: "trending-up",
       title: `You capture the most on ${dayNames[maxDay]}s`,
       sub: `${dayCounts[maxDay]} item${dayCounts[maxDay] > 1 ? "s" : ""} total`,
+      itemIds: [],
+      view: "reports",
+      viewLabel: "Open reports",
     });
   }
 
@@ -543,31 +697,84 @@ function getInsights() {
   const overdue = state.items.filter((i) => isOverdue(i));
   if (overdue.length)
     arr.push({
+      id: "overdue",
+      group: "action",
       icon: "triangle-alert",
       title: `${overdue.length} task${overdue.length > 1 ? "s are" : " is"} overdue`,
       sub: overdue
         .slice(0, 3)
         .map((o) => o.title)
         .join(", "),
+      itemIds: overdue.slice(0, 12).map((o) => o.id),
+      view: "tasks",
+      viewFilter: "overdue",
+      viewLabel: "Open overdue",
     });
 
   // Stale open loops (open for 7+ days)
   const stale = openLoops.filter((i) => Date.now() - i.created > 7 * 86400000);
   if (stale.length)
     arr.push({
+      id: "stale-loops",
+      group: "action",
       icon: "history",
       title: `${stale.length} open loop${stale.length > 1 ? "s have" : " has"} sat for a week+`,
       sub: stale
         .slice(0, 3)
         .map((s) => s.title)
         .join(", "),
+      itemIds: stale.slice(0, 12).map((s) => s.id),
+      view: "review",
+      viewLabel: "Open review",
+    });
+
+  // Due today: the day's work, fixable inline.
+  const dueToday = state.items.filter((i) => !isArchived(i) && !i.done && isTaskToday(i));
+  if (dueToday.length)
+    arr.push({
+      id: "due-today",
+      group: "action",
+      icon: "calendar-check",
+      title: `${dueToday.length} due today`,
+      sub: dueToday
+        .slice(0, 3)
+        .map((o) => o.title)
+        .join(", "),
+      itemIds: dueToday.slice(0, 12).map((o) => o.id),
+      view: "tasks",
+      viewFilter: "today",
+      viewLabel: "Open today",
+    });
+
+  // No next step: open work with no day and no rhythm that can never surface on its own.
+  const undated = state.items.filter(
+    (i) =>
+      !isArchived(i) &&
+      !i.done &&
+      !i.dueDate &&
+      !i.recurrence &&
+      (i.kind === "task" || i.kind === "waiting"),
+  );
+  if (undated.length)
+    arr.push({
+      id: "no-next-step",
+      group: "action",
+      icon: "calendar-x",
+      title: `${undated.length} without a day on ${undated.length > 1 ? "them" : "it"}`,
+      sub: "Give one a day so it can surface on its own.",
+      itemIds: undated.slice(0, 12).map((i) => i.id),
+      view: "review",
+      viewLabel: "Open review",
     });
 
   if (!arr.length)
     arr.push({
+      id: "empty",
+      group: "pattern",
       icon: "sprout",
       title: "Not enough activity yet",
       sub: "Capture more to start seeing patterns.",
+      itemIds: [],
     });
   return arr;
 }

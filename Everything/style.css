@@ -2763,8 +2763,28 @@ h1.page-title {
   border-bottom: var(--border-w) solid var(--border);
 }
 
-.insight-item:last-child {
+.insight-card {
+  padding: 4px 0;
+  border-bottom: var(--border-w) solid var(--border);
+}
+
+.insight-card:last-child {
   border-bottom: none;
+}
+
+.insight-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 2px 0 8px 32px;
+}
+
+.insight-items {
+  margin: 0 0 10px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .insight-title {
