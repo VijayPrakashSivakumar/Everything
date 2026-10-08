@@ -1,8 +1,7 @@
 ﻿const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
-const SUPABASE_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
+const SUPABASE_KEY = "sb_publishable_jMzHLX9CER8VD5N7UPY89Q_4qh5fwjs";
 
-// This browser-facing key is the public anon key; row-level security enforces access. Never put a service-role key here.
+// This browser-facing key is the public publishable key; row-level security enforces access. Never put a secret/service-role key here.
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
 const APP_BUILD = "2026-10-02.4";

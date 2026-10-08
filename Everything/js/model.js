@@ -1324,9 +1324,9 @@ async function initMultiUser() {
       const me = await user.me();
       currentUserId = me.id;
       document.getElementById("greeting").textContent =
-        `Good morning, ${me.name || "there"}!`;
+        `${greetingText()}, ${me.name || "there"}!`;
       const av = document.getElementById("avatarInitial");
-      if (av) av.textContent = (me.name || "V").charAt(0).toUpperCase();
+      if (av) av.textContent = (me.name || "?").charAt(0).toUpperCase();
     } catch (e) {
       /* no identity available in this view — keep defaults */
     }
@@ -1714,7 +1714,7 @@ async function resetData() {
   }
   const ok = await confirmDialog({
     title: "Reset everything?",
-    body: "Every task, person, project, goal and note on this device goes back to the empty demo state. This cannot be undone.",
+    body: "Every task, person, project, goal and note on this device goes back to the empty starting state. This cannot be undone.",
     confirmLabel: "Reset everything",
     danger: true,
   });
