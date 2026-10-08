@@ -2967,10 +2967,10 @@ function extractLocally(text) {
   else if (/\b(sometime|eventually|whenever|low priority)\b/i.test(text))
     result.priority = "medium";
 
-  // Recurrence
-  if (/\bevery day|daily\b/i.test(text)) result.recurrence = "daily";
-  else if (/\bevery week|weekly\b/i.test(text)) result.recurrence = "weekly";
-  else if (/\bevery month|monthly\b/i.test(text)) result.recurrence = "monthly";
+  // Recurrence — "everyday" (one word) is how people actually type "every day".
+  if (/\b(?:every\s?day|daily)\b/i.test(text)) result.recurrence = "daily";
+  else if (/\b(?:every\s?week|weekly)\b/i.test(text)) result.recurrence = "weekly";
+  else if (/\b(?:every\s?month|monthly)\b/i.test(text)) result.recurrence = "monthly";
 
   // Project — match against known project names
   const proj = state.projects.find((p) =>

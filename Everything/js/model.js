@@ -1168,6 +1168,27 @@ function dueExactLabel(item) {
   const time = fmtTime(d);
   return time ? `${date}, ${time}` : date;
 }
+/* The created date as drawn on a row that carries no due date, so an undated capture
+   still shows when it arrived: "Today" when created today, "Yesterday", else the exact
+   date like dueExactLabel. Never blank for a real timestamp; "" when there is none. */
+function createdDateLabel(item) {
+  const d = toDate(item?.created);
+  if (!d) return "";
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayIdx = Math.round((startDay - startToday) / 864e5);
+  if (dayIdx === 0) return "Today";
+  if (dayIdx === -1) return "Yesterday";
+  const date = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  const time = fmtTime(d);
+  return time ? `${date}, ${time}` : date;
+}
 /* Steps whole months, clamping to the last valid day of the target month.
 
    Date#setMonth overflows: 31 January plus one month is 3 March, so a bill due on the 31st would
@@ -1435,6 +1456,10 @@ function taskStatusFromItem(item) {
   const stored = normalizeTaskStatus(item.status);
   // A task marked "today" that is dated for another day is dated for another day.
   if (stored === "today" && due && !isArchived(item) && !isToday(due)) return "planned";
+  // A stored "today" with no date at all is a legacy snapshot, not work for this
+  // afternoon: without a due date there is nothing tying it to today, so it reads
+  // as Planned until a date is set. Dated-today still reads as Today via dueIsToday.
+  if (stored === "today" && !due && !isArchived(item)) return "planned";
   // dueIsToday, not isTaskToday: asking isTaskToday here would call this function straight back.
   return normalizeTaskStatus(item.status, dueIsToday(item) ? "today" : "planned");
 }

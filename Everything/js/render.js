@@ -966,7 +966,10 @@ function taskRow(item, options = {}) {
   // In the agenda card Today and Tomorrow read with their usual words; anything else shows
   // the exact date instead, so no relative word like "6d late" or "in 5d" ever appears here.
   // dueExactLabel lives next to dueLabel with the date helpers.
+  // No due date: fall back to the created date, so an undated row still shows when it was
+  // captured ("Today" if created today, else the date) instead of a bare status badge.
   const dueDateObj = toDate(item.dueDate || item.due_date);
+  const createdDateObj = !dueDateObj ? toDate(item.created) : null;
   let due = "";
   if (dueDateObj) {
     const nowD = new Date();
@@ -979,13 +982,14 @@ function taskRow(item, options = {}) {
       !options.agenda || dayIdx === 0 || dayIdx === 1
         ? dueLabel(item)
         : dueExactLabel(item);
+  } else if (createdDateObj) {
+    due = createdDateLabel(item);
   }
   if (due) {
     const t = document.createElement("div");
     t.className = "task-time";
     t.innerHTML =
-      (item.recurrence && item.recurrence !== "none" ? icon("repeat") + " " : "") +
-      escapeHtml(due);
+      (item.recurrence && item.recurrence !== "none" ? icon("repeat") + " " : "") + escapeHtml(due);
     row.appendChild(t);
   }
   if (item.kind === "task") {
