@@ -2,6 +2,8 @@
 const SUPABASE_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWthdnpxa2V6anlrdnhocW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTA3NDAsImV4cCI6MjEwNTM4Njc0MH0.nNI8-lKsVJCo1vTYCsmQNchBkaOOkJ5ur0FQz_d4QeI";
 
+// This browser-facing key is the public anon key; row-level security enforces access. Never put a service-role key here.
+
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
 const APP_BUILD = "2026-10-02.4";
 
@@ -470,8 +472,9 @@ const REMEMBERED_EMAIL_KEY = "everything_remembered_email";
 
 async function deleteStructuredRecord(kind, record) {
   if (!structuredSyncAvailable() || !record?.id) return false;
+  const route = STRUCTURED_KIND_ROUTE[kind];
   const result = await structuredRequest(
-    `/api/${kind}?household_id=${encodeURIComponent(currentHouseholdId)}&client_id=${encodeURIComponent(record.id)}`,
+    `/api/${route}?household_id=${encodeURIComponent(currentHouseholdId)}&client_id=${encodeURIComponent(record.id)}`,
     { method: "DELETE" },
   );
   if (result.ok) return true;
@@ -487,8 +490,9 @@ async function persistStructuredRecord(kind, record) {
   record.updatedAt = Math.max(Date.now(), (Number(record.updatedAt) || 0) + 1);
   record.dirty = true;
   const payload = buildStructuredRecordPayload(kind, record);
+  const route = STRUCTURED_KIND_ROUTE[kind];
   const result = await structuredRequest(
-    `/api/${kind}?household_id=${encodeURIComponent(currentHouseholdId)}`,
+    `/api/${route}?household_id=${encodeURIComponent(currentHouseholdId)}`,
     { method: "POST", body: JSON.stringify(payload) },
   );
   if (result.ok) {
@@ -1591,6 +1595,14 @@ function canReadStructuredRow(row) {
    schema is mixed: items/projects/goals/people use `created`, entries/tasks use `created_at`. */
 const STRUCTURED_CREATED_COLUMNS = ["created_at", "created", "createdAt"];
 const structuredCreatedCache = new Map();
+const STRUCTURED_KIND_ROUTE = {
+  item: "items",
+  goal: "goals",
+  project: "projects",
+  person: "people",
+  entry: "entries",
+  task: "tasks",
+};
 
 async function structuredCreatedColumn(table) {
   if (structuredCreatedCache.has(table)) return structuredCreatedCache.get(table);
@@ -1607,8 +1619,9 @@ async function structuredCreatedColumn(table) {
 
 async function loadStructuredCollection(kind, responseKey) {
   if (structuredSyncAvailable()) {
+    const route = STRUCTURED_KIND_ROUTE[kind];
     const result = await structuredRequest(
-      `/api/${kind}?household_id=${encodeURIComponent(currentHouseholdId)}`,
+      `/api/${route}?household_id=${encodeURIComponent(currentHouseholdId)}`,
     );
     if (result.ok && Array.isArray(result.data?.[responseKey])) {
       return result.data[responseKey].filter(canReadStructuredRow);

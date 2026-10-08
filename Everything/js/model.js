@@ -1589,8 +1589,10 @@ async function dbDeleteItem(id, deletedItem = null) {
 }
 async function dbSaveProject(p) {
   if (syncReadyPromise) await syncReadyPromise;
-  if (db) {
-    await db.collection("projects").doc(p.id).set(p);
+  if (!p?.id) return;
+  const col = db ? db.collection("projects") : null;
+  if (col) {
+    await col.doc(p.id).set(p);
   } else if (sbUser) {
     await persistStructuredRecord("project", p);
     save();
@@ -1604,8 +1606,10 @@ async function dbSaveProject(p) {
 }
 async function dbSaveGoal(g) {
   if (syncReadyPromise) await syncReadyPromise;
-  if (db) {
-    await db.collection("goals").doc(g.id).set(g);
+  if (!g?.id) return;
+  const col = db ? db.collection("goals") : null;
+  if (col) {
+    await col.doc(g.id).set(g);
   } else if (sbUser) {
     await persistStructuredRecord("goal", g);
     save();
@@ -1619,8 +1623,10 @@ async function dbSaveGoal(g) {
 }
 async function dbSavePerson(p) {
   if (syncReadyPromise) await syncReadyPromise;
-  if (db) {
-    await db.collection("people").doc(p.id).set(p);
+  if (!p?.id) return;
+  const col = db ? db.collection("people") : null;
+  if (col) {
+    await col.doc(p.id).set(p);
   } else if (sbUser) {
     await persistStructuredRecord("person", p);
     save();

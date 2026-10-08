@@ -746,16 +746,22 @@ async function dbDeleteProject(id) {
   const project = state.projects.find((p) => p.id === id);
   if (db) {
     await db.collection("projects").doc(id).delete();
+    state.projects = state.projects.filter((p) => p.id !== id);
+    save();
+    renderProjects();
+    renderNav();
   } else if (sbUser) {
     await deleteStructuredRecord("project", project);
+    state.projects = state.projects.filter((p) => p.id !== id);
+    save();
+    renderProjects();
+    renderNav();
   } else {
     state.projects = state.projects.filter((p) => p.id !== id);
     save();
+    renderProjects();
+    renderNav();
   }
-  state.projects = state.projects.filter((p) => p.id !== id);
-  save();
-  renderProjects();
-  renderNav();
 }
 
 // People had no delete path at all before this, so a mistyped or unwanted name was permanent.
@@ -764,32 +770,44 @@ async function dbDeletePerson(id) {
   const person = state.people.find((p) => p.id === id);
   if (db) {
     await db.collection("people").doc(id).delete();
+    state.people = state.people.filter((p) => p.id !== id);
+    save();
+    renderPeople();
+    renderNav();
   } else if (sbUser) {
     await deleteStructuredRecord("person", person);
+    state.people = state.people.filter((p) => p.id !== id);
+    save();
+    renderPeople();
+    renderNav();
   } else {
     state.people = state.people.filter((p) => p.id !== id);
     save();
+    renderPeople();
+    renderNav();
   }
-  state.people = state.people.filter((p) => p.id !== id);
-  save();
-  renderPeople();
-  renderNav();
 }
 async function dbDeleteGoal(id) {
   if (syncReadyPromise) await syncReadyPromise;
   const goal = state.goals.find((g) => g.id === id);
   if (db) {
     await db.collection("goals").doc(id).delete();
+    state.goals = state.goals.filter((g) => g.id !== id);
+    save();
+    renderGoals();
+    renderReports();
   } else if (sbUser) {
     await deleteStructuredRecord("goal", goal);
+    state.goals = state.goals.filter((g) => g.id !== id);
+    save();
+    renderGoals();
+    renderReports();
   } else {
     state.goals = state.goals.filter((g) => g.id !== id);
     save();
+    renderGoals();
+    renderReports();
   }
-  state.goals = state.goals.filter((g) => g.id !== id);
-  save();
-  renderGoals();
-  renderReports();
 }
 async function deleteGoal(id) {
   const goal = state.goals.find((g) => g.id === id);

@@ -226,9 +226,15 @@ async function addGoal() {
     id: cid(),
     title,
     done: false,
+    status: "active",
     created: Date.now(),
     targetDate: dateInput ? dateInput.value.trim() : "",
   };
+  // A stable id is required so the backend can dedupe this record on the next sync ("originalId" is
+  // what the server borrows when rebuilding the client key). Without it, the prototype path above
+  // floated the record in localStorage only, and a refresh silently dropped it.
+  g.client_id = g.id;
+  g.originalId = g.id;
   state.goals.unshift(g);
   input.value = "";
   if (dateInput) dateInput.value = "";
@@ -236,10 +242,10 @@ async function addGoal() {
 }
 async function toggleGoal(id) {
   const g = state.goals.find((g) => g.id === id);
-  if (g) {
-    g.done = !g.done;
-    await dbSaveGoal(g);
-  }
+  if (!g) return;
+  g.done = !g.done;
+  g.status = g.done ? "completed" : "active";
+  await dbSaveGoal(g);
 }
 /* Goals are identified by their title now that items link to them by name, so a rename has to carry
    those items along — exactly what renameProject does — and a title already in use is refused. */
@@ -281,12 +287,17 @@ function renderGoals() {
     return;
   }
 
-  const active = state.goals.filter((g) => !g.done);
-  const done = state.goals.filter((g) => g.done);
+  const isGoalDone = (g) => Boolean(g.done ?? (g.status === "completed"));
+  const active = state.goals.filter((g) => !isGoalDone(g));
+  const done = state.goals.filter((g) => isGoalDone(g));
 
   const renderLinked = (i) => `<div class="task-row" onclick="openPanel(${jsStr(i.id)})"><div class="checkbox ${i.done ? "checked" : ""}">${i.done ? icon("check") : ""}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">${escapeHtml(i.sub || "")}</div></div></div>`;
 
   const renderRow = (g) => {
+    // Goals arrive from the backend as `status` ("active"/"completed"/"paused"/"archived") with `done`
+    // in metadata, or from the older prototype as a boolean `done`. Normalize both so the row renders
+    // identically regardless of where the record came from.
+    const done = Boolean(g.done ?? (g.status === "completed"));
     const days = Math.floor((Date.now() - g.created) / 86400000);
     // Items link to a goal by title, exactly as they link to a project by name, so progress is
     // computed from them rather than stored and left to drift.
@@ -295,15 +306,15 @@ function renderGoals() {
     const total = items.length;
     const pct = total ? Math.round((finished / total) * 100) : 0;
     const target = goalTargetLabel(g);
-    const when = g.done
+    const when = done
       ? "Completed"
       : days === 0
         ? "Started today"
         : `In progress · ${days} day${days !== 1 ? "s" : ""}`;
     return `<div class="task-row">
-      <div class="checkbox ${g.done ? "checked" : ""}" onclick="toggleGoal(${jsStr(g.id)})">${g.done ? icon("check") : ""}</div>
+      <div class="checkbox ${done ? "checked" : ""}" onclick="toggleGoal(${jsStr(g.id)})">${done ? icon("check") : ""}</div>
       <div class="task-meta">
-        <div class="task-title" style="${g.done ? "text-decoration:line-through;color:var(--muted);" : ""}">${escapeHtml(g.title)}</div>
+        <div class="task-title" style="${done ? "text-decoration:line-through;color:var(--muted);" : ""}">${escapeHtml(g.title)}</div>
         <div class="task-sub">${when}${target ? ` · ${escapeHtml(target)}` : ""}</div>
       </div>
       <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startRenameGoal(${jsStr(g.id)}, ${jsStr(g.title)})">Rename</button>
