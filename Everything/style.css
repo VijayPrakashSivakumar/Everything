@@ -1820,9 +1820,23 @@ h1.page-title,
 /* The Capture module logo in the top bar uses the same premium travelling-dash loader as the
    in-app brand mark: a light, seamless sweep that says "brand working" from a small touch target
    without the heaviness of the full screen overlay loop. */
-.mobile-capture-btn .capture-mark path {
-  stroke-dasharray: 0.08 0.92;
-  animation: brand-loader-run 1.4s linear infinite;
+.mobile-capture-btn .capture-mark .loader-run {
+  animation: capture-mark-loader-run 1.4s linear infinite;
+}
+
+@keyframes capture-mark-loader-run {
+  0% {
+    stroke-dasharray: 0.06 0.94;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 0.45 0.55;
+    stroke-dashoffset: -0.35;
+  }
+  100% {
+    stroke-dasharray: 0.06 0.94;
+    stroke-dashoffset: -1;
+  }
 }
 
 .sidebar-backdrop {
@@ -2240,10 +2254,7 @@ h1.page-title,
 .boot-splash .loader-run {
   stroke: url(#bootSplashGrad);
   stroke-dasharray: 0.18 0.82;
-  /* The splash mark is static: a still 18% travel segment reads as "working" without the brand
-     loop running while the app boots or syncs. The brand animation belongs to the Capture module
-     logo in the top bar, not to the loading overlay. */
-  animation: none;
+  animation: brand-loader-run 0.9s linear infinite;
 }
 
 /* ---------- The brand loader ----------
@@ -2268,14 +2279,12 @@ h1.page-title,
   color: var(--muted);
 }
 
-
-/* The mark beside the "Capture" label in the sidebar/topbar is 50x20, so the internal brand
-   loader tracks at that size and matches the topbar capture logo instead of shrinking to
-   --loader-size. */
-.capture-mark .brand-loader svg,
-.capture-btn .brand-loader svg {
-  width: 50px;
-  height: 20px;
+.brand-loader svg {
+  width: var(--loader-size, 22px);
+  height: calc(var(--loader-size, 22px) * 0.6);
+  display: block;
+  overflow: visible;
+  flex: none;
 }
 
 /* The track: the whole loop, held quietly. Without it the travelling segment reads as a stray dash
@@ -2382,6 +2391,12 @@ h1.page-title,
   /* The boot splash carries the same rule for the same reason: a still mark that nobody can tell from
      a hung page is worse than no mark. Half the loop solid still reads as "working". */
   .boot-splash .loader-run {
+    animation: none;
+    stroke-dasharray: 0.5 0.5;
+    stroke-dashoffset: 0;
+  }
+
+  .mobile-capture-btn .capture-mark .loader-run {
     animation: none;
     stroke-dasharray: 0.5 0.5;
     stroke-dashoffset: 0;

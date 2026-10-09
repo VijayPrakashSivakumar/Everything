@@ -49,6 +49,43 @@ try {
     if (typeof switchView === 'function') switchView('tasks', { history: 'none' });
   });
 
+  await check('the topbar Capture logo visibly animates along its normalized path', async () => {
+    const desktop = page.viewportSize();
+    let motion;
+    try {
+      await page.setViewportSize({ width: 390, height: 844 });
+      motion = await page.evaluate(async () => {
+        const run = document.querySelector('.mobile-capture-btn .loader-run');
+        const first = getComputedStyle(run).strokeDashoffset;
+        const animations = run.getAnimations().filter((animation) => animation.playState === 'running');
+        const animation = animations[0];
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        return {
+          count: animations.length,
+          first,
+          second: getComputedStyle(run).strokeDashoffset,
+          pathLength: run.getAttribute('pathLength'),
+          name: animation?.animationName,
+          duration: getComputedStyle(run).animationDuration,
+          dashLengths: animation?.effect.getKeyframes().map((frame) => frame.strokeDasharray),
+        };
+      });
+    } finally {
+      await page.setViewportSize(desktop);
+    }
+    assert.equal(motion.pathLength, '1',
+      `the Capture mark is not normalized for its fractional dash animation (pathLength=${motion.pathLength})`);
+    assert.ok(motion.count > 0, 'the topbar Capture logo has no running animation');
+    assert.notEqual(motion.first, motion.second,
+      `the Capture dash never moved (${motion.first}); it is a static logo`);
+    assert.equal(motion.name, 'capture-mark-loader-run',
+      `the Capture mark is not using its scoped animation (${motion.name})`);
+    assert.equal(motion.duration, '1.4s',
+      `the Capture animation timing changed (${motion.duration})`);
+    assert.deepEqual(motion.dashLengths, ['0.06px, 0.94px', '0.45px, 0.55px', '0.06px, 0.94px'],
+      `the traveling segment is not 25% smaller at both animation sizes (${motion.dashLengths})`);
+  });
+
   await check('navigating to a view plays an arrival animation', async () => {
     await page.evaluate(() => switchView('tasks', { history: 'push' }));
     const running = await page.evaluate(() => {
@@ -158,8 +195,8 @@ try {
     // branding is wrong.
     const same = await loaderPage.evaluate(() => {
       const logo = document.querySelector('.brand-mark path').getAttribute('d');
-      const run = document.querySelector('.brand-loader .loader-run').getAttribute('d');
-      const track = document.querySelector('.brand-loader .loader-track').getAttribute('d');
+      const run = document.querySelector('.brand-loader[role="status"] .loader-run').getAttribute('d');
+      const track = document.querySelector('.brand-loader[role="status"] .loader-track').getAttribute('d');
       return { logo, run, track };
     });
     assert.equal(same.run, same.logo, 'the moving part of the loader is not the logo path');
@@ -171,13 +208,13 @@ try {
     // Without it the dash is in user units and the loader would travel the wrong fraction of the
     // loop on any other mark.
     const len = await loaderPage.evaluate(() =>
-      document.querySelector('.brand-loader .loader-run').getAttribute('pathLength'));
+      document.querySelector('.brand-loader[role="status"] .loader-run').getAttribute('pathLength'));
     assert.equal(len, '1', `the loader path is not normalised, pathLength is "${len}"`);
   });
 
   await check('the loader is actually moving, not a static mark', async () => {
     const moved = await loaderPage.evaluate(async () => {
-      const read = () => getComputedStyle(document.querySelector('.brand-loader .loader-run'))
+      const read = () => getComputedStyle(document.querySelector('.brand-loader[role="status"] .loader-run'))
         .strokeDashoffset;
       const a = read();
       await new Promise((r) => setTimeout(r, 260));
@@ -189,7 +226,7 @@ try {
 
   await check('the loader announces itself without announcing every frame', async () => {
     const info = await loaderPage.evaluate(() => {
-      const el = document.querySelector('.brand-loader');
+      const el = document.querySelector('.brand-loader[role="status"]');
       const svg = el.querySelector('svg');
       return {
         role: el.getAttribute('role'),
@@ -267,6 +304,23 @@ await check('every motion keyframe uses tokens, not literal durations', async ()
     const scale = await still.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--motion-scale').trim());
     assert.equal(scale, '0', `--motion-scale is "${scale}" under reduced motion, expected 0`);
+  });
+
+  await check('reduced motion leaves the topbar Capture mark still and readable', async () => {
+    const desktop = still.viewportSize();
+    let motion;
+    try {
+      await still.setViewportSize({ width: 390, height: 844 });
+      motion = await still.evaluate(() => {
+        const style = getComputedStyle(document.querySelector('.mobile-capture-btn .loader-run'));
+        return { animation: style.animationName, dasharray: style.strokeDasharray };
+      });
+    } finally {
+      await still.setViewportSize(desktop);
+    }
+    assert.equal(motion.animation, 'none', 'the Capture mark still moves under reduced motion');
+    assert.equal(motion.dasharray, '0.5px, 0.5px',
+      `the still Capture mark is not drawn as a solid status mark (${motion.dasharray})`);
   });
 
   await check('reduced motion also beats the theme concepts', async () => {
