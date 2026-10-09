@@ -283,6 +283,7 @@ function searchKeydown(e) {
   } else if (e.key === "Escape") {
     closeSearch();
     document.getElementById("searchInput").blur();
+    toggleMobileSearch(false);
   }
 }
 

@@ -612,14 +612,8 @@
               />
             </svg>
           </button>
-          <!--
-            The search box is itself the input. It used to be a click target that opened a
-            full-screen overlay, which felt disjointed on touch: you tapped a field in the
-            header and a different panel appeared. Now it expands in place and streams results
-            underneath, so search happens where you tapped. The overlay is still reachable via
-            Ctrl+K / "/" for keyboard users.
-          -->
-          <div class="search-wrap">
+          <!-- Search stays inline on desktop and expands below the header on phones. -->
+          <div class="search-wrap" id="searchWrap">
             <div class="search-box" id="searchBox">
               <i data-lucide="search" aria-hidden="true"></i>
               <input
@@ -639,46 +633,55 @@
             </div>
             <div class="search-dropdown" id="searchDropdown" hidden></div>
           </div>
-          <!--
-            The palette's touch entry point. Ctrl+Shift+K is the keyboard route, and a phone has no
-            keyboard — so without this button the palette was reachable only by attaching a
-            Bluetooth keyboard, which made the feature desktop-only in a phone-first app. Hidden on
-            wide screens, where the shortcut and the header search already cover it and the topbar
-            has room to spare.
-          -->
-          <button
-            class="icon-btn palette-btn"
-            id="paletteBtn"
-            onclick="openCommandPalette()"
-            title="Jump to anything"
-            aria-label="Jump to a page, task, person or project"
-          >
-            <i data-lucide="command" aria-hidden="true"></i>
-          </button>
-          <button
-            class="icon-btn theme-toggle"
-            onclick="toggleTheme()"
-            title="Toggle theme"
-            aria-label="Toggle theme"
-          >
-            <i data-lucide="sun-moon" aria-hidden="true"></i>
-          </button>
-          <div class="topbar-menu-wrap">
-            <div
-              class="icon-btn"
-              onclick="toggleNotifPanel()"
-              title="Notifications"
-              style="cursor: pointer"
+          <!-- The quick-jump launcher stays in the topbar on tablet/desktop; phones use the
+               simpler menu-and-search layout to keep the header uncluttered. -->
+          <div class="topbar-actions">
+            <button
+              class="icon-btn mobile-search-toggle"
+              id="mobileSearchToggle"
+              type="button"
+              onclick="toggleMobileSearch()"
+              aria-label="Open search"
+              aria-controls="searchWrap"
+              aria-expanded="false"
+              title="Search"
             >
-              <i data-lucide="bell" aria-hidden="true"></i><span
-                class="theme-dot"
-                id="notifDot"
-                style="display: none"
-              ></span>
-            </div>
-            <div
-              id="notifPanel"
-              style="
+              <i data-lucide="search" aria-hidden="true"></i>
+            </button>
+            <button
+              class="icon-btn palette-btn"
+              id="paletteBtn"
+              onclick="openCommandPalette()"
+              title="Jump to anything"
+              aria-label="Jump to a page, task, person or project"
+            >
+              <i data-lucide="command" aria-hidden="true"></i>
+            </button>
+            <button
+              class="icon-btn theme-toggle"
+              onclick="toggleTheme()"
+              title="Toggle theme"
+              aria-label="Toggle theme"
+            >
+              <i data-lucide="sun-moon" aria-hidden="true"></i>
+            </button>
+            <div class="topbar-menu-wrap">
+              <button
+                class="icon-btn"
+                type="button"
+                onclick="toggleNotifPanel()"
+                title="Notifications"
+                aria-label="Notifications"
+              >
+                <i data-lucide="bell" aria-hidden="true"></i><span
+                  class="theme-dot"
+                  id="notifDot"
+                  style="display: none"
+                ></span>
+              </button>
+              <div
+                id="notifPanel"
+                style="
                 display: none;
                 position: absolute;
                 top: 42px;
@@ -692,32 +695,33 @@
                 overflow-y: auto;
                 z-index: 80;
               "
-            >
-              <div
-                style="
+              >
+                <div
+                  style="
                   padding: 10px 14px;
                   font-size: 13px;
                   font-weight: 600;
                   border-bottom: 1px solid var(--border);
                 "
-              >
-                Notifications
+                >
+                  Notifications
+                </div>
+                <div id="notifList"></div>
               </div>
-              <div id="notifList"></div>
             </div>
-          </div>
-          <div class="topbar-menu-wrap">
-            <div
-              class="avatar"
-              id="avatarWrap"
-              onclick="toggleAvatarMenu()"
-              style="cursor: pointer"
-            >
-              <span id="avatarInitial">?</span>
-            </div>
-            <div
-              id="avatarMenu"
-              style="
+            <div class="topbar-menu-wrap">
+              <button
+                class="avatar"
+                type="button"
+                id="avatarWrap"
+                onclick="toggleAvatarMenu()"
+                aria-label="Account menu"
+              >
+                <span id="avatarInitial">?</span>
+              </button>
+              <div
+                id="avatarMenu"
+                style="
                 display: none;
                 position: absolute;
                 top: 42px;
@@ -730,39 +734,40 @@
                 z-index: 80;
                 overflow: hidden;
               "
-            >
-              <div
-                id="avatarMenuEmail"
-                style="
+              >
+                <div
+                  id="avatarMenuEmail"
+                  style="
                   padding: 10px 14px;
                   font-size: 12.5px;
                   color: var(--muted);
                   border-bottom: 1px solid var(--border);
                 "
-              ></div>
-              <div
-                id="installAppItem"
-                onclick="installApp()"
-                style="
+                ></div>
+                <div
+                  id="installAppItem"
+                  onclick="installApp()"
+                  style="
                   display: none;
                   padding: 10px 14px;
                   font-size: 13.5px;
                   cursor: pointer;
                   border-bottom: 1px solid var(--border);
                 "
-              >
-                Install app
-              </div>
-              <div
-                onclick="confirmSignOut()"
-                style="
+                >
+                  Install app
+                </div>
+                <div
+                  onclick="confirmSignOut()"
+                  style="
                   padding: 10px 14px;
                   font-size: 13.5px;
                   cursor: pointer;
                   color: var(--red-fg);
                 "
-              >
-                Sign out
+                >
+                  Sign out
+                </div>
               </div>
             </div>
           </div>
@@ -1250,26 +1255,79 @@
           </div>
           <div class="view" id="view-reports">
             <h1 class="page-title">Reports</h1>
-            <p class="page-sub">A look back at your activity.</p>
+            <p class="page-sub">
+              Explore activity across your workspace, then export the records you need.
+            </p>
+            <div class="card reports-toolbar" aria-label="Report filters">
+              <label class="report-filter report-search">
+                <span>Search records</span>
+                <input
+                  class="capture-input"
+                  id="reportSearch"
+                  type="search"
+                  placeholder="Search titles, projects, people…"
+                  oninput="renderReports()"
+                />
+              </label>
+              <label class="report-filter">
+                <span>Date range</span>
+                <select class="capture-input" id="reportPeriod" onchange="renderReports()">
+                  <option value="7">Last 7 days</option>
+                  <option value="30" selected>Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="all">All time</option>
+                </select>
+              </label>
+              <label class="report-filter">
+                <span>Type</span>
+                <select class="capture-input" id="reportKind" onchange="renderReports()">
+                  <option value="all">All types</option>
+                </select>
+              </label>
+              <label class="report-filter">
+                <span>Status</span>
+                <select class="capture-input" id="reportStatusFilter" onchange="renderReports()">
+                  <option value="all">All statuses</option>
+                  <option value="open">Open</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </label>
+              <div class="report-actions">
+                <button class="btn primary" type="button" onclick="generateReport()">
+                  <i data-lucide="chart-no-axes-combined" aria-hidden="true"></i>
+                  Generate report
+                </button>
+                <button class="btn" id="reportExportButton" type="button" onclick="exportReport()">
+                  <i data-lucide="download" aria-hidden="true"></i>
+                  Export CSV
+                </button>
+                <button class="btn" type="button" onclick="clearReportFilters()">Clear filters</button>
+              </div>
+              <p class="report-source" id="reportGeneratedAt" aria-live="polite">
+                Based on your synced workspace records.
+              </p>
+            </div>
+            <div id="reportMessage" role="status" aria-live="polite" hidden></div>
+            <div id="reportResults">
             <div class="stat-row" id="reportStats"></div>
             <div class="card">
               <div class="card-head">
-                <h3>Completed this week</h3>
-              </div>
-              <div id="reportCompleted"></div>
-            </div>
-            <div class="card">
-              <div class="card-head">
-                <h3>By type</h3>
+                <h3>Records by type</h3>
+                <span class="report-card-hint">Select a type to filter the report</span>
               </div>
               <div id="reportByType"></div>
             </div>
             <div class="card">
               <div class="card-head">
-                <h3>Activity — last 14 days</h3>
-                <span style="font-size: 12px; color: var(--muted)"
-                  >captured vs completed</span
-                >
+                <h3>Report preview</h3>
+                <span class="report-card-hint" id="reportPreviewCount"></span>
+              </div>
+              <div id="reportPreview"></div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <h3>Recent daily activity</h3>
+                <span class="report-card-hint">Captured vs completed</span>
               </div>
               <div class="chart-legend">
                 <span><i style="background: var(--accent)"></i>Captured</span>
@@ -1278,6 +1336,7 @@
                 >
               </div>
               <div class="chart-wrap" id="reportChart"></div>
+            </div>
             </div>
           </div>
           <div class="view" id="view-review">

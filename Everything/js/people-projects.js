@@ -607,70 +607,261 @@ function reviewQuietProjects(now) {
 }
 
 /* ---------- Reports ---------- */
+let reportGeneratedAt = 0;
+
 function renderReports() {
   const statsEl = document.getElementById("reportStats");
   if (!statsEl) return;
-  const weekAgo = Date.now() - 7 * 86400000;
-  const allTasks = state.items.filter((i) => i.kind === "task" && !isArchived(i));
-  const completedTasks = allTasks.filter((i) => i.done);
-  const completed = state.items.filter((i) => i.done && !isArchived(i));
-  const createdThisWeek = state.items.filter((i) => i.created >= weekAgo && !isArchived(i));
-  const completionRate = allTasks.length
-    ? Math.round((completedTasks.length / allTasks.length) * 100)
-    : 0;
-  const byType = {};
-  state.items.forEach((i) => {
-    if (isArchived(i)) return;
-    byType[i.kind] = (byType[i.kind] || 0) + 1;
-  });
+  const messageEl = document.getElementById("reportMessage");
+  const resultsEl = document.getElementById("reportResults");
+  const exportButton = document.getElementById("reportExportButton");
+  if (!state) {
+    messageEl.hidden = false;
+    messageEl.className = "report-state";
+    messageEl.setAttribute("role", "status");
+    messageEl.innerHTML = `<span class="report-state-spinner" aria-hidden="true"></span><span>Loading your workspace data…</span>`;
+    resultsEl.hidden = true;
+    exportButton.disabled = true;
+    return;
+  }
+  if (!Array.isArray(state.items)) {
+    messageEl.hidden = false;
+    messageEl.className = "report-state is-error";
+    messageEl.setAttribute("role", "alert");
+    messageEl.innerHTML = `<i data-lucide="triangle-alert" aria-hidden="true"></i><span>Reports could not be created because workspace records are unavailable. Reload the page to try again.</span>`;
+    resultsEl.hidden = true;
+    exportButton.disabled = true;
+    refreshIcons();
+    return;
+  }
 
+  messageEl.hidden = true;
+  messageEl.setAttribute("role", "status");
+  resultsEl.hidden = false;
+  const searchEl = document.getElementById("reportSearch");
+  const periodEl = document.getElementById("reportPeriod");
+  const kindEl = document.getElementById("reportKind");
+  const statusEl = document.getElementById("reportStatusFilter");
+  const query = searchEl.value.trim().toLocaleLowerCase();
+  const period = periodEl.value;
+  const selectedKind = kindEl.value;
+  const selectedStatus = statusEl.value;
+  const now = Date.now();
+  const days = period === "all" ? 0 : Number(period);
+  const cutoff = days ? now - days * 86400000 : 0;
+  const allItems = state.items.filter((item) => item && !isArchived(item));
+
+  const kinds = [...new Set(allItems.map((item) => item.kind || "other"))].sort();
+  if (selectedKind !== "all" && !kinds.includes(selectedKind)) kinds.push(selectedKind);
+  const kindOptions = `<option value="all">All types</option>${kinds
+    .map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(reportKindLabel(kind))}</option>`)
+    .join("")}`;
+  if (kindEl.innerHTML !== kindOptions) kindEl.innerHTML = kindOptions;
+  kindEl.value = selectedKind;
+
+  const matches = allItems
+    .filter((item) => {
+      const created = reportTimestamp(item.created);
+      if (cutoff && (!created || created < cutoff)) return false;
+      if (selectedKind !== "all" && (item.kind || "other") !== selectedKind) return false;
+      if (selectedStatus === "open" && item.done) return false;
+      if (selectedStatus === "completed" && !item.done) return false;
+      if (!query) return true;
+      const searchable = [
+        item.title,
+        item.description,
+        item.project,
+        item.person,
+        item.kind,
+        item.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase();
+      return searchable.includes(query);
+    })
+    .sort((a, b) => reportTimestamp(b.created) - reportTimestamp(a.created));
+
+  const completed = matches.filter((item) => item.done).length;
+  const openTasks = matches.filter((item) => item.kind === "task" && !item.done).length;
+  const taskCount = matches.filter((item) => item.kind === "task").length;
+  const completedTaskCount = matches.filter((item) => item.kind === "task" && item.done).length;
+  const completionRate = taskCount ? Math.round((completedTaskCount / taskCount) * 100) : 0;
   statsEl.innerHTML = `
-    <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${completed.length}</div><div class="stat-label">Completed</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${createdThisWeek.length}</div><div class="stat-label">Captured this week</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);"><i data-lucide="chart-no-axes-combined"></i></div><div><div class="stat-num">${completionRate}%</div><div class="stat-label">Task completion rate</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);"><i data-lucide="target"></i></div><div><div class="stat-num">${state.goals.filter((g) => !g.done).length}</div><div class="stat-label">Open goals</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);">${icon("inbox")}</div><div><div class="stat-num">${matches.length}</div><div class="stat-label">Matching records</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);">${icon("circle-check")}</div><div><div class="stat-num">${completed}</div><div class="stat-label">Completed</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);">${icon("list-todo")}</div><div><div class="stat-num">${openTasks}</div><div class="stat-label">Open tasks</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:var(--purple-bg);color:var(--purple-fg);">${icon("chart-no-axes-combined")}</div><div><div class="stat-num">${completionRate}%</div><div class="stat-label">Task completion rate</div></div></div>
   `;
   refreshIcons();
 
-  const completedEl = document.getElementById("reportCompleted");
-  completedEl.innerHTML = completed.length
-    ? [...completed]
-        .sort((a, b) => completedWhen(b) - completedWhen(a))
-        .slice(0, 10)
-        .map(
-          (i) =>
-            `<div class="task-row"><div class="checkbox checked">${icon("check")}</div><div class="task-meta"><div class="task-title">${escapeHtml(i.title)}</div><div class="task-sub">Completed ${timeAgo(completedWhen(i))}</div></div></div>`,
-        )
-        .join("")
-    : '<p class="empty">Nothing finished yet.</p>';
-
+  const byType = {};
+  matches.forEach((item) => {
+    const kind = item.kind || "other";
+    byType[kind] = (byType[kind] || 0) + 1;
+  });
   const typeEl = document.getElementById("reportByType");
   const maxCount = Math.max(...Object.values(byType), 1);
   typeEl.innerHTML = Object.keys(byType).length
     ? Object.entries(byType)
         .sort((a, b) => b[1] - a[1])
-        .map(([k, v]) => {
-          const pct = Math.round((v / maxCount) * 100);
-          const [bg, fg] = kindColor(k);
-          return `<div style="margin-bottom:10px;">
-          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;"><span>${kindIcon(k)} ${k.charAt(0).toUpperCase() + k.slice(1)}</span><span>${v}</span></div>
-          <div style="background:var(--bg);border-radius:6px;height:8px;overflow:hidden;"><div style="background:${fg};height:100%;width:${pct}%;"></div></div>
-        </div>`;
+        .map(([kind, count]) => {
+          const [, fg] = kindColor(kind);
+          const pct = Math.round((count / maxCount) * 100);
+          return `<button class="report-type-row${kind === selectedKind ? " is-selected" : ""}" type="button" onclick="setReportKind(${jsStr(kind)})" aria-pressed="${kind === selectedKind}">
+            <span class="report-type-label">${kindIcon(kind)}<span>${escapeHtml(reportKindLabel(kind))}</span></span>
+            <span class="report-type-count">${count}</span>
+            <span class="report-type-track" aria-hidden="true"><span style="width:${pct}%;background:${fg}"></span></span>
+          </button>`;
         })
         .join("")
-    : emptyStateHTML({
-        title: "Patterns need a little company",
-        body: "Once you've captured a little, this is where you'll see what's slipping, what you keep finishing, and what keeps getting quietly put off.",
-        action: "openCapture()",
-        actionLabel: "Capture something",
-      });
+    : emptyNoteHTML(
+        allItems.length
+          ? "No records match these filters. Try a wider date range or clear the search."
+          : "Your workspace is ready for its first records. Capture something to start building a report.",
+      );
+
+  const countEl = document.getElementById("reportPreviewCount");
+  countEl.textContent = `${matches.length} record${matches.length === 1 ? "" : "s"}`;
+  const previewEl = document.getElementById("reportPreview");
+  previewEl.innerHTML = matches.length
+    ? matches
+        .map((item) => {
+          const created = reportTimestamp(item.created);
+          const status = item.done ? "Completed" : item.status || "Open";
+          return `<button class="report-item" type="button" onclick="openPanel(${jsStr(item.id)})">
+            <span class="report-item-icon">${kindIcon(item.kind || "other")}</span>
+            <span class="report-item-main">
+              <span class="report-item-title">${escapeHtml(item.title || "Untitled")}</span>
+              <span class="report-item-meta">${escapeHtml(reportKindLabel(item.kind || "other"))}${item.project ? ` · ${escapeHtml(item.project)}` : ""}${item.person ? ` · ${escapeHtml(item.person)}` : ""}</span>
+            </span>
+            <span class="report-item-date">${created ? new Date(created).toLocaleDateString() : "Date unavailable"}</span>
+            <span class="report-item-status${item.done ? " is-complete" : ""}">${escapeHtml(status)}</span>
+          </button>`;
+        })
+        .join("")
+    : allItems.length
+      ? `<p class="empty">No records match these filters. Try a wider date range, another status, or clear your search.</p><button class="btn btn-sm" type="button" onclick="clearReportFilters()">Clear filters</button>`
+      : emptyStateHTML({
+          title: "Your activity is waiting to take shape",
+          body: "Capture tasks, notes, documents, and moments; they will appear here so you can review patterns, understand progress, and export a useful snapshot.",
+          action: "openCapture()",
+          actionLabel: "Capture something",
+        });
 
   const chartEl = document.getElementById("reportChart");
-  if (chartEl) chartEl.innerHTML = renderActivityChart(14);
+  if (chartEl) chartEl.innerHTML = renderActivityChart(14, matches);
+  exportButton.disabled = matches.length === 0;
+  const generatedEl = document.getElementById("reportGeneratedAt");
+  generatedEl.textContent = reportGeneratedAt
+    ? `Last generated ${new Date(reportGeneratedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · Current view: ${matches.length} matching records`
+    : "Filters update the preview automatically. Generate a report to mark a snapshot.";
 }
 
-/* Captured vs completed per day for the last `days` days. */
-function renderActivityChart(days) {
+function reportTimestamp(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string" && /^\d+$/.test(value)) return Number(value) || 0;
+  const timestamp = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function reportKindLabel(kind) {
+  return String(kind || "other")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function setReportKind(kind) {
+  const select = document.getElementById("reportKind");
+  if (!select) return;
+  select.value = kind;
+  renderReports();
+}
+
+function clearReportFilters() {
+  document.getElementById("reportSearch").value = "";
+  document.getElementById("reportPeriod").value = "30";
+  document.getElementById("reportKind").value = "all";
+  document.getElementById("reportStatusFilter").value = "all";
+  renderReports();
+}
+
+function generateReport() {
+  reportGeneratedAt = Date.now();
+  renderReports();
+}
+
+function reportCsvCell(value) {
+  let text = String(value ?? "");
+  if (/^[\t\r =+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function exportReport() {
+  if (!state || !Array.isArray(state.items)) return;
+  const search = document.getElementById("reportSearch").value.trim().toLocaleLowerCase();
+  const period = document.getElementById("reportPeriod").value;
+  const kind = document.getElementById("reportKind").value;
+  const status = document.getElementById("reportStatusFilter").value;
+  const cutoff = period === "all" ? 0 : Date.now() - Number(period) * 86400000;
+  const rows = state.items
+    .filter((item) => {
+      if (!item || isArchived(item)) return false;
+      const created = reportTimestamp(item.created);
+      if (cutoff && (!created || created < cutoff)) return false;
+      if (kind !== "all" && (item.kind || "other") !== kind) return false;
+      if (status === "open" && item.done) return false;
+      if (status === "completed" && !item.done) return false;
+      if (!search) return true;
+      return [
+        item.title,
+        item.description,
+        item.project,
+        item.person,
+        item.kind,
+        item.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(search);
+    })
+    .sort((a, b) => reportTimestamp(b.created) - reportTimestamp(a.created));
+  if (!rows.length) return;
+
+  const columns = ["Title", "Type", "Status", "Created", "Completed", "Due date", "Project", "Person"];
+  const csv = [
+    columns.map(reportCsvCell).join(","),
+    ...rows.map((item) =>
+      [
+        item.title || "Untitled",
+        reportKindLabel(item.kind || "other"),
+        item.done ? "Completed" : item.status || "Open",
+        reportTimestamp(item.created) ? new Date(reportTimestamp(item.created)).toISOString() : "",
+        item.done && reportTimestamp(item.completedAt || doneLog[item.id])
+          ? new Date(reportTimestamp(item.completedAt || doneLog[item.id])).toISOString()
+          : "",
+        item.dueDate || "",
+        item.project || "",
+        item.person || "",
+      ]
+        .map(reportCsvCell)
+        .join(","),
+    ),
+  ].join("\r\n");
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `everything-report-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* Captured vs completed per day, using the same filtered records as the preview. */
+function renderActivityChart(days, items = currentItems()) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -683,12 +874,13 @@ function renderActivityChart(days) {
     buckets.push({ date: d, captured: 0, completed: 0 });
   }
 
-  state.items.forEach((item) => {
-    if (isArchived(item)) return;
-    const capturedAt = indexByDay[new Date(item.created).toDateString()];
+  items.forEach((item) => {
+    const created = reportTimestamp(item.created);
+    if (!created) return;
+    const capturedAt = indexByDay[new Date(created).toDateString()];
     if (capturedAt !== undefined) buckets[capturedAt].captured++;
 
-    const completedStamp = item.completedAt || doneLog[item.id];
+    const completedStamp = reportTimestamp(item.completedAt || doneLog[item.id]);
     if (item.done && completedStamp) {
       const completedAt = indexByDay[new Date(completedStamp).toDateString()];
       if (completedAt !== undefined) buckets[completedAt].completed++;

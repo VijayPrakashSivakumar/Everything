@@ -189,6 +189,25 @@ if (typeof searchPlaceholderMedia.addEventListener === "function")
   searchPlaceholderMedia.addEventListener("change", syncSearchPlaceholder);
 syncSearchPlaceholder();
 
+function toggleMobileSearch(force) {
+  const topbar = document.querySelector(".topbar");
+  const toggle = document.getElementById("mobileSearchToggle");
+  const input = document.getElementById("searchInput");
+  if (!topbar || !toggle) return;
+  const isOpen = force === undefined
+    ? !topbar.classList.contains("is-search-open")
+    : Boolean(force);
+  topbar.classList.toggle("is-search-open", isOpen);
+  toggle.setAttribute("aria-expanded", String(isOpen));
+  toggle.setAttribute("aria-label", isOpen ? "Close search" : "Open search");
+  toggle.title = isOpen ? "Close search" : "Search";
+  if (isOpen && sidebarMedia.matches) {
+    requestAnimationFrame(() => input?.focus());
+  } else if (input && document.activeElement === input) {
+    input.blur();
+  }
+}
+
 /* ---------- Rendering ---------- */
 function timeAgo(ts) {
   const diff = Date.now() - ts;

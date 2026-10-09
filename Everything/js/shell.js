@@ -253,10 +253,10 @@ function initBackNavigation() {
   // Tapping outside the search field dismisses its dropdown.
   document.addEventListener("pointerdown", (e) => {
     const dd = document.getElementById("searchDropdown");
-    if (!dd || dd.hidden) return;
-    if (dd.contains(e.target)) return;
-    if (e.target.closest("#searchBox")) return;
-    closeSearch();
+    const outsideSearch = !dd || (dd.hidden || (!dd.contains(e.target) && !e.target.closest("#searchBox")));
+    if (!outsideSearch) return;
+    if (dd && !dd.hidden) closeSearch();
+    if (!e.target.closest(".topbar")) toggleMobileSearch(false);
   });
 }
 

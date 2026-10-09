@@ -56,12 +56,18 @@ const SUITES = [
   { name: 'authrecovery', file: 'auth-recovery-probe.mjs', timeoutMs: 120000 },
   // The next-step card, and above all that it stops asking once it has been turned down.
   { name: 'nextaction', file: 'next-action-probe.mjs', timeoutMs: 120000 },
+  // Shared button tap targets, alignment, wrapping, and responsive behavior across Insights and Review.
+  { name: 'buttonlayout', file: 'button-layout-probe.mjs', timeoutMs: 120000 },
   // Mostly about silence: a daily notification that nags is worse than none.
   { name: 'digest', file: 'morning-digest-probe.mjs', timeoutMs: 120000 },
   // Sharing must be a real top-level navigation, or the test passes while the feature is dead.
   { name: 'share', file: 'share-target-probe.mjs', timeoutMs: 180000 },
+  // The narrow-screen header gives navigation and search priority, and moves utility controls to a second row.
+  { name: 'mobiletopbar', file: 'mobile-topbar-probe.mjs', timeoutMs: 120000 },
   // The missing half of the loop: what has quietly stopped moving.
   { name: 'review', file: 'review-probe.mjs', timeoutMs: 120000 },
+  // Reports must follow real workspace records through filtering, preview, and export.
+  { name: 'reports', file: 'reports-probe.mjs', timeoutMs: 120000 },
   // What makes a free tunnel usable from a phone: pasting the banner, and a stale address.
   { name: 'localmodel', file: 'local-model-url-probe.mjs', timeoutMs: 120000 },
   // The one thing that can lose data: two devices offline at the same time.
@@ -281,4 +287,3 @@ if (skipped) {
 if (failed) console.log(paint('red', `${failed} suite(s) failed.`));
 
 process.exit(failed || (skipped && !process.env.ALLOW_SKIP) ? 1 : 0);
-

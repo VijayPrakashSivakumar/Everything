@@ -1770,6 +1770,10 @@ h1.page-title,
   flex-shrink: 0;
 }
 
+.topbar-actions {
+  display: contents;
+}
+
 /* Topbar Capture uses the same brand mark, with no surrounding button box. */
 .mobile-capture-btn {
   display: none;
@@ -1909,30 +1913,25 @@ h1.page-title,
   color: var(--text);
 }
 
-/* The palette's touch entry point.
-
-   Phone-only by default. A wide topbar already has the search field, the shortcut hint and four
-   icon buttons, and the palette is one keystroke away there — so on desktop this would be a
-   duplicate of a working shortcut. On a phone it is the *only* way in.
-
-   Declared after .icon-btn on purpose. Both selectors are a single class, so the later one wins at
-   equal specificity, and .icon-btn's own `display: flex` would otherwise leave this visible on
-   every screen. The button really was 36px wide on desktop until the order was fixed. */
+/* The quick-jump button is useful on wider screens and tablets. Phones keep their topbar focused on
+   navigation, search, and account controls; the launcher itself remains available by keyboard. */
 .palette-btn {
-  display: none;
+  display: flex;
 }
 
 @media (max-width: 900px) {
-  .palette-btn {
-    display: flex;
-  }
-
   /* Two things compete for the search field here. The palette button took 42px, dropping the box to
      106px against the audit's 120px floor; the theme toggle was the control removed to compensate,
      wrongly — `prefers-color-scheme` only picks the initial scheme, so the header toggle is the only
      one-tap route back from a deliberate dark choice. Both are back, with the width reclaimed below
      from the topbar gap, the side padding and the capture mark: 128px at 390px, over the floor. */
   .search-box .kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .palette-btn {
     display: none;
   }
 }
@@ -1953,12 +1952,17 @@ h1.page-title,
 .avatar {
   width: 32px;
   height: 32px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-family: inherit;
   font-weight: var(--fw-bold);
   font-size: var(--fs-body);
 }
@@ -2452,6 +2456,7 @@ h1.page-title {
   display: flex;
   align-items: center;
   gap: var(--gap-row);
+  min-width: 0;
 }
 
 .stat-num {
@@ -2602,12 +2607,22 @@ h1.page-title {
 }
 
 .link-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 8px;
   color: var(--accent);
   font-size: var(--fs-body);
   cursor: pointer;
   background: none;
   border: none;
   font-weight: var(--fw-semibold);
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
 }
 
 .task-row {
@@ -2794,10 +2809,25 @@ h1.page-title {
 }
 
 .insight-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
   padding: 9px 0;
   border-bottom: var(--border-w) solid var(--border);
+}
+
+.insight-item > div {
+  min-width: 0;
+}
+
+.insight-item > .link-btn {
+  margin-left: 0;
+  align-self: start;
+}
+
+.insight-item > .insight-chev {
+  justify-self: end;
 }
 
 /* The Today strip is a set of shortcuts, not just text. A card that names a view is a button: it
@@ -2857,9 +2887,17 @@ h1.page-title {
 .insight-actions {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: stretch;
   flex-wrap: wrap;
-  margin: 2px 0 8px 32px;
+  min-width: 0;
+  margin: 8px 0 10px 30px;
+}
+
+.insight-actions > .btn,
+.insight-actions > .link-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .insight-items {
@@ -3268,19 +3306,31 @@ h1.page-title {
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 40px;
   padding: var(--pad-ctl-y) var(--pad-ctl-x);
   border-radius: var(--radius-ctl);
   font-size: var(--fs-ui);
   font-weight: var(--fw-semibold);
   font-family: inherit;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
   cursor: pointer;
   border: var(--border-w) solid var(--border);
   background: var(--card);
   color: var(--text);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   gap: 7px;
+}
+
+.btn-sm {
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: var(--fs-body-s);
 }
 
 /* Icons inside buttons keep the same optical size as the label. */
@@ -5139,6 +5189,298 @@ h1.page-title {
   white-space: nowrap;
 }
 
+.reports-toolbar {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) repeat(3, minmax(130px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.report-filter {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+.report-filter .capture-input {
+  width: 100%;
+  margin: 0;
+  color: var(--text);
+}
+
+.report-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.report-actions .btn i,
+.report-state > i {
+  width: 16px;
+  height: 16px;
+}
+
+.report-actions .btn:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.report-source {
+  grid-column: 1 / -1;
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.report-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--muted);
+}
+
+.report-state[hidden],
+#reportResults[hidden] {
+  display: none;
+}
+
+.report-state.is-error {
+  border-color: var(--red-fg);
+  color: var(--red-fg);
+}
+
+.report-state-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: report-spin .8s linear infinite;
+}
+
+@keyframes report-spin {
+  to { transform: rotate(360deg); }
+}
+
+.report-card-hint {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.report-type-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+  gap: 7px 12px;
+  padding: 10px 8px;
+  border: 0;
+  border-bottom: var(--border-w) solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-type-row:last-child {
+  border-bottom: 0;
+}
+
+.report-type-row:hover,
+.report-type-row.is-selected {
+  border-radius: var(--radius-row);
+  background: var(--bg);
+}
+
+.report-type-row:focus-visible,
+.report-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.report-type-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-ui);
+}
+
+.report-type-label i,
+.report-item-icon i {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.report-type-count {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.report-type-track {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--bg);
+}
+
+.report-type-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width .2s var(--ease);
+}
+
+.report-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 12px 4px;
+  border: 0;
+  border-bottom: var(--border-w) solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-item:last-child {
+  border-bottom: 0;
+}
+
+.report-item:hover {
+  background: var(--bg);
+}
+
+.report-item-icon {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.report-item-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.report-item-title,
+.report-item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-item-title {
+  font-size: var(--fs-ui);
+  font-weight: 600;
+}
+
+.report-item-meta,
+.report-item-date {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.report-item-status {
+  padding: 4px 8px;
+  border-radius: 99px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.report-item-status.is-complete {
+  background: var(--green-bg);
+  color: var(--green-fg);
+}
+
+#reportPreview .empty-state {
+  margin: 10px 0 0;
+}
+
+#reportPreviewCount {
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .reports-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-search,
+  .report-actions,
+  .report-source {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 480px) {
+  .reports-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .report-filter,
+  .report-search,
+  .report-actions,
+  .report-source {
+    grid-column: 1;
+  }
+
+  .report-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-actions .btn {
+    width: 100%;
+    min-width: 0;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .report-actions .btn:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .report-item {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .report-item-date {
+    grid-column: 2;
+  }
+
+  .report-item-status {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+}
+
 /* Item panel: the next-step suggestion.
 
    Token-driven only, so it stays legible across all ten themes without a single per-theme rule —
@@ -5353,6 +5695,17 @@ body.overlay-open .content {
   .topbar .icon-btn {
     width: 40px;
     height: 40px;
+  }
+
+  .topbar .mobile-capture-btn {
+    width: 44px;
+    height: 40px;
+    min-width: 44px;
+  }
+
+  .topbar .mobile-capture-btn .capture-mark {
+    width: 44px;
+    height: 26px;
   }
 
   .search-wrap {
@@ -5933,11 +6286,6 @@ body.overlay-open .content {
 
 @media (max-width: 480px) {
   .topbar {
-    /* 2px rather than the 4px this had. The theme toggle came back at 900px and took 40px plus a
-       gap, which is what pushed the search box under its 120px floor. 2px between icon buttons that
-       are already 40px wide and visually distinct is not a readable difference, and it buys back
-       12px in the tightest layout in the app. */
-    gap: 2px;
     padding-left: max(8px, env(safe-area-inset-left));
     padding-right: max(8px, env(safe-area-inset-right));
   }
@@ -6339,37 +6687,9 @@ body.overlay-open .content {
   }
 }
 
-/* ---------- Phones narrower than the one this layout was measured on ----------
-
-   The 120px floor under the search field is a real constraint, but 390px is only where it was
-   measured. The field is the single child of the topbar allowed to shrink
-   (`.search-wrap { flex: 1 1 auto; min-width: 0 }`), and every control beside it has a fixed width
-   and a 40px tap target, so every pixel a narrower phone is short lands in that one place and
-   nothing else moves. At 360px — a 1080px screen at DPR 3, which is most Android phones — the field
-   was 98px and the placeholder was cut to "Searc"; at 320px it was 58px with room for one
-   character. The row above holds both halves of the 390px trade in place, and neither of them says
-   anything about the phone that is 30px narrower.
-
-   382px is where the arithmetic stops working: with the capture mark present, the other six
-   children, the 2px gaps and the side padding come to 262px, which leaves the field exactly 120px
-   at 382px and less below it. So the mark is what goes, and it is the right thing to lose: it is
-   the one topbar element that is a logo rather than a control, and the app carries the same mark in
-   the sidebar brand while the Capture button stays one tap away in the menu. Losing a duplicate
-   beats losing width from the field the user is actually reading. */
-@media (max-width: 381px) {
-  .mobile-capture-btn {
-    display: none;
-  }
-}
-
-/* The last 20px, for a 320px screen. Nothing else is left to give: the controls are already at
-   their 40px tap minimum and the side padding is down to 8px, so this comes out of the space
-   *between* things rather than out of anything tappable. 2px between two 40px buttons is not a
-   readable difference, and the field's own inner padding is the difference between its placeholder
-   fitting and being cut mid-word. */
 @media (max-width: 335px) {
   .topbar {
-    gap: 0;
+    gap: 8px;
     padding-left: max(6px, env(safe-area-inset-left));
     padding-right: max(6px, env(safe-area-inset-right));
   }
@@ -6459,4 +6779,82 @@ body.overlay-open .content {
     max-width: 1400px;
     margin: 0 auto;
   }
+}
+
+@media (max-width: 600px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: 40px 44px minmax(0, 1fr);
+    grid-template-areas:
+      "menu brand actions";
+    gap: 8px;
+    align-items: center;
+  }
+
+  .topbar .search-wrap {
+    display: none;
+  }
+
+  .topbar.is-search-open {
+    grid-template-areas:
+      "menu brand actions"
+      "search search search";
+  }
+
+  .topbar.is-search-open .search-wrap {
+    display: block;
+    grid-area: search;
+    width: 100%;
+  }
+
+  .topbar #hamburger {
+    grid-area: menu;
+  }
+
+  .topbar .mobile-capture-btn {
+    grid-area: brand;
+  }
+
+  .topbar .mobile-capture-btn {
+    width: 44px;
+    height: 40px;
+    min-width: 44px;
+  }
+
+  .topbar .mobile-capture-btn .capture-mark {
+    width: 44px;
+    height: 26px;
+  }
+
+  .topbar-actions {
+    grid-area: actions;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .topbar-actions .mobile-search-toggle {
+    display: flex;
+  }
+
+  .topbar-actions > .topbar-menu-wrap {
+    display: grid;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+  }
+
+  .topbar-actions .avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+}
+
+.mobile-search-toggle {
+  display: none;
 }
