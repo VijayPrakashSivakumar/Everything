@@ -2268,12 +2268,14 @@ h1.page-title,
   color: var(--muted);
 }
 
-.brand-loader svg {
-  width: var(--loader-size, 22px);
-  height: calc(var(--loader-size, 22px) * 0.6);
-  display: block;
-  overflow: visible;
-  flex: none;
+
+/* The mark beside the "Capture" label in the sidebar/topbar is 50x20, so the internal brand
+   loader tracks at that size and matches the topbar capture logo instead of shrinking to
+   --loader-size. */
+.capture-mark .brand-loader svg,
+.capture-btn .brand-loader svg {
+  width: 50px;
+  height: 20px;
 }
 
 /* The track: the whole loop, held quietly. Without it the travelling segment reads as a stray dash

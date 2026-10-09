@@ -532,13 +532,37 @@
         <div class="nav" id="navList"></div>
         <button class="capture-btn" onclick="openCapture()">
           <span class="capture-icon" aria-hidden="true">
-            <svg class="capture-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <svg class="capture-mark brand-loader brand-loader--md" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <defs>
+                <linearGradient id="captureGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#4361ee" />
+                  <stop offset="100%" stop-color="#7b2ff7" />
+                </linearGradient>
+              </defs>
+              <!-- Static track: the whole loop, held quietly so the travelling segment has a
+                   known path to travel rather than appearing out of nowhere. -->
               <path
+                class="loader-track"
+                d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
+                fill="none"
+                stroke="var(--accent)"
+                stroke-width="4.5"
+                stroke-linecap="round"
+                pathLength="1"
+              />
+              <!-- Travelling segment: the same mark, poured along the track with a swell as it
+                   reaches the widest point and a retract as it returns. Matches the in-app loader
+                   and the topbar capture logo so the dashboard capture module reads as one animation,
+                   not two. -->
+              <path
+                class="loader-run"
                 d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
                 fill="none"
                 stroke="url(#logoGrad)"
                 stroke-width="4.5"
                 stroke-linecap="round"
+                pathLength="1"
+                stroke-dasharray="0.08 0.92"
               />
             </svg>
           </span><span class="capture-label">Capture</span>
