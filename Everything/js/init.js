@@ -36,7 +36,6 @@ refreshIcons();
 renderNav();
 updateNotifBtn();
 renderQuote();
-restoreNudge();
 restoreDashboardLayout();
 enableDashboardDragging();
 initShortcuts();

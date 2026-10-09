@@ -844,28 +844,6 @@
                      but a reminder only helps if the thing is still there when it arrives; this is
                      the same "not an empty card" rule as the birthdays above. -->
                 <div class="card" id="expiringDocuments" hidden></div>
-                <div class="nudge dashboard-movable" id="nudgeCard" data-dashboard-section="nudge">
-                  <div class="nudge-text">
-                    <b>One thing to consider</b>
-                    <div class="nudge-sub">
-                      You mentioned your business idea a few times. Want to
-                      spend 20 minutes on it today?
-                    </div>
-                  </div>
-                  <div class="nudge-actions">
-                    <button class="btn-small" onclick="startNudge()">
-                      Start now
-                    </button>
-                    <button
-                      class="nudge-dismiss"
-                      onclick="dismissNudge()"
-                      title="Dismiss for today"
-                      aria-label="Dismiss for today"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
               </div>
               <div id="dashboardFeatureColumn">
                 <div
@@ -917,6 +895,9 @@
                 <div class="card">
                   <div class="card-head">
                     <h3>Insights</h3>
+                    <button class="link-btn" onclick="switchView('insights')">
+                      View all →
+                    </button>
                   </div>
                   <div id="insightsList"></div>
                 </div>

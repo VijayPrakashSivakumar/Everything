@@ -447,38 +447,6 @@ async function quickCapture() {
   input.value = "";
   await dbSaveItem(newItem);
 }
-async function startNudge() {
-  const newItem = {
-    id: cid(),
-    kind: "task",
-    title: "Work on business idea",
-    sub: "20-minute focus block",
-    priority: "medium",
-    person: "",
-    due: "Today",
-    status: "today",
-    project: "",
-    created: Date.now(),
-    done: false,
-  };
-  state.items.unshift(newItem);
-  await dbSaveItem(newItem);
-  switchView("tasks");
-}
-
-function dismissNudge() {
-  const today = new Date().toISOString().slice(0, 10);
-  localStorage.setItem("everything_nudge_dismissed", today);
-  const card = document.getElementById("nudgeCard");
-  if (card) card.style.display = "none";
-}
-
-function restoreNudge() {
-  const today = new Date().toISOString().slice(0, 10);
-  if (localStorage.getItem("everything_nudge_dismissed") !== today) return;
-  const card = document.getElementById("nudgeCard");
-  if (card) card.style.display = "none";
-}
 
 /* ---------- Inbox categorization (the browser side) ----------
 

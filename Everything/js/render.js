@@ -416,16 +416,34 @@ function renderToday() {
       recent.appendChild(el);
     });
 
-  // The compact strip on Today, and the full Insights view, are the same data.
-  // Both escape the text: getInsights() interpolates user titles, project and person names.
+  // The compact strip on Today, and the full Insights view, are the same data. Both escape the
+  // text: getInsights() interpolates user titles, project and person names.
+  //
+  // The strip is not view-only. Every insight that names a view is a shortcut to that view, and
+  // every one carries a plain next step, so the card answers "what matters" and "what do I do"
+  // rather than only describing the data. Insights with no target (a bare pattern note) stay calm
+  // text instead of a button that goes nowhere.
   const insights = document.getElementById("insightsList");
-  const insightData = getInsights();
-  insights.innerHTML = insightData
-    .map(
-      (i) =>
-        `<div class="insight-item"><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div></div></div>`,
-    )
-    .join("");
+  // A glance, not a wall: the five most useful, with the full set one tap away in the Insights view.
+  const insightData = getInsights().slice(0, 5);
+  insights.innerHTML = insightData.length
+    ? insightData
+        .map((i) => {
+          const step = insightNextStep(i);
+          const nextLine = step
+            ? `<div class="insight-next">${icon("arrow-right")} ${escapeHtml(step)}</div>`
+            : "";
+          const canJump = !!i.view;
+          const attrs = canJump
+            ? ` role="button" tabindex="0" onclick="openInsightTarget(${jsStr(i.view)},${jsStr(i.viewFilter || "")})"`
+            : "";
+          const chev = canJump
+            ? `<span class="insight-chev">${icon("chevron-right")}</span>`
+            : "";
+          return `<div class="insight-item${canJump ? " insight-item--action" : ""}"${attrs}><span>${icon(i.icon)}</span><div><div class="insight-title">${escapeHtml(i.title)}</div><div class="insight-sub">${escapeHtml(i.sub)}</div>${nextLine}</div>${chev}</div>`;
+        })
+        .join("")
+    : `<p class="empty">Nothing needs your attention right now.</p>`;
 
   renderUpcomingDates();
   renderExpiringDocuments();
@@ -782,6 +800,34 @@ function getInsights() {
       itemIds: [],
     });
   return arr;
+}
+
+/* A one-line "what do I do about this" for each insight. The title says what was noticed; this says
+   the plain next move, in the person's words, so a dashboard card answers "so what?" instead of only
+   describing the data. Keyed by the ids getInsights() emits; anything without a known id gets no
+   line rather than a generic guess that could be wrong. */
+function insightNextStep(i) {
+  switch (i && i.id) {
+    case "overdue":
+      return "Reschedule or finish these first — they're already late.";
+    case "due-today":
+      return "Do these today, or push one to a day that fits.";
+    case "stale-loops":
+      return "Decide what these need, or let them go.";
+    case "no-next-step":
+      return "Give one a day so it can surface on its own.";
+    case "open-loops":
+      return "Turn each into a task, or close it out.";
+    case "empty":
+      return "";
+    default:
+      if (typeof i?.id === "string") {
+        if (i.id.startsWith("project:")) return "See what's moving here, and what's stuck.";
+        if (i.id.startsWith("person:")) return "See what's open with them.";
+        if (i.id.startsWith("busy-day:")) return "See your weekly rhythm.";
+      }
+      return "";
+  }
 }
 
 function taskPriorityRank(item) {
