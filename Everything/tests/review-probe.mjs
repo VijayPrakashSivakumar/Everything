@@ -124,6 +124,105 @@ try {
     const r = await show([open({ id: "it's", title: `Ravi's "urgent" call`, dueDate: day(-1) })]);
     assert.match(r.stuck, /Ravi/, `the row was dropped: "${r.stuck}"`);
   });
+
+  await check('the stat tiles are real controls wired to their lists', async () => {
+    await show([open({ id: 'a', title: 'Late thing', dueDate: day(-1) })]);
+    const r = await page.evaluate(() => {
+      const host = document.getElementById('reviewStats');
+      const tiles = [...host.querySelectorAll('.stat-card')];
+      return {
+        grid: getComputedStyle(host).display,
+        tiles: tiles.map((t) => ({
+          onclick: t.getAttribute('onclick') || '',
+          label: (t.querySelector('.stat-label') || {}).textContent || '',
+        })),
+        targets: ['reviewStuckCard', 'reviewDoneCard', 'reviewUndatedCard'].map(
+          (id) => !!document.getElementById(id),
+        ),
+      };
+    });
+    assert.equal(r.grid, 'grid', `#reviewStats is not laid out as a stat-row (display: ${r.grid}) — the tiles would stack full-width`);
+    assert.equal(r.tiles.length, 4, `expected 4 stat tiles, found ${r.tiles.length}`);
+    r.tiles.forEach((t) => assert.ok(t.onclick, `the "${t.label}" tile does nothing when clicked`));
+    assert.deepEqual(r.targets, [true, true, true],
+      'a stat tile jumps to a card id that does not exist in the markup');
+    // And invoking a jump must not throw: the handler is exercised, not just present.
+    await page.evaluate(() => { reviewJumpTo('reviewStuckCard'); reviewJumpToInbox(); });
+  });
+
+  await check('a list past twelve rows can be opened in full, and closed again', async () => {
+    // The old code capped at 12 and appended dead text ("and N more — open the view they belong
+    // to") you could not click, and the other two lists dropped the tail in silence.
+    const many = Array.from({ length: 15 }, (_, i) =>
+      open({ id: 'm' + i, title: `Stuck ${i + 1}`, dueDate: day(-1) }));
+    const rows = () => page.evaluate(() => document.querySelectorAll('#reviewStuck .task-row').length);
+    const toggleBtn = () => page.evaluate(() => {
+      const btn = [...document.querySelectorAll('#reviewStuck .link-btn')].pop();
+      return btn ? btn.textContent.trim() : '';
+    });
+
+    await show(many);
+    assert.equal(await rows(), 12, `the preview should cap at 12 rows, saw ${await rows()}`);
+    assert.match(await toggleBtn(), /^Show all \(15\)$/, `expected a Show all control, got "${await toggleBtn()}"`);
+
+    await page.evaluate(() => toggleReviewSection('stuck'));
+    assert.equal(await rows(), 15, `expanding should reveal all 15 rows, saw ${await rows()}`);
+    assert.match(await toggleBtn(), /^Show fewer$/, `the expanded control should collapse, got "${await toggleBtn()}"`);
+
+    await page.evaluate(() => toggleReviewSection('stuck'));
+    assert.equal(await rows(), 12, 'collapsing should return to the 12-row preview');
+    await show([]); // leave the shared expansion state clean for the checks below
+  });
+
+  await check('a finished row opens its item, and its checkbox reopens it', async () => {
+    const r = await show([
+      open({ id: 'f1', title: 'Sorted the attic', done: true, completedAt: Date.now() - 3600000 }),
+    ]);
+    assert.match(r.done, /Sorted the attic/, `the finished row is missing: "${r.done}"`);
+    const wire = await page.evaluate(() => {
+      const row = document.querySelector('#reviewDone .task-row');
+      return {
+        meta: row ? (row.querySelector('.task-meta')?.getAttribute('onclick') || '') : '',
+        check: row ? (row.querySelector('.checkbox')?.getAttribute('onclick') || '') : '',
+      };
+    });
+    assert.match(wire.meta, /openPanel\(/, `the row does not open its item: "${wire.meta}"`);
+    assert.match(wire.check, /toggleReviewDone\(/, `the checkbox cannot reopen the item: "${wire.check}"`);
+  });
+
+  await check('the empty sections use the full empty state, not a bare line', async () => {
+    await show([]);
+    const r = await page.evaluate(() => ({
+      done: !!document.querySelector('#reviewDone .empty-state'),
+      projects: !!document.querySelector('#reviewProjects .empty-state'),
+    }));
+    assert.equal(r.done, true, 'the Finished section falls back to a bare <p class="empty"> when empty');
+    assert.equal(r.projects, true, 'the Quiet projects section falls back to a bare <p class="empty"> when empty');
+  });
+
+  await check('the nav badge carries the stuck count from state alone', async () => {
+    const badgeFor = async (items) => {
+      await show(items);
+      return page.evaluate(() => {
+        if (typeof renderNav === 'function') renderNav();
+        const item = [...document.querySelectorAll('#navList .nav-item')].find(
+          (n) => (n.querySelector('.nav-label') || {}).textContent?.trim() === 'Review',
+        );
+        const badge = item && item.querySelector('.nav-badge');
+        return badge ? badge.textContent.trim() : '';
+      });
+    };
+    assert.equal(
+      await badgeFor([open({ id: 'a', title: 'Late thing', dueDate: day(-1) })]),
+      '1',
+      'one overdue item should badge Review with 1',
+    );
+    assert.equal(
+      await badgeFor([open({ id: 'b', title: 'Fine', dueDate: day(2) })]),
+      '',
+      'a clean account must not carry a Review badge',
+    );
+  });
 } finally {
   await browser.close();
   server.kill();

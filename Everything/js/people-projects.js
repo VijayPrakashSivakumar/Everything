@@ -409,12 +409,42 @@ function completedWhen(item) {
 
 const REVIEW_DONE_DAYS = 7;
 const REVIEW_QUIET_PROJECT_DAYS = 14;
+/* Lists show this many rows before the section asks whether to show the rest. Twelve is enough to
+   recognise the shape of the week without pushing the next card below the fold on a phone. */
+const REVIEW_ROW_LIMIT = 12;
 
-function renderReview() {
-  const statsEl = document.getElementById("reviewStats");
-  if (!statsEl) return;
+/* Which sections this device has opened up, like the Insights expansion: a view convenience, not
+   data. It is neither synced nor stored on an item, and it resets with the session. */
+let expandedReviewSections = new Set();
+function toggleReviewSection(key) {
+  if (expandedReviewSections.has(key)) expandedReviewSections.delete(key);
+  else expandedReviewSections.add(key);
+  renderReview();
+}
 
-  const now = Date.now();
+/* A stat tile counts a list that lives *below it on the same page*, so the tile brings that list
+   into view rather than navigating — except "Open", which is a count of everything and belongs to
+   the Inbox, the way the Dashboard tiles jump. */
+function reviewJumpTo(targetId) {
+  const el = document.getElementById(targetId);
+  if (el) el.scrollIntoView({ block: "start" });
+}
+function reviewJumpToInbox() {
+  switchView("inbox");
+  renderInbox("all");
+}
+async function toggleReviewDone(id, ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  await toggleDone(id);
+  renderReview();
+  if (typeof renderNav === "function") renderNav();
+  if (typeof renderToday === "function") renderToday();
+}
+
+/* The stuck list: overdue plus quiet-too-long waiting, deduplicated and soonest-first. Extracted
+   from renderReview() because it is also the number the nav badge shows, and the badge must not
+   depend on the view having been rendered first (the cold-load comment in core.js). */
+function reviewStuckItems(now = Date.now()) {
   const open = currentItems().filter((item) => !item.done && !isArchived(item));
 
   const overdue = open.filter((item) => isOverdue(item));
@@ -426,9 +456,35 @@ function renderReview() {
       Number(item.created) < now - REVIEW_QUIET_PROJECT_DAYS * 86400000,
   );
   // Overdue and stale waiting rarely overlap; if they do, the item is listed once, not twice.
-  const stuck = [...overdue, ...staleWaiting]
+  return [...overdue, ...staleWaiting]
     .filter((item, index, list) => list.findIndex((o) => o.id === item.id) === index)
     .sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0) || a.created - b.created);
+}
+function reviewStuckCount() {
+  return reviewStuckItems().length;
+}
+
+/* Rows up to the limit, then a real control for the rest — the old code appended dead text
+   ("and N more — open the view they belong to") to the stuck list and silently dropped rows from
+   the other two. The cap is now a preview, not a wall. */
+function reviewRowsHTML(list, sectionKey, rowHTML) {
+  const expanded = expandedReviewSections.has(sectionKey);
+  const shown = expanded ? list : list.slice(0, REVIEW_ROW_LIMIT);
+  const tail =
+    list.length > REVIEW_ROW_LIMIT
+      ? `<div style="padding:6px 0 2px"><button class="link-btn" onclick="toggleReviewSection(${jsStr(sectionKey)})">${expanded ? "Show fewer" : `Show all (${list.length})`}</button></div>`
+      : "";
+  return shown.map(rowHTML).join("") + tail;
+}
+
+function renderReview() {
+  const statsEl = document.getElementById("reviewStats");
+  if (!statsEl) return;
+
+  const now = Date.now();
+  const open = currentItems().filter((item) => !item.done && !isArchived(item));
+
+  const stuck = reviewStuckItems(now);
 
   const doneWeek = currentItems()
     .filter((item) => item.done && !isArchived(item))
@@ -444,28 +500,23 @@ function renderReview() {
       (item.kind === "task" || item.kind === "waiting"),
   );
 
+  /* Every tile is a shortcut: the three counts jump to the list they count — all three are on this
+     page — and Open goes to the Inbox, which is where "everything open" lives everywhere else in the
+     app. A tile that only displays a number is half a control. */
   statsEl.innerHTML = `
-    <div class="stat-card"><div class="stat-icon" style="background:var(--red-bg);color:var(--red-fg);"><i data-lucide="triangle-alert"></i></div><div><div class="stat-num">${stuck.length}</div><div class="stat-label">Need a decision</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${doneWeek.length}</div><div class="stat-label">Finished this week</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);"><i data-lucide="calendar-x"></i></div><div><div class="stat-num">${undated.length}</div><div class="stat-label">No next step</div></div></div>
-    <div class="stat-card"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${open.length}</div><div class="stat-label">Open</div></div></div>
+    <div class="stat-card" onclick="reviewJumpTo('reviewStuckCard')" style="cursor:pointer" title="Jump to what needs a decision"><div class="stat-icon" style="background:var(--red-bg);color:var(--red-fg);"><i data-lucide="triangle-alert"></i></div><div><div class="stat-num">${stuck.length}</div><div class="stat-label">Need a decision</div></div></div>
+    <div class="stat-card" onclick="reviewJumpTo('reviewDoneCard')" style="cursor:pointer" title="Jump to what you finished"><div class="stat-icon" style="background:var(--green-bg);color:var(--green-fg);"><i data-lucide="circle-check"></i></div><div><div class="stat-num">${doneWeek.length}</div><div class="stat-label">Finished this week</div></div></div>
+    <div class="stat-card" onclick="reviewJumpTo('reviewUndatedCard')" style="cursor:pointer" title="Jump to work with no day"><div class="stat-icon" style="background:var(--amber-bg);color:var(--amber-fg);"><i data-lucide="calendar-x"></i></div><div><div class="stat-num">${undated.length}</div><div class="stat-label">No next step</div></div></div>
+    <div class="stat-card" onclick="reviewJumpToInbox()" style="cursor:pointer" title="Open the Inbox"><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue-fg);"><i data-lucide="inbox"></i></div><div><div class="stat-num">${open.length}</div><div class="stat-label">Open</div></div></div>
   `;
   refreshIcons();
 
   const stuckEl = document.getElementById("reviewStuck");
   if (stuckEl) {
     stuckEl.innerHTML = stuck.length
-      ? stuck
-          .slice(0, 12)
-          .map(
-            (item) => `<div class="task-row" onclick="openPanel(${jsStr(item.id)})" style="cursor:pointer">
+      ? reviewRowsHTML(stuck, "stuck", (item) => `<div class="task-row" onclick="openPanel(${jsStr(item.id)})" style="cursor:pointer">
         <div class="task-meta"><div class="task-title">${escapeHtml(item.title)}</div>
-        <div class="task-sub">${escapeHtml(reviewStuckReason(item))}</div></div></div>`,
-          )
-          .join("") +
-        (stuck.length > 12
-          ? `<p class="empty">and ${stuck.length - 12} more — open the view they belong to.</p>`
-          : "")
+        <div class="task-sub">${escapeHtml(reviewStuckReason(item))}</div></div></div>`)
       : emptyStateHTML({
             /* "That is a good week" was doing the work in the old copy, so the body keeps the warmth
                and stops apologising. Nothing about this screen is an absence. */
@@ -478,15 +529,13 @@ function renderReview() {
   const doneEl = document.getElementById("reviewDone");
   if (doneEl) {
     doneEl.innerHTML = doneWeek.length
-      ? doneWeek
-          .slice(0, 12)
-          .map(
-            (item) => `<div class="task-row"><div class="checkbox checked">${icon("check")}</div>
-        <div class="task-meta"><div class="task-title">${escapeHtml(item.title)}</div>
-        <div class="task-sub">Finished ${timeAgo(completedWhen(item))}</div></div></div>`,
-          )
-          .join("")
-      : '<p class="empty">Nothing finished in the last 7 days.</p>';
+      ? reviewRowsHTML(doneWeek, "done", (item) => `<div class="task-row"><div class="checkbox checked" onclick="toggleReviewDone(${jsStr(item.id)}, event)">${icon("check")}</div>
+        <div class="task-meta" onclick="openPanel(${jsStr(item.id)})" style="cursor:pointer"><div class="task-title">${escapeHtml(item.title)}</div>
+        <div class="task-sub">Finished ${timeAgo(completedWhen(item))}</div></div></div>`)
+      : emptyStateHTML({
+            title: "Nothing finished in the last 7 days",
+            body: "Completions show up here for a week after they happen. Tick something off and it will appear.",
+          });
   }
 
   const projectsEl = document.getElementById("reviewProjects");
@@ -495,14 +544,9 @@ function renderReview() {
   const undatedEl = document.getElementById("reviewUndated");
   if (undatedEl) {
     undatedEl.innerHTML = undated.length
-      ? undated
-          .slice(0, 12)
-          .map(
-            (item) => `<div class="task-row" onclick="openPanel(${jsStr(item.id)})" style="cursor:pointer">
+      ? reviewRowsHTML(undated, "undated", (item) => `<div class="task-row" onclick="openPanel(${jsStr(item.id)})" style="cursor:pointer">
         <div class="task-meta"><div class="task-title">${escapeHtml(item.title)}</div>
-        <div class="task-sub">${item.kind === "waiting" ? "Waiting, with no check-back day" : "No day on it"}</div></div></div>`,
-          )
-          .join("")
+        <div class="task-sub">${item.kind === "waiting" ? "Waiting, with no check-back day" : "No day on it"}</div></div></div>`)
       : emptyStateHTML({
         title: "Everything open has a day or a rhythm",
         body: "Nothing here because there is nothing unscheduled. Anything without a day would appear on this list.",
@@ -545,7 +589,14 @@ function reviewQuietProjects(now) {
     }
   }
 
-  if (!quiet.length) return '<p class="empty">Every project has moved recently.</p>';
+  if (!quiet.length)
+    return emptyStateHTML({
+      /* The probe pins /moved recently/i — this is the sentence an empty account and a healthy one
+         both get, and both are true: nothing has gone quiet. */
+      title: "Every project has moved recently",
+      body: "A project shows up here when nothing in it has changed for two weeks.",
+      tone: "good",
+    });
   return quiet
     .map(
       (p) => `<div class="task-row" onclick="switchView('projects')" style="cursor:pointer">

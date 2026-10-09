@@ -15,6 +15,11 @@ function renderNav() {
     if (item.id === "inbox") badge = state.items.filter((i) => !isArchived(i)).length;
     if (item.id === "tasks")
       badge = state.items.filter((i) => i.kind === "task" && !i.done && !isArchived(i)).length;
+    // Review earns its badge from the same stuck list the view shows, computed directly from state —
+    // which is what the cold-load comment in core.js assumes: the badge is right before the view is
+    // ever opened. It reads state, never the DOM, so there is no ordering trap with people-projects.js
+    // loading after this file.
+    if (item.id === "review" && typeof reviewStuckCount === "function") badge = reviewStuckCount();
     el.innerHTML = `<div class="left"><span class="nav-icon"><i data-lucide="${item.icon}"></i></span><span class="nav-label">${item.label}</span></div>${badge ? `<span class="nav-badge">${badge}</span>` : ""}`;
     el.onclick = () => switchView(item.id, { history: "push" });
     nav.appendChild(el);
