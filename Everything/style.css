@@ -1817,6 +1817,14 @@ h1.page-title,
   filter: drop-shadow(0 2px 6px rgba(79, 70, 229, 0.32));
 }
 
+/* The Capture module logo in the top bar uses the same premium travelling-dash loader as the
+   in-app brand mark: a light, seamless sweep that says "brand working" from a small touch target
+   without the heaviness of the full screen overlay loop. */
+.mobile-capture-btn .capture-mark path {
+  stroke-dasharray: 0.08 0.92;
+  animation: brand-loader-run 1.4s linear infinite;
+}
+
 .sidebar-backdrop {
   display: none;
 }
@@ -2232,9 +2240,10 @@ h1.page-title,
 .boot-splash .loader-run {
   stroke: url(#bootSplashGrad);
   stroke-dasharray: 0.18 0.82;
-  /* 0.9s, not 1.4s: ~55% faster sweep, same linear travel so the join stays seamless.
-     The minimum hold above (600ms) lands just past half a sweep — a full deliberate beat. */
-  animation: brand-loader-run 0.9s linear infinite;
+  /* The splash mark is static: a still 18% travel segment reads as "working" without the brand
+     loop running while the app boots or syncs. The brand animation belongs to the Capture module
+     logo in the top bar, not to the loading overlay. */
+  animation: none;
 }
 
 /* ---------- The brand loader ----------

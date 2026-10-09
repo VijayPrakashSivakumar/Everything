@@ -207,8 +207,8 @@ try {
       }));
       assert.notEqual(startup.display, 'none',
         'the startup splash disappeared as soon as initialization completed');
-      assert.equal(startup.animation, 'brand-loader-run',
-        'the brand animation is not running during initial app load');
+      assert.notEqual(startup.animation, 'brand-loader-run',
+        'the brand animation must not run on the boot/splash screen');
       assert.equal(startup.authDisplay, 'flex',
         'the login screen should be ready behind the startup animation');
       await fresh.waitForFunction(
