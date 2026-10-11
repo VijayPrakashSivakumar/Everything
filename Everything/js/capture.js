@@ -97,9 +97,13 @@ function setVoiceRecordLabel(label, icon) {
 }
 
 function setVoiceDictateLabel(label, icon) {
-  const btn = document.getElementById("voiceDictateBtn");
+  /* One-click capture keeps a single visible button (voiceRecordBtn). The old standalone
+     “Dictate” button is gone from the sheet, but this helper is kept so any legacy caller
+     still updates the one capture button instead of failing silently. */
+  const btn = document.getElementById("voiceDictateBtn") || document.getElementById("voiceRecordBtn");
   if (!btn) return;
-  btn.innerHTML = `<i data-lucide="${icon || "audio-lines"}" aria-hidden="true"></i><span id="voiceDictateLabel">${label}</span>`;
+  const labelId = btn.id === "voiceRecordBtn" ? "voiceRecordLabel" : "voiceDictateLabel";
+  btn.innerHTML = `<i data-lucide="${icon || "mic"}" aria-hidden="true"></i><span id="${labelId}">${label}</span>`;
   refreshIcons();
 }
 
@@ -122,7 +126,7 @@ function stopVoiceDictation() {
       // Recognition may already be stopped by the browser.
     }
   }
-  setVoiceDictateLabel("Dictate text", "audio-lines");
+  setVoiceDictateLabel("Capture voice", "mic");
 }
 
 function toggleVoiceDictation() {
@@ -131,79 +135,13 @@ function toggleVoiceDictation() {
     setVoiceDictationStatus("Dictation stopped.");
     return;
   }
-
-  // Mid-conversation the recogniser belongs to the answer, not to the sentence. Writing the
-  // transcript into the main box would overwrite the very sentence being asked about and restart
-  // the reading, so the same words are taken as an answer instead.
   if (captureDialogue.answering) {
     toggleCaptureAnswerDictation();
     return;
   }
-
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) {
-    setVoiceDictationStatus("Dictation is not supported in this browser. You can still record audio or type the note.");
-    return;
-  }
-
-  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
-  const input = document.getElementById("captureText");
-  const base = input.value.trim();
-  const recognition = new Recognition();
-  captureVoiceRecognition = recognition;
-  captureVoiceActive = true;
-  captureVoiceFinal = "";
-  captureVoiceBase = base;
-  // Use the language the person picked. This used to be navigator.language, so anyone whose
-  // browser was not set to English got English transcription of non-English speech.
-  if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
-  captureVoiceLanguage = captureVoiceLang;
-  recognition.lang = captureVoiceLang;
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  recognition.onstart = () => {
-    setVoiceDictateLabel("Stop dictation", "square");
-    setVoiceDictationStatus("Listening… speak your capture.");
-  };
-  recognition.onresult = (event) => {
-    let interim = "";
-    let final = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const transcript = event.results[index][0]?.transcript || "";
-      if (event.results[index].isFinal) final += `${transcript} `;
-      else interim += transcript;
-    }
-    captureVoiceFinal = `${captureVoiceFinal}${final}`.trim();
-    const spoken = `${captureVoiceFinal} ${interim}`.trim();
-    input.value = [captureVoiceBase, spoken].filter(Boolean).join(" ");
-    onCaptureInput();
-  };
-  recognition.onerror = (event) => {
-    const message = event.error === "not-allowed"
-      ? "Microphone permission was denied."
-      : event.error === "no-speech"
-        ? "No speech was detected. Try again."
-        : "Dictation could not start. You can type or record audio instead.";
-    setVoiceDictationStatus(message);
-  };
-  recognition.onend = () => {
-    if (captureVoiceRecognition === recognition) {
-      captureVoiceRecognition = null;
-      captureVoiceActive = false;
-      setVoiceDictateLabel("Dictate text", "audio-lines");
-      if (captureVoiceFinal) setVoiceDictationStatus("Dictation added. Review it before saving.");
-    }
-  };
-
-  try {
-    recognition.start();
-  } catch (error) {
-    captureVoiceRecognition = null;
-    captureVoiceActive = false;
-    setVoiceDictateLabel("Dictate text", "audio-lines");
-    setVoiceDictationStatus("Dictation could not start in this browser.");
-  }
+  setVoiceDictationStatus("Use Capture voice to record and transcribe in one step.");
 }
+
 
 /* ---------- Voice: record and understand in one tap ----------
 
@@ -223,6 +161,7 @@ let voiceTranscriptBase = "";
    browser is the only authority on when it has finished hearing the last word. */
 let voiceTranscriptionSettled = false;
 let voiceTranscriptionDone = null;
+let voiceTranscriptionStopTimer = null;
 
 function setVoiceLiveTranscript(text) {
   const live = document.getElementById("voiceLiveTranscript");
@@ -257,6 +196,7 @@ function startVoiceTranscription() {
   voiceTranscript = "";
   voiceTranscriptionSettled = false;
   voiceTranscriptionDone = null;
+  clearTimeout(voiceTranscriptionStopTimer);
 
   let final = "";
   const recognition = new Recognition();
@@ -266,6 +206,7 @@ function startVoiceTranscription() {
   // pause returns half of what was said. Interim results so the sheet shows the words landing.
   recognition.continuous = true;
   recognition.interimResults = true;
+  recognition.onstart = () => setVoiceLiveTranscript("Listening… speak your capture.");
   recognition.onresult = (event) => {
     let interim = "";
     for (let index = event.resultIndex; index < event.results.length; index += 1) {
@@ -280,22 +221,25 @@ function startVoiceTranscription() {
       setVoiceLiveTranscript("Nothing was heard yet — keep speaking, or stop and type instead.");
     } else if (event.error === "not-allowed") {
       setVoiceLiveTranscript("Microphone permission was denied — the recording is still saved.");
+    } else {
+      setVoiceLiveTranscript("Speech could not be transcribed — the recording is still saved.");
     }
+  };
+  recognition.onend = () => {
+    voiceTranscriptionSettled = true;
+    clearTimeout(voiceTranscriptionStopTimer);
+    voiceTranscriptionStopTimer = null;
+    const done = voiceTranscriptionDone;
+    voiceTranscriptionDone = null;
+    if (captureRecordRecognition === recognition) captureRecordRecognition = null;
+    if (done) done();
   };
   try {
     recognition.start();
-    /* The recogniser's own end is the signal that it has finished hearing. Anything waiting on it
-       runs now; the stop path no longer has to guess how long the last word takes to arrive. */
-    recognition.onend = () => {
-      voiceTranscriptionSettled = true;
-      const done = voiceTranscriptionDone;
-      voiceTranscriptionDone = null;
-      if (captureRecordRecognition === recognition) captureRecordRecognition = null;
-      if (done) done();
-    };
     return true;
   } catch (error) {
     captureRecordRecognition = null;
+    setVoiceLiveTranscript("Speech recognition could not start — the recording can still be saved.");
     return false;
   }
 }
@@ -322,6 +266,9 @@ async function toggleVoiceRecording() {
        number; the recogniser emits its own end, and that is the only honest signal that it has
        finished saying what it heard. */
     const finish = () => {
+      clearTimeout(voiceTranscriptionStopTimer);
+      voiceTranscriptionStopTimer = null;
+      voiceTranscriptionDone = null;
       stopVoiceTranscription();
       if (!voiceTranscript.trim()) {
         setVoiceLiveTranscript(
@@ -335,13 +282,14 @@ async function toggleVoiceRecording() {
       voiceTranscriptionDone = finish;
       // Backstop only. onend is what normally fires this; the timer exists for the browser that
       // never delivers it, because a stuck recogniser must not leave the sheet mid-reset.
-      setTimeout(finish, 3000);
+      voiceTranscriptionStopTimer = setTimeout(finish, 3000);
     }
     mediaRecorder.stop();
     return;
   }
+  let stream = null;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     recordedChunks = [];
     mediaRecorder = new MediaRecorder(stream);
     mediaRecorder.ondataavailable = (e) => recordedChunks.push(e.data);
@@ -353,20 +301,23 @@ async function toggleVoiceRecording() {
       document.getElementById("voicePreview").style.display = "block";
       clearInterval(recordingInterval);
       document.getElementById("voiceTimer").textContent = "";
-      setVoiceRecordLabel("Re-record", "mic");
+      setVoiceRecordLabel("Capture again", "mic");
       stream.getTracks().forEach((t) => t.stop());
     };
     // Listen for the words over the same moment as the audio, not after it.
     startVoiceTranscription();
     mediaRecorder.start();
     recordingSeconds = 0;
-    setVoiceRecordLabel("Stop recording", "square");
+    setVoiceRecordLabel("Stop capture", "square");
     recordingInterval = setInterval(() => {
       recordingSeconds++;
       document.getElementById("voiceTimer").textContent =
         `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
     }, 1000);
   } catch (e) {
+    stopVoiceTranscription();
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    if (!mediaRecorder || mediaRecorder.state !== "recording") mediaRecorder = null;
     await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
   }
 }
@@ -1422,7 +1373,6 @@ function openCapture() {
     if (el) el.value = "";
   });
   document.getElementById("voiceDictationStatus").textContent = "";
-  setVoiceDictateLabel("Dictate text", "audio-lines");
   captureVoiceLanguage = "";
   voiceTranscript = "";
   voiceTranscriptBase = "";
@@ -1434,7 +1384,9 @@ function openCapture() {
   pendingBlobExt = null;
   if (mediaRecorder && mediaRecorder.state === "recording")
     mediaRecorder.stop();
-  setVoiceRecordLabel("Start recording", "mic");
+  /* Single one-click entry point: language is picked first (above), then this one button
+     records + transcribes automatically into the capture pipeline. */
+  setVoiceRecordLabel("Capture voice", "mic");
   /* The caret lands in the box, as it always has — a sheet you open and cannot type into is a sheet
      you have to tap before you can use. enterDialog keeps that behaviour and adds what was missing:
      Tab stays inside the sheet, and closing it hands focus back to whatever opened it. */

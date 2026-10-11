@@ -2377,21 +2377,21 @@
                ways of capturing stay the whole visible story. -->
           <div class="type-row" id="typeMoreRow" style="display: none"></div>
         <div id="voiceCaptureUI" style="display: none; margin: 10px 0">
+          <!-- 1. Language first: the recogniser only understands one language per session, so the
+               choice comes before the single capture tap and is reused for recording + transcript. -->
+          <div class="voice-lang-block">
+            <span class="voice-lang-label">Choose spoken language</span>
+            <div class="type-row" id="voiceLangRow"></div>
+          </div>
+          <!-- 2. One-click capture: records audio AND transcribes it in the chosen language, then
+               feeds the words straight into the capture pipeline — no second step. -->
           <button
             class="btn"
             id="voiceRecordBtn"
             onclick="toggleVoiceRecording()"
           >
             <i data-lucide="mic" aria-hidden="true"></i
-            ><span id="voiceRecordLabel">Record audio</span>
-          </button>
-          <button
-            class="btn"
-            id="voiceDictateBtn"
-            onclick="toggleVoiceDictation()"
-          >
-            <i data-lucide="audio-lines" aria-hidden="true"></i
-            ><span id="voiceDictateLabel">Dictate text</span>
+            ><span id="voiceRecordLabel">Capture voice</span>
           </button>
           <span
             id="voiceTimer"
@@ -2410,10 +2410,6 @@
             class="voice-dictation-status"
             aria-live="polite"
           ></p>
-          <div class="voice-lang-block">
-            <span class="voice-lang-label">Dictation language</span>
-            <div class="type-row" id="voiceLangRow"></div>
-          </div>
           <audio
             id="voicePreview"
             controls

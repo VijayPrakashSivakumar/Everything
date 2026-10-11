@@ -196,6 +196,89 @@ try {
     assert.ok(calls.continuous, 'one recogniser run must cover a whole sentence');
   });
 
+  await check('one tap starts recording and transcription with the chosen language', async () => {
+    const outcome = await page.evaluate(async () => {
+      const previousSpeechRecognition = window.SpeechRecognition;
+      const previousMediaRecorder = window.MediaRecorder;
+      const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+      let recognition;
+      let recorder;
+      let pipelineRuns = 0;
+      const originalOnCaptureInput = window.onCaptureInput;
+
+      class MockRecognition {
+        start() {
+          this.started = true;
+          this.onstart?.();
+        }
+        stop() {}
+      }
+      class MockMediaRecorder {
+        constructor() {
+          recorder = this;
+          this.state = 'inactive';
+        }
+        start() {
+          this.state = 'recording';
+        }
+        stop() {
+          this.state = 'inactive';
+          this.onstop?.();
+        }
+      }
+
+      Object.defineProperty(window, 'SpeechRecognition', {
+        configurable: true,
+        value: MockRecognition,
+      });
+      window.MediaRecorder = MockMediaRecorder;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
+      });
+      window.onCaptureInput = () => { pipelineRuns += 1; };
+      document.getElementById('captureText').value = '';
+      captureVoiceLang = 'ta-IN';
+      captureVoiceLanguage = '';
+
+      try {
+        await toggleVoiceRecording();
+        recognition = captureRecordRecognition;
+        const started = !!recognition?.started && recorder?.state === 'recording';
+        const result = { isFinal: true };
+        result[0] = { transcript: 'வணக்கம்' };
+        recognition?.onresult?.({ resultIndex: 0, results: [result] });
+        const transcript = document.getElementById('captureText').value;
+        const language = recognition?.lang;
+        await toggleVoiceRecording();
+        recognition?.onend?.();
+        return {
+          started,
+          transcript,
+          language,
+          savedLanguage: captureVoiceLanguage,
+          pipelineRuns,
+        };
+      } finally {
+        window.onCaptureInput = originalOnCaptureInput;
+        if (previousSpeechRecognition === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previousSpeechRecognition;
+        if (previousMediaRecorder === undefined) delete window.MediaRecorder;
+        else window.MediaRecorder = previousMediaRecorder;
+        if (mediaDevicesDescriptor) {
+          Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+        } else {
+          delete navigator.mediaDevices;
+        }
+      }
+    });
+    assert.ok(outcome.started, 'the single tap must start both listeners');
+    assert.equal(outcome.language, 'ta-IN', 'recognition must use the chosen language');
+    assert.equal(outcome.savedLanguage, 'ta-IN', 'the chosen language must be saved with the capture');
+    assert.equal(outcome.transcript, 'வணக்கம்', 'the recognized words must reach the capture box');
+    assert.equal(outcome.pipelineRuns, 1, 'the smart-capture pipeline must receive the transcript');
+  });
+
   await check('a browser with no speech recognition still records', async () => {
     // Recognition is best-effort. Firefox has no webkitSpeechRecognition at all and the audio is
     // still worth keeping, so this must return false and say why rather than throw.
