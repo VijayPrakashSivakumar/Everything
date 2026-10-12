@@ -26,6 +26,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 const SUITES = [
   { name: 'ui', file: 'ui-structure.test.mjs', timeoutMs: 120000 },
+  { name: 'dashboardcaptures', file: 'dashboard-captures-probe.mjs', timeoutMs: 120000 },
   { name: 'ask', file: 'ask-adapter.test.mjs', timeoutMs: 120000 },
   { name: 'mobile', file: 'mobile-audit.mjs', timeoutMs: 120000 },
   { name: 'plan', file: 'plan-probe.mjs', timeoutMs: 120000 },

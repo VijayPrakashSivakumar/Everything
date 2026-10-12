@@ -1592,6 +1592,12 @@ async function dbDeleteItem(id, deletedItem = null) {
       : null;
   if (col) {
     await col.doc(id).delete();
+    if (item?.scope === "private") {
+      privateItems = privateItems.filter((entry) => entry.id !== id);
+    } else {
+      sharedItems = sharedItems.filter((entry) => entry.id !== id);
+    }
+    mergeItems();
   } else if (sbUser) {
     const { error } = await sb
       .from("items")
@@ -1603,13 +1609,11 @@ async function dbDeleteItem(id, deletedItem = null) {
       return;
     }
     if (item) queueStructuredItemSync(item, "delete");
+    state.items = state.items.filter((entry) => entry.id !== id);
   } else {
-    save();
-  }
-  if (!col) {
     state.items = state.items.filter((i) => i.id !== id);
-    save();
   }
+  save();
   renderAll();
 }
 async function dbSaveProject(p) {

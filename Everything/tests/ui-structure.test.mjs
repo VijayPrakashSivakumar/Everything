@@ -380,14 +380,19 @@ check('the load path merges instead of replacing the local list', () => {
 });
 
 check('the realtime path merges one record instead of overwriting it', () => {
-  // Anchored on .subscribe(), which is where the items channel handler actually ends.
-  const body = stripComments(between('sbChannel = sb', '.subscribe();'));
+  // The subscription delegates to the handler so the same merge path can be exercised by a browser probe.
+  const subscription = stripComments(between('sbChannel = sb', '.subscribe();'));
+  assert.match(subscription, /applySupabaseItemChange/, 'the realtime channel is not wired to its handler');
+  const body = stripComments(between('function applySupabaseItemChange', 'async function startSupabaseSync'));
   assert.doesNotMatch(
     body,
     /state\.items\[[^\]]+\]\s*=\s*updated/,
     'a realtime push must not overwrite the local record wholesale',
   );
   assert.match(body, /mergeItemPair\(/, 'the realtime path must merge the record it received');
+  assert.match(body, /save\(\)/, 'the realtime change must be persisted to the local cache');
+  assert.match(body, /cancelReminderFor\(payload\.old\.id\)/, 'a deleted item must cancel its reminder');
+  assert.match(body, /refreshReminderSchedule\(\)/, 'the service worker schedule must follow realtime changes');
 });
 
 check('a write that never reached the server is kept, not discarded', () => {

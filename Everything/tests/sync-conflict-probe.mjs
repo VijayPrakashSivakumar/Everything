@@ -63,6 +63,101 @@ try {
     assert.deepEqual(out.conflicts, [], 'unrelated items are not a conflict');
   });
 
+  await check('a realtime delete stays deleted in the local cache and cancels its reminder', async () => {
+    const result = await page.evaluate(async () => {
+      const userId = 'sync-realtime-probe';
+      const item = {
+        id: 'remote-delete',
+        kind: 'task',
+        title: 'Deleted on another device',
+        created: Date.now(),
+        dueDate: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        scope: 'shared',
+      };
+      sbUser = userId;
+      state = { ...seedData(), items: [item] };
+      sharedItems = [item];
+      privateItems = [];
+      const messages = [];
+      const realPost = window.postToServiceWorker;
+      window.postToServiceWorker = (message) => messages.push(message);
+      try {
+        applySupabaseItemChange({ eventType: 'DELETE', old: { id: item.id } });
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const cached = JSON.parse(localStorage.getItem(`everything_state_v1:${userId}`) || '{}');
+        return {
+          live: state.items.some((entry) => entry.id === item.id),
+          cached: (cached.items || []).some((entry) => entry.id === item.id),
+          cancelled: messages.some((message) =>
+            message.type === 'CANCEL_REMINDER' && message.id === item.id),
+        };
+      } finally {
+        window.postToServiceWorker = realPost;
+        sbUser = null;
+      }
+    });
+    assert.equal(result.live, false, 'the realtime-deleted item remained in live state');
+    assert.equal(result.cached, false, 'the deleted item can reappear from the local cache');
+    assert.equal(result.cancelled, true, 'the service worker reminder was not cancelled');
+  });
+
+  await check('a realtime reminder reset clears the old delivery marker and reschedules', async () => {
+    const result = await page.evaluate(async () => {
+      const userId = 'sync-reminder-probe';
+      const id = 'remote-reminder-reset';
+      const due = Date.now() + 15 * 60 * 1000;
+      const item = {
+        id,
+        kind: 'task',
+        title: 'Reminder moved on another device',
+        created: Date.now(),
+        dueDate: new Date(due).toISOString(),
+        notified: true,
+        scope: 'shared',
+      };
+      sbUser = userId;
+      state = { ...seedData(), items: [item] };
+      sharedItems = [item];
+      privateItems = [];
+      rememberNotified(id);
+      const messages = [];
+      const realPost = window.postToServiceWorker;
+      window.postToServiceWorker = (message) => messages.push(message);
+      try {
+        applySupabaseItemChange({
+          eventType: 'UPDATE',
+          new: {
+            id,
+            kind: 'task',
+            title: item.title,
+            created: item.created,
+            due_date: new Date(due).toISOString(),
+            notified: false,
+            done: false,
+            scope: 'shared',
+            updated_at: new Date().toISOString(),
+          },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const schedule = messages.find((message) => message.type === 'SYNC_REMINDERS');
+        return {
+          notified: notifiedIds.has(id),
+          due,
+          reminderTime: itemReminderTime(state.items.find((entry) => entry.id === id)),
+          scheduled: schedule?.reminders?.some((reminder) => reminder.id === id && reminder.time === due),
+        };
+      } finally {
+        window.postToServiceWorker = realPost;
+        forgetNotified(id);
+        sbUser = null;
+      }
+    });
+    assert.equal(result.notified, false, 'the old device-local delivery marker suppressed a new reminder');
+    assert.equal(result.reminderTime, result.due, 'the updated item no longer has its new reminder time');
+    assert.equal(result.scheduled, true, 'the service worker was not given the updated reminder');
+  });
+
+
   await check('a clean local copy takes the server copy silently', async () => {
     // Normal everyday sync: nothing was edited here, so this must stay quiet.
     const out = await merge(

@@ -1638,6 +1638,40 @@ async function loadStructuredCollection(kind, responseKey) {
   return (fallback.data || []).filter(canReadStructuredRow);
 }
 
+function syncNotifiedState(item) {
+  if (item.notified === true) rememberNotified(item.id);
+  else if (item.notified === false) forgetNotified(item.id);
+}
+
+function applySupabaseItemChange(payload) {
+  if (payload.eventType === "DELETE") {
+    state.items = state.items.filter((item) => item.id !== payload.old.id);
+    cancelReminderFor(payload.old.id);
+  } else {
+    /* Merge the single record rather than overwriting it. `state.items[idx] = updated`
+       was wholesale last-write-wins per item: another device's push landed while this
+       one had unsaved edits, and the unsaved edit was simply gone. */
+    const incoming = rowToItem(payload.new);
+    const existing = state.items.find((item) => item.id === incoming.id);
+    if (existing) {
+      const { item, conflict } = mergeItemPair(existing, incoming);
+      state.items[state.items.findIndex((entry) => entry.id === incoming.id)] = item;
+      if (conflict) recordSyncConflicts([conflict]);
+      // The local edit lost but is still unsaved, so it still has to be pushed.
+      if (item.dirty) queueStructuredItemSync(item);
+    } else {
+      state.items.unshift(incoming);
+    }
+    // The cron (or another device) already delivered this one — stay quiet here.
+    syncNotifiedState(incoming);
+  }
+  // Persist remote updates too: otherwise a restart while offline can restore the pre-event cache.
+  save();
+  renderSyncConflictBanner();
+  renderAll();
+  refreshReminderSchedule();
+}
+
 async function startSupabaseSync(userId) {
   /* sbUser has to be set before anything reads or writes state, because the local storage key is
      derived from it. It used to be set two lines below the column probes, which meant the merge
@@ -1722,9 +1756,7 @@ async function startSupabaseSync(userId) {
     if (!state.projects) state.projects = [];
     if (!state.goals) state.goals = [];
     if (!state.people) state.people = [];
-    state.items.forEach((item) => {
-      if (item.notified) rememberNotified(item.id);
-    });
+    state.items.forEach(syncNotifiedState);
     recordSyncConflicts(conflicts);
     // Local-only items are safe now and are worth pushing, otherwise they sit here waiting
     // for the next sync to discard them.
@@ -1756,32 +1788,7 @@ async function startSupabaseSync(userId) {
         table: "items",
         filter: `household_id=eq.${currentHouseholdId}`,
       },
-      (payload) => {
-        if (payload.eventType === "DELETE") {
-          state.items = state.items.filter((i) => i.id !== payload.old.id);
-          cancelReminderFor(payload.old.id);
-        } else {
-          /* Merge the single record rather than overwriting it. `state.items[idx] = updated`
-             was wholesale last-write-wins per item: another device's push landed while this
-             one had unsaved edits, and the unsaved edit was simply gone. */
-          const incoming = rowToItem(payload.new);
-          const existing = state.items.find((i) => i.id === incoming.id);
-          if (existing) {
-            const { item, conflict } = mergeItemPair(existing, incoming);
-            state.items[state.items.findIndex((i) => i.id === incoming.id)] = item;
-            if (conflict) recordSyncConflicts([conflict]);
-            // The local edit lost but is still unsaved, so it still has to be pushed.
-            if (item.dirty) queueStructuredItemSync(item);
-          } else {
-            state.items.unshift(incoming);
-          }
-          // The cron (or another device) already delivered this one — stay quiet here.
-          if (incoming.notified) rememberNotified(incoming.id);
-        }
-        renderSyncConflictBanner();
-        renderAll();
-        refreshReminderSchedule();
-      },
+      applySupabaseItemChange,
     )
     .subscribe();
 
