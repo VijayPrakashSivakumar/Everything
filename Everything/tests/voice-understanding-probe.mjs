@@ -33,6 +33,35 @@ try {
   // Every item created here is thrown away by reloading, so nothing reaches a real account.
   await page.evaluate(() => { window.fetch = () => Promise.resolve({ ok: false, status: 0, json: async () => ({}) }); });
 
+  await check('the voice picker and recorder fit the narrow capture sheet', async () => {
+    await page.setViewportSize({ width: 440, height: 477 });
+    const layout = await page.evaluate(() => {
+      openCapture();
+      pickType('voice', true);
+      const rect = (id) => {
+        const { left, right, width } = document.getElementById(id).getBoundingClientRect();
+        return { left, right, width };
+      };
+      return {
+        panelDisplay: getComputedStyle(document.getElementById('voiceCaptureUI')).display,
+        panel: rect('voiceCaptureUI'),
+        languages: rect('voiceLangRow'),
+        recorder: rect('voiceRecordBtn'),
+        viewportWidth: document.documentElement.clientWidth,
+        documentWidth: document.documentElement.scrollWidth,
+      };
+    });
+    assert.equal(layout.panelDisplay, 'block', 'the voice controls should stack vertically');
+    assert.ok(layout.languages.left >= layout.panel.left - 1, 'the language picker starts outside the voice panel');
+    assert.ok(layout.languages.right <= layout.panel.right + 1, 'the language picker spills past the voice panel');
+    assert.ok(layout.recorder.left >= layout.panel.left - 1, 'the record button starts outside the voice panel');
+    assert.ok(layout.recorder.right <= layout.panel.right + 1, 'the record button spills past the voice panel');
+    assert.ok(layout.recorder.width >= layout.panel.width - 2, 'the record button is not full width');
+    assert.ok(layout.documentWidth <= layout.viewportWidth, 'the capture sheet introduces horizontal page overflow');
+    await page.evaluate(() => closeCapture());
+    await page.setViewportSize({ width: 1280, height: 900 });
+  });
+
   // Type a sentence into the capture sheet the way dictation does: it writes the transcript into the
   // same textarea and calls onCaptureInput(). That is the real path, not a stand-in for it.
   const dictate = (transcript) => page.evaluate(async (t) => {

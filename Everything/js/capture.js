@@ -1695,7 +1695,7 @@ function pickType(id, manual) {
   // as a task keeps its recorder on screen, because the audio is still attached and still savable.
   const channel = captureChannel;
   document.getElementById("voiceCaptureUI").style.display =
-    channel === "voice" ? "flex" : "none";
+    channel === "voice" ? "block" : "none";
   document.getElementById("imageCaptureUI").style.display =
     channel === "image" ? "block" : "none";
   document.getElementById("fileCaptureUI").style.display =

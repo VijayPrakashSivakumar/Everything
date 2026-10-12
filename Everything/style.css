@@ -3993,14 +3993,12 @@ h1.page-title {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* The voice and image panels (#voiceCaptureUI / #imageCaptureUI) are laid out as a flex row, so
-     this block is a flex item sitting beside the record button. Left as width:100% it shrank to a
-     single chip wide — the languages stacked in a thin column beside a vertically stretched button.
-     A full flex-basis with no shrink forces it onto its own row, so the chips wrap horizontally and
-     the button sits cleanly below. */
-  flex: 0 0 100%;
   width: 100%;
   margin-top: 4px;
+}
+
+#voiceRecordBtn {
+  width: 100%;
 }
 
 .voice-lang-label {
@@ -6180,13 +6178,7 @@ body.overlay-open .content {
   }
 
   #voiceCaptureUI {
-    flex-wrap: wrap;
-    gap: 7px;
-  }
-
-  #voiceCaptureUI .btn {
-    flex: 1 1 145px;
-    max-width: 100%;
+    width: 100%;
   }
 
   #voiceDictationStatus {
