@@ -206,6 +206,21 @@ async function main() {
   record(base.docWidth <= base.vw + 1, 'no horizontal overflow at 390px',
     `viewport=${base.vw} document=${base.docWidth} body=${base.bodyWidth}`);
 
+  // On a phone the topbar search collapses behind the toggle (`display:none` under the 600px
+  // breakpoint) and expands into a full-width row only once it is opened. Expanding it first means
+  // the field is measured as a person actually uses it, rather than in its collapsed 0px state — the
+  // 120px floor and the 44px touch target are only meaningful for the open field. On wider layouts
+  // the field is already inline, so the toggle is a no-op and nothing changes.
+  await evaluate(`(() => {
+    const wrap = document.getElementById('searchWrap');
+    const toggle = document.getElementById('mobileSearchToggle');
+    if (toggle && wrap && getComputedStyle(wrap).display === 'none' && typeof toggleMobileSearch === 'function') {
+      toggleMobileSearch();
+    }
+    return true;
+  })()`);
+  await sleep(200);
+
   const search = await evaluate(`(() => {
     const box = document.getElementById('searchBox');
     const input = document.getElementById('searchInput');
@@ -230,8 +245,14 @@ async function main() {
   // No topbar control may be hidden to make room: the theme toggle once was, and it is the only
   // one-tap route back from a dark choice. Asserted with the search floor above so neither can be
   // traded for the other. Controls only — `.theme-dot` is an unread badge, hidden on a clean inbox.
+  //
+  // #paletteBtn is deliberately NOT in this list. At ≤600px the phone topbar hides the quick-jump
+  // launcher on purpose (see `.palette-btn { display:none }` under the 600px breakpoint); the
+  // launcher stays reachable by keyboard and by the hamburger, and mobile-topbar-probe asserts it is
+  // gone here. Asserting it visible would contradict that passing probe, so the contract enforced
+  // here is the set of controls a phone must keep on screen: theme, capture, menu, account.
   const reach = await evaluate(`(() => {
-    const wanted = ['#paletteBtn', '.theme-toggle', '.mobile-capture-btn', '.topbar-menu-wrap .icon-btn', '.avatar'];
+    const wanted = ['.theme-toggle', '.mobile-capture-btn', '.topbar-menu-wrap .icon-btn', '.avatar'];
     return wanted.map((sel) => {
       const el = document.querySelector(sel);
       const r = el && el.getBoundingClientRect();
@@ -417,6 +438,18 @@ async function main() {
     });
     await client.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
     await sleep(2500);
+
+    // Same as above: open the collapsed phone search before measuring, so the floor and the
+    // placeholder are checked against the field a person actually types into.
+    await evaluate(`(() => {
+      const wrap = document.getElementById('searchWrap');
+      const toggle = document.getElementById('mobileSearchToggle');
+      if (toggle && wrap && getComputedStyle(wrap).display === 'none' && typeof toggleMobileSearch === 'function') {
+        toggleMobileSearch();
+      }
+      return true;
+    })()`);
+    await sleep(200);
 
     const narrow = await measureSearchField();
     record(!narrow.missing && narrow.docWidth <= narrow.vw + 1,

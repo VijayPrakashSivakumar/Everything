@@ -50,7 +50,11 @@ check('the header search box is a real, focusable input', () => {
 });
 
 check('the dropdown sits inside a positioned wrapper', () => {
-  assert.match(html, /class="search-wrap">[\s\S]*?id="searchBox"[\s\S]*?id="searchDropdown"/, 'dropdown is not nested in search-wrap');
+  // The wrapper carries its own id (`<div class="search-wrap" id="searchWrap">`) so the mobile
+  // search toggle can target it, so the opener must allow an id between the class and `>`.
+  // Anchoring on the full open tag, rather than `class="search-wrap">`, keeps this honest: it still
+  // fails if searchBox and searchDropdown are ever lifted out of the wrapper, but tolerates the id.
+  assert.match(html, /<div class="search-wrap"[^>]*>[\s\S]*?id="searchBox"[\s\S]*?id="searchDropdown"/, 'dropdown is not nested in search-wrap');
   assert.match(css, /\.search-wrap\s*\{[^}]*position:\s*relative/, '.search-wrap must be the positioning context');
 });
 
