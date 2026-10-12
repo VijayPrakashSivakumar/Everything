@@ -426,6 +426,13 @@ async function toggleVoiceRecording() {
         setVoiceLiveTranscript(
           "Nothing was heard in that recording. The audio is saved — type what you meant instead.",
         );
+        /* No words came back from the live recogniser: either this browser has none (Firefox), or it
+           failed. Offer the private, on-device reader over the same recording — the one thing the Web
+           Speech API cannot do. Shown only now, so the primary path stays the default and this reads
+           as a second chance rather than a competing button. */
+        setVoiceLocalSttVisible(true);
+      } else {
+        setVoiceLocalSttVisible(false);
       }
     };
     if (voiceTranscriptionSettled) finish();
@@ -459,6 +466,9 @@ async function toggleVoiceRecording() {
     // Listen for the words over the same moment as the audio, not after it.
     startVoiceTranscription();
     mediaRecorder.start();
+    // A fresh recording clears the previous one's private-reader offer; it is reshown only if this
+    // recording also comes back with no words.
+    setVoiceLocalSttVisible(false);
     recordingSeconds = 0;
     setVoiceRecordLabel("Stop capture", "square");
     recordingInterval = setInterval(() => {
@@ -471,6 +481,145 @@ async function toggleVoiceRecording() {
     if (stream) stream.getTracks().forEach((track) => track.stop());
     if (!mediaRecorder || mediaRecorder.state !== "recording") mediaRecorder = null;
     await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+  }
+}
+
+/* ---------- Private, on-device speech recognition (fallback) ----------
+
+   The Web Speech API is the primary path because it is instant and, on Indian languages, more
+   accurate than anything that runs on the device. It has two hard limits that matter here:
+
+     - it is not in Firefox at all, and is unreliable in Chromium forks and embedded browsers, so a
+       whole slice of users gets no transcript from it;
+     - it sends the audio to the browser vendor's servers, which is the opposite of the promise the
+       rest of this capture flow keeps — "the image never leaves the device" (see the OCR note below).
+
+   This is the private, offline fallback for both cases: Whisper compiled to WebAssembly through
+   transformers.js, running in this browser, with the audio never leaving the device and no API key
+   or cost. It transcribes the *recorded* audio (MediaRecorder's blob), which the live Web Speech API
+   cannot do, so it is a genuine second path rather than a duplicate of the first.
+
+   It follows the same lazy, bounded, best-effort shape as the OCR engine below: the ~40 MB model is
+   fetched only when this fallback is actually used, never on startup, a failed load degrades to the
+   message people already know ("type it instead"), and every network wait has a ceiling. */
+const SPEECH_ENGINE_SRC =
+  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.5";
+/* Multilingual Whisper — the base name (no ".en") is what covers Tamil, Hindi, Telugu, Kannada and
+   Malayalam. whisper-tiny is the smallest multilingual model, ~40 MB, chosen for the same reason the
+   OCR packs use their "_best_int" variant: on a phone on mobile data the download is the feature.
+   The ".en" models would be a third of the size but are English-only, which is the exact failure the
+   language detection above exists to avoid. */
+const SPEECH_MODEL = "Xenova/whisper-tiny";
+/* Whisper always hears 16 kHz mono, so the recorded blob is resampled to that before inference. */
+const SPEECH_SAMPLE_RATE = 16000;
+/* A first run downloads tens of megabytes. Deliberately generous — the same reasoning as
+   OCR_LOAD_TIMEOUT_MS — because an early timeout would turn a working download into a failure. */
+const SPEECH_LOAD_TIMEOUT_MS = 180000;
+/* The resolved pipeline, kept once built. Null until first use, so the model is never touched
+   during normal startup. */
+let speechEngine = null;
+let speechEnginePromise = null;
+
+/* Loads transformers.js and builds the Whisper pipeline once, reusing it after that.
+
+   Uses dynamic import() rather than a global: transformers.js ships as an ES module and, unlike
+   Tesseract, defines no window global, so the OCR loader's script-tag-then-read-global pattern
+   does not apply. The promise is memoised so a second tap reuses the first load, and is reset on
+   failure so a later attempt can retry — the same contract as loadOcrEngine below. Resolves to the
+   transcriber function, or rejects; never throws into the caller. */
+function loadSpeechEngine() {
+  if (speechEngine) return Promise.resolve(speechEngine);
+  if (speechEnginePromise) return speechEnginePromise;
+  speechEnginePromise = (async () => {
+    const { pipeline, env } = await import(SPEECH_ENGINE_SRC);
+    // Fetch model weights and WASM from the CDN (the default). No remote logging: the whole point
+    // of this path is that nothing is phoned home.
+    env.allowRemoteModels = true;
+    env.allowLocalModels = false;
+    const transcriber = await pipeline("automatic-speech-recognition", SPEECH_MODEL);
+    speechEngine = transcriber;
+    return transcriber;
+  })().catch((error) => {
+    // Let a later attempt retry rather than caching the failure for the rest of the session.
+    speechEnginePromise = null;
+    throw error;
+  });
+  return speechEnginePromise;
+}
+
+function setVoiceLocalSttVisible(visible) {
+  const button = document.getElementById("voiceLocalSttBtn");
+  if (button) button.style.display = visible ? "block" : "none";
+}
+
+/* Decodes the recorded blob into the exact shape Whisper expects: a 16 kHz mono Float32Array.
+   MediaRecorder writes whatever the browser chose (usually 48 kHz Opus), and handing Whisper that
+   unchanged misreads the audio, so an OfflineAudioContext does the resample here rather than the
+   model being blamed for a format it was never given. */
+async function decodeAudioForWhisper(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext || window.AudioContext;
+  const decodeCtx = new Ctx(1, 1, 44100);
+  const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+  const length = Math.max(1, Math.ceil(decoded.duration * SPEECH_SAMPLE_RATE));
+  const offline = new Ctx(1, length, SPEECH_SAMPLE_RATE);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  const rendered = await offline.startRendering();
+  return rendered.getChannelData(0);
+}
+
+/* Reads the recording the person just made, entirely on this device. This is the path a Firefox
+   user falls back to, and anyone whose live recognition came back empty: the audio blob
+   MediaRecorder already kept is read locally by Whisper — something the Web Speech API cannot do,
+   which is what makes this a real second path rather than a repeat of the first.
+
+   Best-effort and bounded, exactly like the OCR read: the model loads on first use, every wait has
+   a ceiling, and any failure leaves the capture box untouched with a one-line reason rather than a
+   broken sheet. The words, once read, enter the same pipeline as the live path so they are
+   understood the same way. */
+async function transcribeRecordingLocally() {
+  if (!pendingBlob) {
+    setVoiceLiveTranscript("Record something first, then this can read it on this device.");
+    return;
+  }
+  const button = document.getElementById("voiceLocalSttBtn");
+  if (button) button.disabled = true;
+  setVoiceLiveTranscript("Preparing the private reader (first run downloads it, once)…");
+  try {
+    const audio = await withTimeout(
+      decodeAudioForWhisper(pendingBlob),
+      SPEECH_LOAD_TIMEOUT_MS,
+      "Reading the recording timed out.",
+    );
+    const transcriber = await withTimeout(
+      loadSpeechEngine(),
+      SPEECH_LOAD_TIMEOUT_MS,
+      "Loading the private reader timed out. Check your connection and try again.",
+    );
+    // The same language the person is capturing in, as the base code Whisper wants ("ta-IN" → "ta").
+    const language = voiceTagToOcrTag(captureVoiceLang) || "en";
+    const output = await withTimeout(
+      transcriber(audio, { language, task: "transcribe" }),
+      SPEECH_LOAD_TIMEOUT_MS,
+      "Transcribing the recording timed out. You can still type what you meant.",
+    );
+    const spoken = String(output?.text || "").trim();
+    if (!spoken) {
+      setVoiceLiveTranscript(
+        "The on-device reader could not make out any words. The audio is saved — type what you meant.",
+      );
+      return;
+    }
+    applyVoiceTranscript(spoken);
+  } catch (error) {
+    setVoiceLiveTranscript(
+      "On-device transcription is unavailable right now. The audio is saved — type what you meant instead.",
+    );
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -1645,6 +1794,9 @@ function openCapture() {
   voiceTranscriptBase = "";
   stopVoiceTranscription();
   setVoiceLiveTranscript("");
+  // The private reader is offered only after a specific recording comes back empty, so it starts
+  // hidden on every fresh sheet rather than carrying over from the last capture.
+  setVoiceLocalSttVisible(false);
   // Auto, not "whatever the browser speaks": the guess comes from this person's own captures.
   resetVoiceLangForCapture();
   renderVoiceLanguages();

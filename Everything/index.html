@@ -2399,6 +2399,18 @@
             <i data-lucide="mic" aria-hidden="true"></i
             ><span id="voiceRecordLabel">Capture voice</span>
           </button>
+          <!-- The private, on-device reader. Hidden until a recording finishes with no words from the
+               live recogniser, at which point it is the only way to get a transcript out of a
+               recording. Reads the audio on this device with Whisper — nothing is uploaded. -->
+          <button
+            class="btn"
+            id="voiceLocalSttBtn"
+            style="display: none"
+            onclick="transcribeRecordingLocally()"
+          >
+            <i data-lucide="mic" aria-hidden="true"></i
+            ><span id="voiceLocalSttLabel">Read it on this device</span>
+          </button>
           <span
             id="voiceTimer"
             style="font-size: 13px; color: var(--muted)"

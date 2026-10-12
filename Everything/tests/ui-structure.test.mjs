@@ -2233,6 +2233,26 @@ check('recording and transcribing happen together in one tap', () => {
   assert.match(js, /function startVoiceTranscription\(/, 'startVoiceTranscription is missing');
 });
 
+check('a recording with no live transcript can be read privately on the device', () => {
+  // The Web Speech API is absent in Firefox and unreliable in forks, and it sends audio to a vendor
+  // server. Whisper-via-transformers.js is the private, on-device fallback: it reads the recording
+  // MediaRecorder already kept, which the live API cannot, so it is a real second path.
+  assert.match(js, /function loadSpeechEngine\(/, 'loadSpeechEngine is missing');
+  assert.match(js, /async function transcribeRecordingLocally\(/, 'transcribeRecordingLocally is missing');
+  assert.match(js, /automatic-speech-recognition/, 'the Whisper ASR pipeline is not used');
+  // Multilingual: the base name (no ".en") is what covers Tamil/Hindi/Telugu/Kannada/Malayalam.
+  assert.match(js, /whisper-tiny/, 'the multilingual Whisper model is not pinned');
+  assert.doesNotMatch(js, /whisper-tiny\.en/, 'the English-only Whisper model would drop Indian languages');
+  // The private engine must be lazy: fetched on first use, never on startup.
+  assert.doesNotMatch(html, /@huggingface\/transformers/, 'the speech engine must not load on every page view');
+  assert.match(html, /id="voiceLocalSttBtn"/, 'the on-device reader has no entry point in the sheet');
+  // Offered only when the live recogniser came back empty, and cleared on every fresh sheet.
+  assert.match(js, /setVoiceLocalSttVisible\(true\)/, 'the reader is never offered after an empty recording');
+  assert.match(js, /setVoiceLocalSttVisible\(false\)/, 'the reader is never hidden again');
+  // Its words enter the same capture pipeline as the live path, or they are just an attachment.
+  assert.match(js, /transcribeRecordingLocally[\s\S]{0,1400}applyVoiceTranscript\(/, 'the on-device transcript never reaches the pipeline');
+});
+
 check('what the voice and image were understood as reaches the capture box', () => {
   // The transcript is the payload; without it the recording is just an attachment.
   assert.match(js, /voiceTranscript/, 'the transcript is not stored anywhere');
