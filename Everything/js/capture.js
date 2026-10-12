@@ -43,9 +43,14 @@ let recordingInterval = null;
 let pendingBlob = null;
 let pendingBlobExt = null;
 
-/* Dictation languages. The browser recogniser only understands one language per session, so this
-   is chosen explicitly instead of inheriting navigator.language — that default meant a Tamil or
-   Hindi speaker got English transcription and a garbled capture.
+/* Dictation languages. The browser recogniser only understands one language per session, so one of
+   these has to be chosen before the first word arrives.
+
+   It used to be chosen by the person — a chip tap on every capture — because inheriting
+   navigator.language meant a Tamil or Hindi speaker with an English browser got English
+   transcription and a garbled capture. That treated the symptom: the guess was wrong because
+   nothing ever looked at what the person actually says or writes. It does now. See the detection
+   block below; the chips remain as the correction path for when the guess is wrong.
 
    `tag` is the BCP-47 code the Web Speech API expects; `label` is shown in the picker.
    `hint` is a native-script example so the option is recognisable to the person speaking. */
@@ -58,12 +63,99 @@ const VOICE_LANGUAGES = [
   { tag: "ml-IN", label: "Malayalam", hint: "മലയാളം" },
 ];
 
-/* Chosen once per capture and reused, so the recorded audio and the transcript agree. */
+/* ---------- Automatic language detection ----------
+
+   Script is the one signal about language that cannot be guessed at: Tamil characters are Tamil
+   whether they were dictated, typed or photographed, and reading them needs no model, no network
+   and no key. So detection is script-based and runs over every piece of text the capture flow
+   sees — a transcript, the sentence in the box, the words that came back from a picture.
+
+   Latin text reports as English, because that is the only thing Latin letters can mean here, and
+   it is what every recogniser already falls back to.
+
+   Two rules keep this safe rather than clever:
+     - it only ever corrects a guess the app made itself; a chip the person tapped is a decision
+       and is never overridden (captureVoiceLangAuto / captureOcrLangAuto)
+     - a detection is remembered, so the correction is needed at most once per person */
+const CAPTURE_SCRIPT_LANGUAGES = [
+  { re: /[\u0B80-\u0BFF]/, tag: "ta-IN", ocr: "ta", label: "Tamil" },
+  { re: /[\u0900-\u097F]/, tag: "hi-IN", ocr: "hi", label: "Hindi" },
+  { re: /[\u0C00-\u0C7F]/, tag: "te-IN", ocr: "te", label: "Telugu" },
+  { re: /[\u0C80-\u0CFF]/, tag: "kn-IN", ocr: "kn", label: "Kannada" },
+  { re: /[\u0D00-\u0D7F]/, tag: "ml-IN", ocr: "ml", label: "Malayalam" },
+];
+const CAPTURE_LATIN_TAG = "en-IN";
+
+/* The language of a piece of text, or "" when the text carries no letters at all. */
+function detectCaptureLanguage(text) {
+  const value = String(text || "");
+  if (!value.trim()) return "";
+  for (const rule of CAPTURE_SCRIPT_LANGUAGES) if (rule.re.test(value)) return rule.tag;
+  return /[A-Za-z]/.test(value) ? CAPTURE_LATIN_TAG : "";
+}
+
+function captureLanguageLabel(tag) {
+  if (!tag || tag === CAPTURE_LATIN_TAG) return "English";
+  return CAPTURE_SCRIPT_LANGUAGES.find((rule) => rule.tag === tag)?.label || tag;
+}
+
+/* Voice tag → the two-letter tag the OCR packs are published under ("ta-IN" → "ta"). Null for
+   anything unknown, so no caller can ask for a pack that does not exist — the same rule
+   ocrLangCode() already applies to a stored value. */
+function voiceTagToOcrTag(tag) {
+  if (tag === CAPTURE_LATIN_TAG) return "en";
+  const match = CAPTURE_SCRIPT_LANGUAGES.find((rule) => rule.tag === tag);
+  return match ? match.ocr : null;
+}
+
+function ocrTagToVoiceTag(tag) {
+  if (tag === "en") return CAPTURE_LATIN_TAG;
+  const match = CAPTURE_SCRIPT_LANGUAGES.find((rule) => rule.ocr === tag);
+  return match ? match.tag : "";
+}
+
+/* The language this person was last *seen* using, whichever way it arrived. One memory for the
+   whole capture flow: a Tamil caption read once from a picture is also a reason to listen in
+   Tamil next time, and vice versa. */
+const CAPTURE_LANG_MEMORY_KEY = "everything_capture_lang";
+
+function rememberedCaptureLanguage() {
+  try {
+    const stored = localStorage.getItem(CAPTURE_LANG_MEMORY_KEY);
+    return VOICE_LANGUAGES.some((entry) => entry.tag === stored) ? stored : "";
+  } catch (error) {
+    // Private mode has no memory. The browser default is used, exactly as before.
+    return "";
+  }
+}
+
+function rememberCaptureLanguage(tag) {
+  if (!VOICE_LANGUAGES.some((entry) => entry.tag === tag)) return;
+  try {
+    localStorage.setItem(CAPTURE_LANG_MEMORY_KEY, tag);
+  } catch (error) {
+    // Not worth failing a capture over: the next one simply guesses again.
+  }
+}
+
+
+/* Chosen once per capture and reused, so the recorded audio and the transcript agree. Always a
+   real BCP-47 tag: the auto mode lives in its own flag rather than in this variable, because this
+   variable is what the recogniser is handed. */
 let captureVoiceLang = "";
+/* True until the person taps a language chip. While true a confident detection may correct the
+   guess; a tap turns it off for this capture, which is what makes "tap to correct" stick. */
+let captureVoiceLangAuto = true;
+/* The same bargain for the picture reader: auto until a chip says otherwise. */
+let captureOcrLangAuto = true;
 /* The language actually used for the last dictation, saved onto the capture. */
 let captureVoiceLanguage = "";
 
 function defaultVoiceLang() {
+  // Last seen first: the person's own captures know them better than their browser locale does,
+  // and this is what turns a one-off correction into a permanent default.
+  const remembered = rememberedCaptureLanguage();
+  if (remembered) return remembered;
   const preferred = String(navigator.language || "").toLowerCase();
   const exact = VOICE_LANGUAGES.find((entry) => entry.tag.toLowerCase() === preferred);
   if (exact) return exact.tag;
@@ -72,22 +164,69 @@ function defaultVoiceLang() {
   return loose ? loose.tag : "en-IN";
 }
 
-function pickVoiceLang(tag) {
-  captureVoiceLang = VOICE_LANGUAGES.some((entry) => entry.tag === tag) ? tag : defaultVoiceLang();
+/* `manual` is false only from the sheet's own reset, which must not count as a correction. */
+function pickVoiceLang(tag, manual = true) {
+  if (tag === "auto") {
+    captureVoiceLangAuto = true;
+    captureVoiceLang = defaultVoiceLang();
+  } else {
+    captureVoiceLang = VOICE_LANGUAGES.some((entry) => entry.tag === tag) ? tag : defaultVoiceLang();
+    if (manual) {
+      captureVoiceLangAuto = false;
+      // A tap is the strongest signal this flow ever gets, so it becomes the guess the next
+      // capture starts from and the same correction is never needed twice.
+      rememberCaptureLanguage(captureVoiceLang);
+    }
+  }
+  syncVoiceLangChips();
+}
+
+/* The sheet opening is the one reset: auto again, starting from whatever was last seen. */
+function resetVoiceLangForCapture() {
+  captureVoiceLangAuto = true;
+  pickVoiceLang(defaultVoiceLang(), false);
+}
+
+function syncVoiceLangChips() {
   document
     .querySelectorAll("#voiceLangRow .type-chip")
-    .forEach((el) => el.classList.toggle("active", el.dataset.lang === captureVoiceLang));
+    .forEach((el) =>
+      el.classList.toggle(
+        "active",
+        el.dataset.lang === "auto" ? captureVoiceLangAuto : el.dataset.lang === captureVoiceLang,
+      ),
+    );
 }
 
 function renderVoiceLanguages() {
   const row = document.getElementById("voiceLangRow");
   if (!row) return;
   if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
-  row.innerHTML = VOICE_LANGUAGES.map(
-    (entry) =>
-      `<div class="type-chip ${entry.tag === captureVoiceLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickVoiceLang(${jsStr(entry.tag)})"><span>${entry.hint}</span></div>`,
-  ).join("");
+  /* Auto is a chip, not a footnote: the app deciding is a visible state the person can see and
+     take back, the same way every other automatic choice in this sheet is shown. */
+  const autoChip =
+    `<div class="type-chip ${captureVoiceLangAuto ? "active" : ""}" data-lang="auto" ` +
+    `onclick="pickVoiceLang(${jsStr("auto")}, true)"><span>Auto</span></div>`;
+  row.innerHTML =
+    autoChip +
+    VOICE_LANGUAGES.map(
+      (entry) =>
+        `<div class="type-chip ${entry.tag === captureVoiceLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickVoiceLang(${jsStr(entry.tag)}, true)"><span>${entry.hint}</span></div>`,
+    ).join("");
 }
+
+/* Corrects the guess from the person's own words — and only from their own words: a tap on a
+   chip outranks the detector for this capture. Returns the language switched to, or "". */
+function syncDetectedCaptureLanguage(text) {
+  if (!captureVoiceLangAuto) return "";
+  const detected = detectCaptureLanguage(text);
+  if (!detected || detected === captureVoiceLang) return "";
+  captureVoiceLang = detected;
+  rememberCaptureLanguage(detected);
+  renderVoiceLanguages();
+  return detected;
+}
+
 
 function setVoiceRecordLabel(label, icon) {
   const btn = document.getElementById("voiceRecordBtn");
@@ -176,7 +315,20 @@ function applyVoiceTranscript(finalText) {
   const input = document.getElementById("captureText");
   input.value = [voiceTranscriptBase, spoken].filter(Boolean).join(" ");
   setVoiceLiveTranscript(spoken ? `Heard: “${spoken}”` : "");
-  if (spoken) onCaptureInput();
+  if (spoken) {
+    /* The words have arrived in a script, so the language is no longer a guess. In auto mode the
+       guess — and the language saved with this capture — is corrected to match what was actually
+       heard, and the correction is said out loud rather than made in silence. A chip the person
+       tapped leaves it alone: a decision outranks a detection. */
+    const detected = syncDetectedCaptureLanguage(spoken);
+    if (detected) {
+      captureVoiceLanguage = detected;
+      setVoiceLiveTranscript(
+        `Heard: “${spoken}” — detected ${captureLanguageLabel(detected)}.`,
+      );
+    }
+    onCaptureInput();
+  }
 }
 
 /* Best-effort: a browser without the Web Speech API still records, and says why there are no
@@ -603,21 +755,53 @@ function setImageOcrStatus(message) {
   status.textContent = message || "";
 }
 
-function pickOcrLang(tag) {
+function pickOcrLang(tag, manual = true) {
+  if (tag === "auto") {
+    captureOcrLangAuto = true;
+    const remembered = voiceTagToOcrTag(rememberedCaptureLanguage());
+    if (remembered && OCR_LANGUAGES.some((entry) => entry.tag === remembered)) {
+      captureOcrLang = remembered;
+    }
+    syncOcrLangChips();
+    return;
+  }
   if (!OCR_LANGUAGES.some((entry) => entry.tag === tag)) return;
   captureOcrLang = tag;
+  if (manual) {
+    // The person has said what language this reads in, and the reader must not argue with that.
+    // It is remembered too, so the same tap is never needed twice.
+    captureOcrLangAuto = false;
+    const voiceTag = ocrTagToVoiceTag(tag);
+    if (voiceTag) rememberCaptureLanguage(voiceTag);
+  }
+  syncOcrLangChips();
+}
+
+function syncOcrLangChips() {
   document
     .querySelectorAll("#imageOcrLangRow .type-chip")
-    .forEach((el) => el.classList.toggle("active", el.dataset.lang === captureOcrLang));
+    .forEach((el) =>
+      el.classList.toggle(
+        "active",
+        el.dataset.lang === "auto" ? captureOcrLangAuto : el.dataset.lang === captureOcrLang,
+      ),
+    );
 }
 
 function renderOcrLanguages() {
   const row = document.getElementById("imageOcrLangRow");
   if (!row) return;
-  row.innerHTML = OCR_LANGUAGES.map(
-    (entry) =>
-      `<div class="type-chip ${entry.tag === captureOcrLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickOcrLang(${jsStr(entry.tag)})"><span>${entry.label}</span></div>`,
-  ).join("");
+  // Auto first, as a visible state: the app choosing the language is automation the person can
+  // see and take back, not a default they have to discover.
+  const autoChip =
+    `<div class="type-chip ${captureOcrLangAuto ? "active" : ""}" data-lang="auto" ` +
+    `onclick="pickOcrLang(${jsStr("auto")}, true)"><span>Auto</span></div>`;
+  row.innerHTML =
+    autoChip +
+    OCR_LANGUAGES.map(
+      (entry) =>
+        `<div class="type-chip ${entry.tag === captureOcrLang ? "active" : ""}" data-lang="${entry.tag}" onclick="pickOcrLang(${jsStr(entry.tag)}, true)"><span>${entry.label}</span></div>`,
+    ).join("");
 }
 
 /* Loads Tesseract on first use. Resolves to the global, or rejects — never throws into the
@@ -751,7 +935,10 @@ async function createOcrWorker(Tesseract, lang, attempt) {
     // being handed the same bad response again.
     try {
       if ("caches" in window) {
-        const pack = OCR_LANG_PACK(code);
+        // `lang`, not a name from somewhere else: this function takes the three-letter pack name as
+        // its parameter, and referencing an undefined `code` here threw a ReferenceError that only
+        // the retry path could reach — so the one moment a retry was needed, the retry never ran.
+        const pack = OCR_LANG_PACK(lang);
         const names = await caches.keys();
         await Promise.all(
           names
@@ -763,7 +950,7 @@ async function createOcrWorker(Tesseract, lang, attempt) {
       // A cache we cannot clear is not a reason to give up; the fetch below still happens.
     }
 
-    return createOcrWorker(Tesseract, code, attempt + 1);
+    return createOcrWorker(Tesseract, lang, attempt + 1);
   }
 }
 
@@ -905,11 +1092,50 @@ async function prepareOcrImage(blob) {
   }
 }
 
+/* The shape every recognised block is normalised into, so the first pass and a corrective second
+   pass cannot drift into reading the same words differently. */
+function cleanOcrText(raw) {
+  return String(raw || "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/* One more pass with a worker built for a different language. Terminate, rebuild, recognise — the
+   same sequence the first pass uses, in one place, so there is only one spot for the "a worker is
+   built for one language and carries it for life" rule to live in. Returns "" when the corrected
+   language has no pack, which the caller treats as "keep what we already have". */
+async function rereadImageOcr(Tesseract, image) {
+  const code = ocrLangCode(captureOcrLang);
+  if (!code) return "";
+  if (ocrWorker) {
+    try { await ocrWorker.terminate(); } catch (e) { /* already gone */ }
+    ocrWorker = null;
+  }
+  ocrWorker = await createOcrWorker(Tesseract, code, 0);
+  ocrWorkerLang = code;
+  return cleanOcrText((await ocrWorker.recognize(image))?.data?.text);
+}
+
 async function runImageOcr() {
   if (ocrBusy) return;
   if (!pendingBlob) {
     setImageOcrStatus("Choose an image first.");
     return;
+  }
+
+  /* Which language to read in. In auto mode the sentence already in the box is the best evidence
+     there is — a Tamil caption over the photo means a Tamil photo — and the last language seen
+     backs that up when the box is empty. A chip the person tapped says otherwise, and that
+     outranks both. */
+  if (captureOcrLangAuto) {
+    const fromText = voiceTagToOcrTag(
+      detectCaptureLanguage(document.getElementById("captureText")?.value || ""),
+    );
+    if (fromText && OCR_LANGUAGES.some((entry) => entry.tag === fromText)) {
+      captureOcrLang = fromText;
+      renderOcrLanguages();
+    }
   }
 
   /* Resolved before anything is fetched, and reported rather than guessed at. An unrecognised tag can
@@ -970,10 +1196,7 @@ async function runImageOcr() {
     const prepared = await prepareOcrImage(pendingBlob);
     if (ocrAbort.signal.aborted) return;
 
-    const clean = (raw) => String(raw || "")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
+    const clean = cleanOcrText;
 
     let text = clean((await ocrWorker.recognize(prepared))?.data?.text);
     if (!text && prepared !== pendingBlob) {
@@ -987,6 +1210,31 @@ async function runImageOcr() {
     if (!text) {
       setImageOcrStatus("No text was found. Try a clearer, closer photo, or type the note yourself.");
       return;
+    }
+
+    /* The read itself is the strongest signal of all: words that came back in Tamil were Tamil,
+       whatever language the reader was started with. In auto mode the guess is corrected, the
+       chips follow, and the image is read once more in the right language — once, because the
+       first correction has already spent the only surprise there was, and a second would charge
+       the same wait for nothing new. A chip the person tapped is never corrected at all. */
+    if (captureOcrLangAuto) {
+      const detectedOcrTag = voiceTagToOcrTag(detectCaptureLanguage(text));
+      if (
+        detectedOcrTag &&
+        detectedOcrTag !== captureOcrLang &&
+        OCR_LANGUAGES.some((entry) => entry.tag === detectedOcrTag)
+      ) {
+        const detectedLabel =
+          OCR_LANGUAGES.find((entry) => entry.tag === detectedOcrTag)?.label || detectedOcrTag;
+        captureOcrLang = detectedOcrTag;
+        const detectedVoiceTag = ocrTagToVoiceTag(detectedOcrTag);
+        if (detectedVoiceTag) rememberCaptureLanguage(detectedVoiceTag);
+        renderOcrLanguages();
+        setImageOcrStatus(`That reads like ${detectedLabel} — reading it again in ${detectedLabel}…`);
+        const corrected = await rereadImageOcr(Tesseract, prepared);
+        if (ocrAbort.signal.aborted) return;
+        if (corrected) text = corrected;
+      }
     }
 
     imageOcrText = text;
@@ -1133,6 +1381,11 @@ function normalisePlanEntry(entry) {
     title,
     dueDate: String(entry.dueDate || "").slice(0, 40),
     person: String(entry.person || "")
+      .trim()
+      .slice(0, 80),
+    // Carried through so a row of its own is saved with the place the sentence gave it, rather
+    // than the whole plan losing its locations at the door.
+    location: String(entry.location || "")
       .trim()
       .slice(0, 80),
     project: String(entry.project || "")
@@ -1329,6 +1582,12 @@ function openCapture() {
   document.getElementById("captureRecurrence").value = "none";
   document.getElementById("capturePriority").value = "";
   document.getElementById("capturePerson").value = "";
+  // The place resets with the rest, and its block hides with it: a location left over from the
+  // previous capture would be indistinguishable from one the reader had found for this one.
+  const locationReset = document.getElementById("captureLocation");
+  if (locationReset) locationReset.value = "";
+  const locationFieldsReset = document.getElementById("captureLocationFields");
+  if (locationFieldsReset) locationFieldsReset.style.display = "none";
   document.getElementById("voiceCaptureUI").style.display = "none";
   document.getElementById("imageCaptureUI").style.display = "none";
   document.getElementById("fileCaptureUI").style.display = "none";
@@ -1338,6 +1597,14 @@ function openCapture() {
   document.getElementById("imagePreview").style.display = "none";
   document.getElementById("imageOcrStatus").textContent = "";
   setOcrButtonBusy(false);
+  // Auto again for this picture, starting from the language last seen — so someone who only ever
+  // photographs Tamil documents reads them in Tamil without ever touching a chip, and a chip they
+  // did tap is still only a default rather than a lock.
+  captureOcrLangAuto = true;
+  const rememberedOcrLang = voiceTagToOcrTag(rememberedCaptureLanguage());
+  if (rememberedOcrLang && OCR_LANGUAGES.some((entry) => entry.tag === rememberedOcrLang)) {
+    captureOcrLang = rememberedOcrLang;
+  }
   imageOcrText = "";
   lastOcrWritten = "";
   renderOcrLanguages();
@@ -1378,7 +1645,8 @@ function openCapture() {
   voiceTranscriptBase = "";
   stopVoiceTranscription();
   setVoiceLiveTranscript("");
-  pickVoiceLang(defaultVoiceLang());
+  // Auto, not "whatever the browser speaks": the guess comes from this person's own captures.
+  resetVoiceLangForCapture();
   renderVoiceLanguages();
   pendingBlob = null;
   pendingBlobExt = null;
@@ -1452,6 +1720,10 @@ function pickType(id, manual) {
   if (moneyFields) moneyFields.style.display = id === "expense" ? "block" : "none";
   const billFields = document.getElementById("captureBillFields");
   if (billFields) billFields.style.display = id === "bill" ? "block" : "none";
+  // A place belongs to the two kinds it can describe — a task with somewhere to be done, an event
+  // with somewhere to happen — and also stays on screen once something has filled it, so a
+  // suggestion the reader made is never hidden behind the kind it did not match.
+  syncCaptureLocationField();
   // A bill repeats by default. A one-off electricity bill remembered as a bill and never repeated
   // is the failure that matters, because the next month's arrives and nothing says so.
   if (id === "bill" && manual) {
@@ -1460,6 +1732,16 @@ function pickType(id, manual) {
   }
   if (manual) updateCaptureDuplicate(id, captureInputValue());
 }
+/* The location block follows the kind — and any value already in the box. One rule, called from
+   every place that can change either, so a suggestion, a chip tap and a Clear can never leave the
+   sheet showing a section its own state disagrees with. */
+function syncCaptureLocationField() {
+  const fields = document.getElementById("captureLocationFields");
+  if (!fields) return;
+  const filled = Boolean(document.getElementById("captureLocation")?.value);
+  fields.style.display = ["event", "task"].includes(captureType) || filled ? "block" : "none";
+}
+
 function detectType(text) {
   const t = text.toLowerCase();
   if (
@@ -1588,6 +1870,8 @@ function clearCaptureSuggestions() {
   captureAgenda = [];
   captureMainAsk = "";
   capturePlanTouched = false;
+  // The location may have been a suggestion, so its block follows the field back to empty.
+  syncCaptureLocationField();
   cancelAutoSave();
   renderCapturePlan();
   const clearButton = document.getElementById("clearCaptureSuggestionsBtn");
@@ -1639,6 +1923,12 @@ function onCaptureInput() {
     captureAutoDetected = false;
     return;
   }
+
+  // Typed text carries the same signal as a transcript: a Tamil sentence in the box means the next
+  // recording should listen in Tamil, and an English one that it should not. In auto mode only —
+  // a chip the person tapped is a decision — and silent, because this is a guess about a
+  // recording that has not happened yet.
+  syncDetectedCaptureLanguage(text);
 
   // A dictated note and a picture of text are read just like a typed sentence. A file has nothing
   // to read and a link's "text" is a URL, so neither is guessed at.
@@ -1908,6 +2198,7 @@ function buildCapturePlanItems(main) {
         sub: CAPTURE_PLAN_SUB[entry.kind] || "Captured task",
         priority: entry.priority || (entry.kind === "task" ? "medium" : ""),
         person: entry.person || "",
+        location: entry.location || "",
         due: dueISO ? formatDueDisplay(dueISO) : "",
         dueDate: dueISO,
         recurrence: "none",
@@ -1961,6 +2252,10 @@ function applyExtraction(data, text) {
   applyField("capturePriority", data.priority);
   applyField("captureDueDate", toDateTimeLocalValue(data.dueDate));
   applyField("capturePerson", data.person);
+  // A place is filled in exactly like every other suggestion: only when the field is empty, so a
+  // value the person already typed is never overwritten.
+  applyField("captureLocation", data.location);
+  syncCaptureLocationField();
   applyField("captureRecurrence", data.recurrence !== "none" ? data.recurrence : "");
   if (data.project && !document.getElementById("captureProject").value) {
     const projectSelect = document.getElementById("captureProject");
@@ -1981,6 +2276,7 @@ function applyExtraction(data, text) {
   if (data.kind) parts.push(data.kind);
   if (data.dueDate) parts.push("due " + formatDueDisplay(data.dueDate));
   if (data.person) parts.push("person: " + data.person);
+  if (data.location) parts.push("at " + data.location);
   if (data.priority) parts.push(data.priority + " priority");
   if (data.recurrence && data.recurrence !== "none") parts.push(data.recurrence);
   const clearButton = document.getElementById("clearCaptureSuggestionsBtn");
@@ -2854,6 +3150,75 @@ function splitCaptureClauses(text) {
     .filter((clause) => clause.length > 2);
 }
 
+/* ---------- Location ----------
+
+   The one field the sheet can read and never has to ask for: "meeting at the office", "in T Nagar",
+   "on Zoom". Deliberately narrow, because a place is optional everywhere it appears and a wrong
+   one on an event is worse than none.
+
+   Three refusals, in order:
+     - a candidate that reads as a time, a day or a period ("at 5", "in the morning") is skipped,
+       and the sentence keeps looking — "meeting at 5 at the office" is about the office
+     - a bare common word is only a place when it is one of the known place nouns ("at home"),
+       so "in a hurry" and "at the latest" fall through
+     - a proper noun after "in" — the one cue that also introduces subjects ("in AI", "in detail")
+       — needs the sentence to actually be about somewhere to be, which is what the kind tells us */
+const LOCATION_CUE_RE =
+  /\b(?:at|in|@|near|inside|outside|venue(?:\s+is|:)?|location(?:\s+is|:)?|place(?:\s+is|:)?)\s+(?::\s*)?/gi;
+
+/* Nouns that are places wherever they appear. Lowercase on purpose: "at home" is the commonest
+   location there is and it is never capitalised. */
+const LOCATION_PLACE_RE =
+  /\b(office|home|house|apartment|flat|place|school|college|university|campus|gym|hospital|clinic|airport|railway station|bus stop|station|cafe|café|restaurant|park|mall|temple|church|mosque|market|hotel|studio|library|beach|cinema|theatre|theater|zoom|google meet|teams|warehouse|godown|ground|stadium|court|bank|post office|canteen|hostel|workshop|lab|factory|site|store|shop|showroom|salon|parlour|hall|room|roof|resort|city centre)\b/i;
+
+/* Words that mean the preposition was about time or scope rather than a place, and the sentence
+   words a place's name cannot contain. Leading articles are stripped before this list runs, so
+   "at the office" still reads as "office". */
+const LOCATION_STOP_RE =
+  /^(?:next|last|every|each|this|that|these|those|one|two|three|four|five|six|seven|eight|nine|ten|\d|tomorrow|today|tonight|yesterday|morning|afternoon|evening|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|weeks|month|months|year|years|day|days|hour|hours|minute|minutes|am|pm|o'?clock|noon|midnight|and|or|but|with|then|to|for|from|by|on|at|in|near|inside|outside|is|are|was|were|be|been|due|deadline|soon|later|again|sharply|sharp|latest|least)$/i;
+const LOCATION_NOT_A_PLACE_RE =
+  /\b(?:\d|am|pm|o'?clock|noon|midnight|morning|afternoon|evening|night|tomorrow|today|tonight|yesterday|days?|weeks?|months?|years?|hours?|minutes?|latest|least|soon|later|again)\b/i;
+
+/* Reads the words after a cue until one of them cannot belong to a place's name. Determiners are
+   skipped rather than refused — "at the office" is a location, and refusing "the" would refuse it. */
+function takeLocationWords(rest) {
+  const lead = String(rest || "")
+    .trim()
+    .replace(/^(?:the|a|an|my|our|your|his|her|their)\s+/i, "");
+  const words = lead.split(/\s+/);
+  const taken = [];
+  for (const word of words) {
+    if (taken.length >= 4) break;
+    if (!/^[A-Za-z]/.test(word)) break;
+    if (LOCATION_STOP_RE.test(word)) break;
+    taken.push(word.replace(/[,;.!?]+$/, "").replace(/^[("'\s]+/, ""));
+    if (!taken[taken.length - 1]) taken.pop();
+  }
+  return taken.join(" ").trim();
+}
+
+/* The place this sentence names, or "" when it does not clearly name one. Scans every cue in turn,
+   so a time that leads ("meeting at 5 at the office") is skipped rather than mistaken for the
+   answer. `kind` is the tie-breaker for the one cue that is genuinely ambiguous: "in" introduces
+   subjects as readily as places, so a proper noun after it only counts when the sentence is about
+   somewhere to be — which is what event and task already mean. */
+function readLocationFromText(text, kind) {
+  const body = String(text || "");
+  if (!body.trim()) return "";
+  const cue = new RegExp(LOCATION_CUE_RE.source, LOCATION_CUE_RE.flags);
+  for (const match of body.matchAll(cue)) {
+    const candidate = takeLocationWords(body.slice(match.index + match[0].length));
+    if (!candidate) continue;
+    if (LOCATION_NOT_A_PLACE_RE.test(candidate)) continue;
+    if (LOCATION_PLACE_RE.test(candidate)) return candidate.slice(0, 80);
+    const properNoun = /^[A-Z]/.test(candidate);
+    if (properNoun && ["event", "task", "waiting", "openloop"].includes(kind)) {
+      return candidate.slice(0, 80);
+    }
+  }
+  return "";
+}
+
 function extractLocally(text) {
   const result = {
     kind: "",
@@ -2861,6 +3226,7 @@ function extractLocally(text) {
     dueDate: "",
     person: "",
     project: "",
+    location: "",
     recurrence: "none",
     // How much the rules actually know. Anything below "high" is a signal to ask the model.
     confidence: "low",
@@ -2951,6 +3317,11 @@ function extractLocally(text) {
   // memory engine must never make.
   else if (/\b(prefers?|likes?|dislikes|hates?|uses|is a|works (at|with)|lives? in|knows?)\b/i.test(text))
     result.kind = "memory";
+
+  // A place, when the sentence names one. Read after the kind on purpose: a proper noun is only a
+  // location the app may be sure of when the sentence is about somewhere to be. Never guessed and
+  // never asked for — "" is a perfectly good answer for an optional field.
+  result.location = readLocationFromText(text, result.kind);
 
   // How much do the rules actually know? A vague phrase is a reason to ask, not to guess.
   if (VAGUE_TIME_RE.test(text)) {

@@ -2221,6 +2221,10 @@
         <div class="field-row">
           <span class="field-label">Person</span><span id="panelPerson"></span>
         </div>
+        <!-- Hidden until an item actually carries one: a row of dashes is not information. -->
+        <div class="field-row" id="panelLocationRow" hidden>
+          <span class="field-label">Location</span><span id="panelLocation"></span>
+        </div>
         <div class="field-row">
           <span class="field-label">Project</span
           ><span id="panelProject">—</span>
@@ -2377,10 +2381,12 @@
                ways of capturing stay the whole visible story. -->
           <div class="type-row" id="typeMoreRow" style="display: none"></div>
         <div id="voiceCaptureUI" style="display: none; margin: 10px 0">
-          <!-- 1. Language first: the recogniser only understands one language per session, so the
-               choice comes before the single capture tap and is reused for recording + transcript. -->
+          <!-- 1. Language first — but chosen by the app, not by the person. The recogniser only
+               understands one language per session, so the guess comes before the single capture
+               tap and is corrected automatically from whatever is actually said. The chips stay as
+               the correction path for when the guess is wrong. -->
           <div class="voice-lang-block">
-            <span class="voice-lang-label">Choose spoken language</span>
+            <span class="voice-lang-label">Spoken language — auto-detected, tap to correct</span>
             <div class="type-row" id="voiceLangRow"></div>
           </div>
           <!-- 2. One-click capture: records audio AND transcribes it in the chosen language, then
@@ -2489,7 +2495,7 @@
             ><span>Stop reading</span>
           </button>
           <div class="voice-lang-block">
-            <span class="voice-lang-label">Text language in the image</span>
+            <span class="voice-lang-label">Text language in the image — auto-detected, tap to correct</span>
             <div class="type-row" id="imageOcrLangRow"></div>
           </div>
           <p
@@ -2826,6 +2832,23 @@
           </div>
         </div>
 
+        <!-- Location. Shown only for the two kinds a place belongs to, the same way the document and
+             money fields follow their own kind: a box nobody needs on every capture is how a capture
+             sheet starts reading as a form. Filled from the sentence when the sentence names one —
+             never asked for, because a place is not required to save a task or an event. -->
+        <div id="captureLocationFields" style="display: none; margin-top: 10px">
+          <label style="font-size: 12.5px; color: var(--muted)" for="captureLocation">
+            Location
+          </label>
+          <input
+            class="capture-input"
+            id="captureLocation"
+            autocomplete="off"
+            placeholder="e.g. Office, Chennai"
+            style="margin: 4px 0 0"
+          />
+        </div>
+
         <!-- Document fields. Shown only when the capture is a document, because five empty boxes on
              every capture is how a capture sheet stops feeling like a capture sheet. -->
         <div id="captureDocFields" style="display: none; margin-top: 10px">
@@ -3075,6 +3098,22 @@
               style="margin: 4px 0 0"
             />
           </div>
+        </div>
+
+        <!-- Location. Same field the capture sheet fills in, so a place read out of the sentence
+             can be corrected here rather than only admired in the panel. -->
+        <div style="margin-top: 10px">
+          <label style="font-size: 12.5px; color: var(--muted)" for="editLocation">
+            Location
+          </label>
+
+          <input
+            class="capture-input"
+            id="editLocation"
+            autocomplete="off"
+            placeholder="e.g. Office, Chennai"
+            style="margin: 4px 0 0"
+          />
         </div>
 
         <!-- Project -->

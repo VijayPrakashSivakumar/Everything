@@ -11,9 +11,9 @@ function buildLocalExtractionPrompt(text, today) {
   return `Today is ${today}. Turn this sentence into JSON for a personal productivity app.
 
 Return ONLY this shape:
-{"items":[{"kind":"${LOCAL_EXTRACTION_KINDS.join("|")}","title":"short imperative title","dueDate":"ISO 8601 or empty string","person":"name or empty string","project":"name or empty string","priority":"${LOCAL_EXTRACTION_PRIORITIES.join("|")} or empty string","recurrence":"${LOCAL_EXTRACTION_RECURRENCE.join("|")}","confidence":"high|medium|low","ambiguous":"one short question or empty string"}]}
+{"items":[{"kind":"${LOCAL_EXTRACTION_KINDS.join("|")}","title":"short imperative title","dueDate":"ISO 8601 or empty string","person":"name or empty string","project":"name or empty string","location":"place the sentence names, or empty string","priority":"${LOCAL_EXTRACTION_PRIORITIES.join("|")} or empty string","recurrence":"${LOCAL_EXTRACTION_RECURRENCE.join("|")}","confidence":"high|medium|low","ambiguous":"one short question or empty string"}]}
 
-Rules: one sentence can carry several things, so return one entry per distinct thing rather than merging them. Never invent a date; if the wording is vague, leave dueDate empty. "waiting for X" is waiting. An undecided question is openloop. A fact about a person is memory.
+Rules: one sentence can carry several things, so return one entry per distinct thing rather than merging them. Never invent a date; if the wording is vague, leave dueDate empty. Never invent a place either: location is only for a place the sentence actually names ("at the office"). "waiting for X" is waiting. An undecided question is openloop. A fact about a person is memory.
 
 Sentence: ${text}`;
 }
@@ -37,6 +37,7 @@ function cleanLocalExtractionItem(raw) {
     dueDate: str(raw.dueDate).slice(0, 40),
     person: str(raw.person).slice(0, 80),
     project: str(raw.project).slice(0, 80),
+    location: str(raw.location).slice(0, 80),
     priority: oneOf(raw.priority, LOCAL_EXTRACTION_PRIORITIES, ""),
     recurrence: oneOf(raw.recurrence, LOCAL_EXTRACTION_RECURRENCE, "none"),
     confidence: oneOf(raw.confidence, ["high", "medium", "low"], "medium"),
