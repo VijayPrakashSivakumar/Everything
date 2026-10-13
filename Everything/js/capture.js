@@ -2538,6 +2538,45 @@ function applyExtraction(data, text) {
   applyField("captureLocation", data.location);
   syncCaptureLocationField();
   applyField("captureRecurrence", data.recurrence !== "none" ? data.recurrence : "");
+  // ---------- Intelligent auto-fill: the kind's own boxes ----------
+  // An expense or bill read from the sentence fills its own Amount box in plain rupees (the save
+  // path converts to paise), so the number is visible and checkable before saving. A typed value
+  // always wins: applyField skips a box the person already touched.
+  applyField("captureAmount", data.amount);
+  applyField("captureBillAmount", data.amount);
+  applyField("captureMerchant", data.merchant);
+  applyField("captureBillMerchant", data.billMerchant || data.merchant);
+  applyField("captureSpentOn", data.spentOn);
+  applyField("captureBillDue", data.billDue);
+  if (data.category && !document.getElementById("captureCategory").value) {
+    const categorySelect = document.getElementById("captureCategory");
+    const match = [...categorySelect.options].find((option) => option.value === data.category);
+    if (match) {
+      const previous = categorySelect.value;
+      categorySelect.value = data.category;
+      captureSuggestionFields.captureCategory = { elementId: "captureCategory", previous, applied: data.category };
+    }
+  }
+  if (data.billType && !document.getElementById("captureBillType").value) {
+    const typeField = document.getElementById("captureBillType");
+    const previous = typeField.value;
+    typeField.value = data.billType;
+    captureSuggestionFields.captureBillType = { elementId: "captureBillType", previous, applied: data.billType };
+  }
+  // A document's drawer and paper trail. The expiry moves into the doc box; the generic due box is
+  // left for the doc-answer path below to clear, so "Clear suggestions" can restore it.
+  applyField("captureDocType", data.docType);
+  applyField("captureDocIssuer", data.docIssuer);
+  applyField("captureDocNumber", data.docNumber);
+  if (data.docExpires) {
+    const expiryField = document.getElementById("captureDocExpires");
+    if (expiryField && !expiryField.value) {
+      const previous = expiryField.value;
+      expiryField.value = data.docExpires;
+      captureSuggestionFields.captureDocExpires = { elementId: "captureDocExpires", previous, applied: data.docExpires };
+      captureDocExpiry = data.docExpires;
+    }
+  }
   if (data.project && !document.getElementById("captureProject").value) {
     const projectSelect = document.getElementById("captureProject");
     const match = [...projectSelect.options].find((option) => option.value === data.project);
@@ -2701,6 +2740,75 @@ function buildCaptureQuestions(text, data) {
       options: [
         { label: "Yes, make it a task", value: "task" },
         { label: "Save as a note", value: "note" },
+      ],
+    });
+  }
+
+  // ---------- Intelligent auto-fill follow-ups: ask gently for what is still missing ----------
+  // Every question here is non-blocking and dismissible — the sheet saves fine without an answer.
+  // One at a time (the card only ever shows questions[0]), most blocking first: an expense without
+  // an amount cannot be saved at all, so it is asked before anything merely nice to have.
+  const kind = data.kind || captureType;
+  const hasAmount =
+    document.getElementById("captureAmount")?.value ||
+    document.getElementById("captureBillAmount")?.value ||
+    (amountMinor !== null && amountMinor > 0);
+  if (!questions.length && (kind === "expense" || kind === "bill") && !hasAmount) {
+    questions.push({
+      id: "missing-amount",
+      question:
+        kind === "expense"
+          ? "How much did you spend? I could not find an amount in that."
+          : "What is the bill amount? I could not find a number in that.",
+      options: [
+        { label: "Type the amount", value: "type-amount" },
+        { label: "No amount", value: "no-amount" },
+      ],
+    });
+  }
+  if (
+    !questions.length &&
+    kind === "bill" &&
+    !document.getElementById("captureBillDue")?.value &&
+    !data.dueDate &&
+    !data.billDue
+  ) {
+    questions.push({
+      id: "missing-bill-due",
+      question: "When is this bill due? A day keeps it reminding you on time.",
+      options: [
+        { label: "Pick the day", value: "pick-bill-due" },
+        { label: "No due date", value: "no-bill-due" },
+      ],
+    });
+  }
+  if (
+    !questions.length &&
+    kind === "document" &&
+    !document.getElementById("captureDocExpires")?.value &&
+    !data.docExpires
+  ) {
+    questions.push({
+      id: "missing-doc-expiry",
+      question: "When does this document expire? I can remind you before it does.",
+      options: [
+        { label: "Pick the date", value: "pick-doc-expiry" },
+        { label: "No expiry", value: "no-doc-expiry" },
+      ],
+    });
+  }
+  if (
+    !questions.length &&
+    (kind === "task" || kind === "event") &&
+    !data.person &&
+    /\b(call|meet|remind|tell|ask|send|email|message|wish)\b/i.test(body)
+  ) {
+    questions.push({
+      id: "missing-person",
+      question: "Who is this about? A name keeps it linked to the right person.",
+      options: [
+        { label: "Type the name", value: "type-person" },
+        { label: "Nobody in particular", value: "no-person" },
       ],
     });
   }
@@ -2945,6 +3053,51 @@ function answerCaptureQuestion(value) {
     } else {
       // "Keep it" — protect the existing suggestion from being cleared.
       if (field?.value) captureSuggestionFields.captureDueDate = null;
+    }
+  }
+
+  // ---------- Intelligent auto-fill answers: gentle follow-ups land in the right box ----------
+  // None of these blocks saving or invents a value. "Type…" focuses the box so the person can say
+  // or type it; "No…" dismisses gracefully and leaves the field empty — an honest empty beats a
+  // guessed one. A focused box is a decision, so "Clear suggestions" must not undo the value typed
+  // there afterwards (the null-entry rule answerCaptureQuestion already follows).
+  if (question.id === "missing-amount") {
+    if (value === "type-amount") {
+      const field =
+        document.getElementById(captureType === "bill" ? "captureBillAmount" : "captureAmount") ||
+        document.getElementById("captureAmount") ||
+        document.getElementById("captureBillAmount");
+      field?.focus();
+      if (field) captureSuggestionFields[field.id] = null;
+      setCaptureHint(`${icon("circle-help")} Tell me the amount — type it into the Amount box.`);
+      return;
+    }
+  }
+  if (question.id === "missing-bill-due") {
+    if (value === "pick-bill-due") {
+      const field = document.getElementById("captureBillDue");
+      field?.focus();
+      field?.showPicker?.();
+      if (field) captureSuggestionFields.captureBillDue = null;
+      return;
+    }
+  }
+  if (question.id === "missing-doc-expiry") {
+    if (value === "pick-doc-expiry") {
+      const field = document.getElementById("captureDocExpires");
+      field?.focus();
+      field?.showPicker?.();
+      if (field) captureSuggestionFields.captureDocExpires = null;
+      return;
+    }
+  }
+  if (question.id === "missing-person") {
+    if (value === "type-person") {
+      const field = document.getElementById("capturePerson");
+      field?.focus();
+      if (field) captureSuggestionFields.capturePerson = null;
+      setCaptureHint(`${icon("circle-help")} Tell me who — type the name into the Person box.`);
+      return;
     }
   }
 
@@ -3500,6 +3653,89 @@ function readLocationFromText(text, kind) {
   return "";
 }
 
+/* ---------- Intelligent auto-fill readers ----------
+
+   The extraction below used to read only kind, priority, due date, person, project, location and
+   recurrence — so an expense arrived with no amount, a bill with no due day in its own box, and a
+   document with an empty Type. The save path already knew how to read those fields (extraction.js
+   falls back to parseAmountFromText etc.), but the sheet never showed them, so the person could
+   neither check nor correct what would be saved.
+
+   These readers close that gap deterministically: no model, no network, no guessing. Each returns
+   "" when the sentence does not actually say the value, because an empty field plus a gentle
+   question is the honest answer — an invented payee on a bank statement is not. */
+function merchantFromSentence(text) {
+  const body = String(text || "");
+  if (!body.trim()) return "";
+  const cue = body.match(
+    /\b(?:at|from|to|for|via|on|with)\s+([A-Z][\w&.-]{1,30}(?:\s+[A-Z][\w&.-]{1,30}){0,2})\b/,
+  );
+  if (cue) {
+    const name = cue[1].trim().replace(/[.,;:'"]+$/, "");
+    if (name.length >= 2 && !/^(?:the|a|an|my|our|this|that)$/i.test(name)) return name.slice(0, 80);
+  }
+  const brand = body.match(
+    /\b(d-mart|dmart|bigbasket|reliance|zomato|swiggy|amazon|flipkart|uber|ola|netflix|spotify|airtel|jio|tata|paytm|phonepe|gpay|google pay|irctc|makemytrip|bookmyshow|decathlon|croma|saravana|nilgiri)\b/i,
+  );
+  if (brand) return brand[1].trim().slice(0, 80);
+  return "";
+}
+
+/* When the money was spent. Typed text rarely carries the day ("spent 450 on groceries" is almost
+   always today), so an explicit date read from the sentence wins and today is the honest fallback —
+   the same rule saveCapture already applied through spentOn || created. Never asked for: "Spent on"
+   defaults to today without a question, because that is what the person meant. */
+function spentOnFromText(text) {
+  const parsed = parseLocalDate(text);
+  if (parsed && !Number.isNaN(parsed.getTime())) return isoDateString(parsed);
+  return isoDateString(new Date());
+}
+
+/* Which drawer of the filing cabinet: warranty, insurance, licence, passport, receipt, manual.
+   Read locally so a typed "LIC policy premium due 5th" files as a document rather than a memory
+   with an empty Type box. The OCR/image path keeps its own stricter detector; this only covers
+   typed or dictated text. */
+function docTypeFromText(text) {
+  const body = String(text || "").toLowerCase();
+  if (/\b(warranty|guarantee)\b/.test(body)) return "warranty";
+  if (/\b(insurance|policy|premium|coverage)\b/.test(body)) return "insurance";
+  if (/\b(licen[cs]e)\b/.test(body)) return "licence";
+  if (/\b(passport|aadhaar|pan card|visa|id card)\b/.test(body)) return "passport";
+  if (/\b(receipt)\b/.test(body)) return "receipt";
+  if (/\b(manual|handbook|guide)\b/.test(body)) return "manual";
+  if (/\b(invoice|bill no|serial no|model no|valid till|valid until|expir)/.test(body)) return "other";
+  return "";
+}
+
+/* Who issued the paper: "from LIC", "by Croma". A name near an issuer cue or a known brand wins;
+   anything else stays empty rather than guessed. */
+function docIssuerFromText(text) {
+  const body = String(text || "");
+  const cue = body.match(/\b(?:from|by|issued by|issuer)\s+([A-Z][\w&.-]{1,30}(?:\s+[A-Z][\w&.-]{1,30}){0,2})\b/);
+  if (cue) {
+    const name = cue[1].trim().replace(/[.,;:'"]+$/, "");
+    if (name.length >= 2 && !/^(?:the|a|an|my|our)$/i.test(name)) return name.slice(0, 80);
+  }
+  const brand = body.match(/\b(LIC|Croma|Apple|Samsung|Sony|LG|HP|Dell|HDFC|ICICI|SBI|Axis|Kotak|D-Mart|Reliance)\b/);
+  if (brand) return brand[1].trim().slice(0, 80);
+  return "";
+}
+
+/* A reference printed on the paper: "INV-2291", "policy no 12345". An uppercase run with digits
+   near a number cue — never a bare word, so "warranty card" yields nothing. The value is validated
+   case-sensitively (uppercase-led with a digit), because the cue match is case-insensitive and
+   would otherwise accept "policy from" as a reference. */
+function docNumberFromText(text) {
+  const body = String(text || "");
+  const cue = body.match(
+    /\b(?:invoice\s+no|inv\s+no|bill\s+no|policy\s+no|serial\s+no|model\s+no|receipt\s+no|order\s+(?:id|no)|invoice|inv|bill|policy|serial|model|receipt|order|no\.?)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{2,29})\b/i,
+  );
+  if (cue && /^[A-Z0-9]/u.test(cue[1]) && /[0-9]/u.test(cue[1])) return cue[1].trim().slice(0, 80);
+  const bare = body.match(/\b([A-Z]{2,}[0-9][A-Z0-9\-/]{2,29})\b/);
+  if (bare) return bare[1].trim().slice(0, 80);
+  return "";
+}
+
 function extractLocally(text) {
   const result = {
     kind: "",
@@ -3509,6 +3745,19 @@ function extractLocally(text) {
     project: "",
     location: "",
     recurrence: "none",
+    // Money and document values the sentence may carry. Empty is a real answer — it means "not
+    // said", and the question builder below asks gently rather than the sheet inventing one.
+    amount: "",
+    merchant: "",
+    category: "",
+    spentOn: "",
+    billDue: "",
+    billType: "",
+    billMerchant: "",
+    docType: "",
+    docExpires: "",
+    docIssuer: "",
+    docNumber: "",
     // How much the rules actually know. Anything below "high" is a signal to ask the model.
     confidence: "low",
     ambiguous: "",
@@ -3603,6 +3852,53 @@ function extractLocally(text) {
   // location the app may be sure of when the sentence is about somewhere to be. Never guessed and
   // never asked for — "" is a perfectly good answer for an optional field.
   result.location = readLocationFromText(text, result.kind);
+
+  // ---------- Intelligent auto-fill: every field the sentence actually carries ----------
+  // The amount is the one the money tests pin: only a currency-marked number counts, so "paid 3
+  // people" stays null and "Spent ₹450" becomes 45000 paise. Shown in plain rupees in the box.
+  const amountMinor = parseAmountFromText(text);
+  if (amountMinor !== null && amountMinor > 0) {
+    result.amount = String(Math.floor(amountMinor / PAISE_PER_RUPEE));
+  }
+  const shop = merchantFromSentence(text);
+  if (shop) {
+    result.merchant = shop;
+    result.billMerchant = shop;
+  }
+  const category = guessMoneyCategory(text);
+  if (category) result.category = category;
+  // Money already spent happened on the day the sentence says, or today — never left blank, because
+  // a blank Spent-on silently becomes "today" at save time and the sheet should show what it means.
+  if (result.kind === "expense") result.spentOn = spentOnFromText(text);
+  // A bill's own Due-on box mirrors the due date the sentence gave, as a calendar day.
+  if (result.kind === "bill" && result.dueDate) {
+    const due = new Date(result.dueDate);
+    if (!Number.isNaN(due.getTime())) result.billDue = isoDateString(due);
+  }
+  if (result.kind === "bill") result.billType = guessBillType(text) || "bill";
+  // A document names its own drawer. Typed or dictated text is also admitted when it reads like a
+  // document — a photographed paper keeps its stricter image path, this never overrides it.
+  const looksDocument = textLooksLikeDocument(text);
+  if (result.kind === "bill" && /\b(policy|premium|insurance)\b/i.test(text)) result.kind = "document";
+  // Only a sentence with no task or event signal becomes a document: "Car insurance policy" fell
+  // through detectType as a memory, while "Send the invoice to Ravi" carries the task verb "send"
+  // and must stay a task — a document keyword alone must not steal work.
+  else if (result.kind === "memory") {
+    if (looksDocument && docTypeFromText(text)) result.kind = "document";
+  }
+  if (result.kind === "document") {
+    result.docType = docTypeFromText(text);
+    result.docIssuer = docIssuerFromText(text);
+    result.docNumber = docNumberFromText(text);
+    // An expiry is a calendar day, not a datetime: the doc box is type=date. A "valid till" phrase
+    // resolves through the same date readers as everything else; anything unparseable stays empty
+    // and is asked for gently rather than invented.
+    const expiry = result.dueDate ? new Date(result.dueDate) : null;
+    if (expiry && !Number.isNaN(expiry.getTime())) {
+      result.docExpires = isoDateString(expiry);
+      result.dueDate = "";
+    }
+  }
 
   // How much do the rules actually know? A vague phrase is a reason to ask, not to guess.
   if (VAGUE_TIME_RE.test(text)) {

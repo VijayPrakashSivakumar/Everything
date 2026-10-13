@@ -115,6 +115,17 @@ function mergeExtractions(local, ai) {
     "priority",
     "recurrence",
     "ambiguous",
+    "amount",
+    "merchant",
+    "category",
+    "spentOn",
+    "billDue",
+    "billType",
+    "billMerchant",
+    "docType",
+    "docExpires",
+    "docIssuer",
+    "docNumber",
   ]) {
     const value = ai?.[field];
     if (value === undefined || value === null || value === "") continue;
