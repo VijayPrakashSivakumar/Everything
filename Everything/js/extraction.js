@@ -128,6 +128,7 @@ function mergeExtractions(local, ai) {
 }
 function closeCapture() {
   stopVoiceDictation();
+  stopVoiceTranscription();
   // The answer recogniser is separate, so it is not covered by the line above and has to be told
   // explicitly, or it would keep the microphone open behind a closed sheet.
   stopCaptureAnswerDictation();

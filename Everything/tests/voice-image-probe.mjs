@@ -265,6 +265,13 @@ try {
         else window.SpeechRecognition = previousSpeechRecognition;
         if (previousMediaRecorder === undefined) delete window.MediaRecorder;
         else window.MediaRecorder = previousMediaRecorder;
+        clearTimeout(voiceTranscriptionStopTimer);
+        voiceTranscriptionStopTimer = null;
+        clearTimeout(captureRecordRestartTimer);
+        captureRecordWantListening = false;
+        captureRecordRecognition = null;
+        voiceTranscriptionDone = null;
+        voiceTranscriptionSettled = true;
         if (mediaDevicesDescriptor) {
           Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
         } else {
@@ -297,6 +304,100 @@ try {
     assert.equal(outcome.started, false, 'it must report that transcription did not start');
     assert.match(outcome.live, /recording is still saved|cannot turn speech into text/i,
       'it must say the audio is safe');
+  });
+
+  await check('romanised Tamil is detected without any manual language power', async () => {
+    // The automatic-language promise: Tanglish typed or heard mid-capture must read as Tamil,
+    // while a short English phrase must stay English so "call Anna tomorrow" is not hijacked.
+    const outcome = await page.evaluate(() => ({
+      tanglish: detectCaptureLanguage('nalla irukku nanri vanakkam'),
+      tamilScript: detectCaptureLanguage('வணக்கம் நன்றி'),
+      hindiRoman: detectCaptureLanguage('aap kaise ho bahut accha kaam'),
+      englishShort: detectCaptureLanguage('call Anna tomorrow'),
+      englishPlain: detectCaptureLanguage('pay the electricity bill tomorrow'),
+    }));
+    assert.equal(outcome.tanglish, 'ta-IN', `Tanglish must detect as Tamil, got ${outcome.tanglish}`);
+    assert.equal(outcome.tamilScript, 'ta-IN', `Tamil script must detect as Tamil, got ${outcome.tamilScript}`);
+    assert.equal(outcome.hindiRoman, 'hi-IN', `Hinglish must detect as Hindi, got ${outcome.hindiRoman}`);
+    assert.equal(outcome.englishShort, 'en-IN', `"call Anna tomorrow" must stay English, got ${outcome.englishShort}`);
+    assert.equal(outcome.englishPlain, 'en-IN', `plain English must stay English, got ${outcome.englishPlain}`);
+  });
+
+  await check('the recogniser keeps listening across a browser pause', async () => {
+    // Chrome ends the recogniser on its own after a pause. The keeper must re-spawn it,
+    // or every capture with a breath in the middle loses its second half.
+    const outcome = await page.evaluate(async () => {
+      const previous = window.SpeechRecognition;
+      let spawns = 0;
+      let live;
+      class RestartingRecognition {
+        start() { spawns += 1; live = this; }
+        stop() {}
+      }
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: RestartingRecognition });
+      try {
+        document.getElementById('captureText').value = '';
+        startVoiceTranscription();
+        await new Promise((r) => setTimeout(r, 50));
+        live?.onend?.();
+        await new Promise((r) => setTimeout(r, 500));
+        const respawned = spawns >= 2;
+        stopVoiceTranscription();
+        return { spawns, respawned };
+      } finally {
+        if (previous === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previous;
+        clearTimeout(captureRecordRestartTimer);
+        captureRecordWantListening = false;
+        captureRecordRecognition = null;
+        voiceTranscriptionDone = null;
+        stopVoiceTranscription();
+      }
+    });
+    assert.ok(outcome.respawned, `a clean browser end must re-spawn listening (spawns: ${outcome.spawns})`);
+  });
+
+  await check('mid-capture Tamil hot-swaps the recogniser language', async () => {
+    // Starting in English and hearing Tamil must switch the session, not garble the rest.
+    const outcome = await page.evaluate(async () => {
+      const previous = window.SpeechRecognition;
+      const seen = [];
+      let live;
+      class HotSwapRecognition {
+        start() { live = this; this.lang = captureVoiceLang; seen.push(this.lang); live?.onstart?.(); }
+        stop() {}
+      }
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: HotSwapRecognition });
+      const previousLang = captureVoiceLang;
+      const previousAuto = captureVoiceLangAuto;
+      const previousOnInput = window.onCaptureInput;
+      window.onCaptureInput = () => {};
+      try {
+        document.getElementById('captureText').value = '';
+        captureVoiceLang = 'en-IN';
+        captureVoiceLangAuto = true;
+        startVoiceTranscription();
+        await new Promise((r) => setTimeout(r, 50));
+        const result = { isFinal: false };
+        result[0] = { transcript: 'nalla irukku nanri vanakkam' };
+        live?.onresult?.({ resultIndex: 0, results: [result] });
+        await new Promise((r) => setTimeout(r, 500));
+        return { seen, current: captureVoiceLang };
+      } finally {
+        if (previous === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previous;
+        window.onCaptureInput = previousOnInput;
+        captureVoiceLang = previousLang;
+        captureVoiceLangAuto = previousAuto;
+        clearTimeout(captureRecordRestartTimer);
+        captureRecordWantListening = false;
+        captureRecordRecognition = null;
+        voiceTranscriptionDone = null;
+        stopVoiceTranscription();
+      }
+    });
+    assert.ok(outcome.seen.includes('ta-IN'), `the session must restart in Tamil, saw [${outcome.seen.join(', ')}]`);
+    assert.equal(outcome.current, 'ta-IN', 'the capture language must follow the hot-swap');
   });
 
   await check('a bulleted list becomes several items, not one', async () => {

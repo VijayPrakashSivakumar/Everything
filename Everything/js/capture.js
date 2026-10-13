@@ -86,12 +86,43 @@ const CAPTURE_SCRIPT_LANGUAGES = [
 ];
 const CAPTURE_LATIN_TAG = "en-IN";
 
-/* The language of a piece of text, or "" when the text carries no letters at all. */
+/* The language of a piece of text, or "" when the text carries no letters at all.
+   Script wins outright — Tamil characters are Tamil no matter what. Latin text is
+   checked for romanised Indian-language words first (Tanglish/Hinglish/etc: the way
+   people actually dictate when the keyboard is English), and only falls back to
+   English when nothing matches. This is what lets a Tamil speaker be heard even
+   when the recogniser started in English: the first few Latin words betray the
+   language and trigger a hot-swap. */
+const CAPTURE_ROMAN_WORDS = [
+  { re: /\b(nalla|illa|irukku|iruku|vanakkam|nandri|nanri|eppadi|enna|ungal|unakku|yen|inga|anga|ponga|vaanga|seri|illainga|sapadu|amma|appa)\b/i, tag: "ta-IN" },
+  { re: /\b(aap|tum|aapka|tumhara|kya|kaise|accha|achha|nahi|haan|shukriya|dhanyavad|bhai|kaam|paani|khana|ghar|mera|tera|bahut|zaroor)\b/i, tag: "hi-IN" },
+  { re: /\b(bagunnara|ela|emi|cheppu|avunu|kadhu|ledhu|dhanyavadalu|namaste|anna|akka|chelli|tammudu|intlo|bayata|tindi|nenu|nuvvu|chala|manchi)\b/i, tag: "te-IN" },
+  { re: /\b(hegiddira|hegiddeera|yenu|yelli|illa|houdu|dhanyavada|namaskara|anna|akka|sari|oota|mane|nanna|ninna|bahala|chennagide)\b/i, tag: "kn-IN" },
+  { re: /\b(sukhamano|enthina|evide|illa|athe|nanni|sheri|namaskaram|chetta|chechi|veed|kazhichu|bhakshanam|ente|ninte|valare|kollam)\b/i, tag: "ml-IN" },
+];
+
 function detectCaptureLanguage(text) {
   const value = String(text || "");
   if (!value.trim()) return "";
   for (const rule of CAPTURE_SCRIPT_LANGUAGES) if (rule.re.test(value)) return rule.tag;
-  return /[A-Za-z]/.test(value) ? CAPTURE_LATIN_TAG : "";
+  if (!/[A-Za-z]/.test(value)) return "";
+  /* Romanised detection needs more than one stray word: "illa" inside "illness" or
+     "anna" inside "annual" must not flip the language. Two hits, or one hit in a
+     longer sentence, is the bar — short English phrases stay English. */
+  const words = value.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  let bestTag = "";
+  let bestHits = 0;
+  for (const entry of CAPTURE_ROMAN_WORDS) {
+    const pattern = new RegExp(entry.re.source, "i");
+    let hits = 0;
+    for (const word of words) if (pattern.test(word)) hits += 1;
+    if (hits > bestHits) {
+      bestHits = hits;
+      bestTag = entry.tag;
+    }
+  }
+  if (bestHits >= 2 || (bestHits === 1 && words.length >= 4)) return bestTag;
+  return CAPTURE_LATIN_TAG;
 }
 
 function captureLanguageLabel(tag) {
@@ -294,6 +325,10 @@ function toggleVoiceDictation() {
    the words land in the capture box where the existing smart-capture pipeline picks them up as if
    they had been typed. */
 let captureRecordRecognition = null;
+let captureRecordWantListening = false;
+let captureRecordRestartTimer = null;
+let voiceLangSwapCount = 0;
+let voiceCaptureBusy = false;
 let voiceTranscript = "";
 let voiceTranscriptBase = "";
 /* True once the recogniser has emitted its own end, and the function to run when it does. The
@@ -340,74 +375,142 @@ function startVoiceTranscription() {
     return false;
   }
   if (captureRecordRecognition) return true;
+  captureRecordWantListening = true;
 
   if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
   captureVoiceLanguage = captureVoiceLang;
   const input = document.getElementById("captureText");
   voiceTranscriptBase = input.value.trim();
   voiceTranscript = "";
+  voiceLangSwapCount = 0;
   voiceTranscriptionSettled = false;
   voiceTranscriptionDone = null;
   clearTimeout(voiceTranscriptionStopTimer);
 
   let final = "";
-  const recognition = new Recognition();
-  captureRecordRecognition = recognition;
-  recognition.lang = captureVoiceLang;
-  // Continuous because a capture is a sentence or two, and a recogniser that stops after one
-  // pause returns half of what was said. Interim results so the sheet shows the words landing.
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.onstart = () => setVoiceLiveTranscript("Listening… speak your capture.");
-  recognition.onresult = (event) => {
-    let interim = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const transcript = event.results[index][0]?.transcript || "";
-      if (event.results[index].isFinal) final += `${transcript} `;
-      else interim += transcript;
+  let interimSnapshot = "";
+  const spawnRecognition = () => {
+    if (!captureRecordWantListening) return false;
+    // Words heard before a language hot-swap must survive the restart: the new session's
+    // resultIndex starts over, so seed it from what was already on screen.
+    final = `${interimSnapshot} `.replace(/^\s+/, "");
+    interimSnapshot = "";
+    const recognition = new Recognition();
+    captureRecordRecognition = recognition;
+    recognition.lang = captureVoiceLang;
+    // Continuous because a capture is a sentence or two, and a recogniser that stops after one
+    // pause returns half of what was said. Interim results so the sheet shows the words landing.
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onstart = () => setVoiceLiveTranscript("Listening… speak your capture.");
+    recognition.onresult = (event) => {
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = event.results[index][0]?.transcript || "";
+        if (event.results[index].isFinal) final += `${transcript} `;
+        else interim += transcript;
+      }
+      const combined = `${final} ${interim}`.trim();
+      interimSnapshot = combined;
+      if (captureVoiceLangAuto && interim) {
+        const detected = detectCaptureLanguage(interim);
+        if (detected && detected !== captureVoiceLang && voiceLangSwapCount < 2) {
+          voiceLangSwapCount += 1;
+          captureVoiceLang = detected;
+          captureVoiceLanguage = detected;
+          rememberCaptureLanguage(detected);
+          renderVoiceLanguages();
+          setVoiceLiveTranscript(`Heard ${captureLanguageLabel(detected)} — listening in ${captureLanguageLabel(detected)}…`);
+          try {
+            recognition.onend = null;
+            recognition.stop();
+          } catch (error) {
+            // Already stopped; the spawn below replaces it.
+          }
+          captureRecordRecognition = null;
+          applyVoiceTranscript(combined);
+          clearTimeout(captureRecordRestartTimer);
+          captureRecordRestartTimer = setTimeout(spawnRecognition, 150);
+          return;
+        }
+      }
+      applyVoiceTranscript(combined);
+    };
+    recognition.onerror = (event) => {
+      if (event.error === "no-speech") {
+        setVoiceLiveTranscript("Nothing was heard yet — keep speaking, or stop and type instead.");
+      } else if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        captureRecordWantListening = false;
+        setVoiceLiveTranscript("Microphone permission was denied — the recording is still saved.");
+      } else if (event.error === "audio-capture") {
+        setVoiceLiveTranscript("No microphone was found — the recording is still saved.");
+      } else if (event.error === "network") {
+        setVoiceLiveTranscript("Speech service is offline — keep speaking, the recording is still saved.");
+      } else {
+        setVoiceLiveTranscript("Speech could not be transcribed — the recording is still saved.");
+      }
+    };
+    recognition.onend = () => {
+      const stillWanted = captureRecordWantListening && !voiceTranscriptionDone;
+      if (captureRecordRecognition === recognition) captureRecordRecognition = null;
+      if (stillWanted) {
+        clearTimeout(captureRecordRestartTimer);
+        captureRecordRestartTimer = setTimeout(() => {
+          if (captureRecordWantListening && !captureRecordRecognition && !voiceTranscriptionDone) spawnRecognition();
+        }, 250);
+        return;
+      }
+      voiceTranscriptionSettled = true;
+      clearTimeout(voiceTranscriptionStopTimer);
+      voiceTranscriptionStopTimer = null;
+      const done = voiceTranscriptionDone;
+      voiceTranscriptionDone = null;
+      if (done) done();
+    };
+    try {
+      recognition.start();
+      return true;
+    } catch (error) {
+      captureRecordRecognition = null;
+      if (String(error?.name || "").toLowerCase().includes("invalidstate")) {
+        clearTimeout(captureRecordRestartTimer);
+        captureRecordRestartTimer = setTimeout(() => {
+          if (captureRecordWantListening && !captureRecordRecognition) spawnRecognition();
+        }, 300);
+        return true;
+      }
+      setVoiceLiveTranscript("Speech recognition could not start — the recording can still be saved.");
+      return false;
     }
-    applyVoiceTranscript(`${final} ${interim}`.trim());
   };
-  recognition.onerror = (event) => {
-    if (event.error === "no-speech") {
-      setVoiceLiveTranscript("Nothing was heard yet — keep speaking, or stop and type instead.");
-    } else if (event.error === "not-allowed") {
-      setVoiceLiveTranscript("Microphone permission was denied — the recording is still saved.");
-    } else {
-      setVoiceLiveTranscript("Speech could not be transcribed — the recording is still saved.");
-    }
-  };
-  recognition.onend = () => {
-    voiceTranscriptionSettled = true;
-    clearTimeout(voiceTranscriptionStopTimer);
-    voiceTranscriptionStopTimer = null;
-    const done = voiceTranscriptionDone;
-    voiceTranscriptionDone = null;
-    if (captureRecordRecognition === recognition) captureRecordRecognition = null;
-    if (done) done();
-  };
-  try {
-    recognition.start();
-    return true;
-  } catch (error) {
-    captureRecordRecognition = null;
-    setVoiceLiveTranscript("Speech recognition could not start — the recording can still be saved.");
-    return false;
-  }
+
+  return spawnRecognition();
 }
 
 function stopVoiceTranscription() {
+  captureRecordWantListening = false;
+  clearTimeout(captureRecordRestartTimer);
+  captureRecordRestartTimer = null;
   if (!captureRecordRecognition) return;
+  const recognition = captureRecordRecognition;
+  /* A graceful stop (the person tapped Stop and a finish is waiting) must keep onend
+     intact so the browser's natural end delivers the last words to finish(). Only a
+     hard abort — new capture, sheet close, hot-swap — nulls it. The want-flag is
+     already false, so keeping onend can never re-spawn listening. */
+  const graceful = Boolean(voiceTranscriptionDone);
+  if (!graceful) captureRecordRecognition = null;
   try {
-    captureRecordRecognition.stop();
+    if (!graceful) recognition.onend = null;
+    recognition.stop();
   } catch (error) {
     // Already stopped by the browser; nothing to unwind.
   }
-  captureRecordRecognition = null;
+  if (!graceful) captureRecordRecognition = null;
 }
 
 async function toggleVoiceRecording() {
   if (captureVoiceActive) stopVoiceDictation();
+  if (voiceCaptureBusy) return;
   if (mediaRecorder && mediaRecorder.state === "recording") {
     /* Wait for the recogniser to actually finish instead of racing a timer.
 
@@ -421,8 +524,13 @@ async function toggleVoiceRecording() {
       clearTimeout(voiceTranscriptionStopTimer);
       voiceTranscriptionStopTimer = null;
       voiceTranscriptionDone = null;
+      /* Read the settled flag first: stopVoiceTranscription clears the want-flag and
+         nulls onend, so calling it before checking would report silence even when
+         words arrived. */
+      const heard = voiceTranscript.trim();
       stopVoiceTranscription();
-      if (!voiceTranscript.trim()) {
+      voiceTranscriptionSettled = true;
+      if (!heard) {
         setVoiceLiveTranscript(
           "Nothing was heard in that recording. The audio is saved — type what you meant instead.",
         );
@@ -449,13 +557,23 @@ async function toggleVoiceRecording() {
   let stream = null;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    voiceCaptureBusy = true;
     recordedChunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => recordedChunks.push(e.data);
+    const mimeType =
+      (window.MediaRecorder?.isTypeSupported?.("audio/webm;codecs=opus") && "audio/webm;codecs=opus") ||
+      (window.MediaRecorder?.isTypeSupported?.("audio/webm") && "audio/webm") ||
+      (window.MediaRecorder?.isTypeSupported?.("audio/mp4") && "audio/mp4") ||
+      "";
+    const ext = mimeType.includes("mp4") ? "m4a" : "webm";
+    mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) recordedChunks.push(e.data);
+    };
     mediaRecorder.onstop = () => {
-      const blob = new Blob(recordedChunks, { type: "audio/webm" });
+      const type = mimeType || "audio/webm";
+      const blob = new Blob(recordedChunks, { type });
       pendingBlob = blob;
-      pendingBlobExt = "webm";
+      pendingBlobExt = ext;
       document.getElementById("voicePreview").src = URL.createObjectURL(blob);
       document.getElementById("voicePreview").style.display = "block";
       clearInterval(recordingInterval);
@@ -465,7 +583,7 @@ async function toggleVoiceRecording() {
     };
     // Listen for the words over the same moment as the audio, not after it.
     startVoiceTranscription();
-    mediaRecorder.start();
+    mediaRecorder.start(500);
     // A fresh recording clears the previous one's private-reader offer; it is reshown only if this
     // recording also comes back with no words.
     setVoiceLocalSttVisible(false);
@@ -481,6 +599,8 @@ async function toggleVoiceRecording() {
     if (stream) stream.getTracks().forEach((track) => track.stop());
     if (!mediaRecorder || mediaRecorder.state !== "recording") mediaRecorder = null;
     await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+  } finally {
+    voiceCaptureBusy = false;
   }
 }
 
@@ -600,9 +720,13 @@ async function transcribeRecordingLocally() {
       "Loading the private reader timed out. Check your connection and try again.",
     );
     // The same language the person is capturing in, as the base code Whisper wants ("ta-IN" → "ta").
-    const language = voiceTagToOcrTag(captureVoiceLang) || "en";
+    // When the guess was never corrected (auto still on), let Whisper detect instead of forcing
+    // English: forcing "en" on Tamil audio is exactly the garble this whole flow exists to avoid.
+    const forced = voiceTagToOcrTag(captureVoiceLang);
+    const transcribeOptions = { task: "transcribe" };
+    if (!captureVoiceLangAuto && forced) transcribeOptions.language = forced;
     const output = await withTimeout(
-      transcriber(audio, { language, task: "transcribe" }),
+      transcriber(audio, transcribeOptions),
       SPEECH_LOAD_TIMEOUT_MS,
       "Transcribing the recording timed out. You can still type what you meant.",
     );
@@ -1792,6 +1916,8 @@ function openCapture() {
   captureVoiceLanguage = "";
   voiceTranscript = "";
   voiceTranscriptBase = "";
+  voiceLangSwapCount = 0;
+  voiceCaptureBusy = false;
   stopVoiceTranscription();
   setVoiceLiveTranscript("");
   // The private reader is offered only after a specific recording comes back empty, so it starts
