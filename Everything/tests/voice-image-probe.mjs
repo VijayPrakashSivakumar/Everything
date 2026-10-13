@@ -504,6 +504,54 @@ try {
     assert.equal(out.opened, true, 'filing as a hidden kind must reveal that row');
     assert.equal(out.closed, true, 'the row must be able to close again');
   });
+
+  await check('voice and image open their menus, text hides them without resetting', async () => {
+    // Voice shows Language + Capture voice; Image shows Language + Take/Choose photo; Text hides
+    // every channel menu. Picking Text must not collapse More-types or clear field values.
+    const out = await page.evaluate(() => {
+      openCapture();
+      pickType('voice', true);
+      const voiceShows = {
+        voice: document.getElementById('voiceCaptureUI').style.display,
+        lang: document.getElementById('voiceLangRow').children.length,
+        record: !!document.getElementById('voiceRecordBtn'),
+      };
+      pickType('image', true);
+      const imageShows = {
+        image: document.getElementById('imageCaptureUI').style.display,
+        ocrLang: document.getElementById('imageOcrLangRow').children.length,
+        camera: !!document.getElementById('imageCameraBtn'),
+        gallery: !!document.getElementById('imageGalleryBtn'),
+      };
+      if (!captureMoreTypesOpen) toggleMoreTypes();
+      document.getElementById('captureText').value = 'keep me';
+      document.getElementById('capturePriority').value = 'high';
+      pickType('text', true);
+      return {
+        voiceShows,
+        imageShows,
+        afterText: {
+          voice: document.getElementById('voiceCaptureUI').style.display,
+          image: document.getElementById('imageCaptureUI').style.display,
+          moreOpen: document.getElementById('typeMoreRow').style.display,
+          text: document.getElementById('captureText').value,
+          priority: document.getElementById('capturePriority').value,
+          channel: captureChannel,
+        },
+      };
+    });
+    assert.equal(out.voiceShows.voice, 'block', 'voice must show its menu');
+    assert.ok(out.voiceShows.lang > 0, 'voice must show the language module');
+    assert.ok(out.voiceShows.record, 'voice must show the capture button');
+    assert.equal(out.imageShows.image, 'block', 'image must show its menu');
+    assert.ok(out.imageShows.camera && out.imageShows.gallery, 'image must show take + choose photo');
+    assert.equal(out.afterText.voice, 'none', 'text must hide the voice menu');
+    assert.equal(out.afterText.image, 'none', 'text must hide the image menu');
+    assert.equal(out.afterText.channel, 'text', 'text must reset the channel');
+    assert.notEqual(out.afterText.moreOpen, 'none', 'text must not collapse previously expanded menus');
+    assert.equal(out.afterText.text, 'keep me', 'text must not clear the typed selection');
+    assert.equal(out.afterText.priority, 'high', 'text must not reset field selections');
+  });
 } finally {
   await browser.close();
   server.kill();

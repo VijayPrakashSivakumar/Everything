@@ -1952,9 +1952,12 @@ function populateProjectSelect() {
 function pickType(id, manual) {
   const isChannel = ["voice", "image", "file", "link"].includes(id);
   // Picking a media chip changes the channel: how the capture is handled, and which panel is shown.
-  // Picking a kind only changes what the item is — the channel, and any recording or picture already
-  // attached to it, is left exactly as it was.
-  if (isChannel) captureChannel = id;
+  // Picking Text resets the channel to text, so every Voice/Image-specific menu and button hides.
+  // Picking any other kind only changes what the item is — the channel, any recording or picture
+  // already attached, the More-types row and all field values are left exactly as they were, so
+  // switching back to Text never resets the UI or collapses what was expanded.
+  if (id === "text") captureChannel = "text";
+  else if (isChannel) captureChannel = id;
   captureType = id;
   // Only a *kind* is a decision the reader must not undo. Choosing the Voice chip says how the
   // capture arrived, not what it is — marking it as a choice is why a dictated "call Ravi tomorrow"
