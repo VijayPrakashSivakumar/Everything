@@ -2250,7 +2250,9 @@ check('a recording with no live transcript can be read privately on the device',
   assert.match(js, /setVoiceLocalSttVisible\(true\)/, 'the reader is never offered after an empty recording');
   assert.match(js, /setVoiceLocalSttVisible\(false\)/, 'the reader is never hidden again');
   // Its words enter the same capture pipeline as the live path, or they are just an attachment.
-  assert.match(js, /transcribeRecordingLocally[\s\S]{0,1400}applyVoiceTranscript\(/, 'the on-device transcript never reaches the pipeline');
+  // The window is bounded so the call cannot drift into some other function, but generous enough
+  // for the function's own comments (the gap measured ~1.7 KB).
+  assert.match(js, /transcribeRecordingLocally[\s\S]{0,2600}applyVoiceTranscript\(/, 'the on-device transcript never reaches the pipeline');
 });
 
 check('what the voice and image were understood as reaches the capture box', () => {

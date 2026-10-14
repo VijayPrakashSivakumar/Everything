@@ -4001,6 +4001,19 @@ h1.page-title {
   width: 100%;
 }
 
+/* One-click voice capture carries its live state on the element so the sheet always says what
+   the microphone is doing: red while it is open, amber while a tapped Stop is waiting for the
+   last words to land. The label still says what a tap will do; this says what is happening. */
+#voiceRecordBtn[data-state="recording"] {
+  border-color: var(--red-fg);
+  color: var(--red-fg);
+}
+
+#voiceRecordBtn[data-state="stopping"] {
+  border-color: var(--amber-fg);
+  color: var(--amber-fg);
+}
+
 .voice-lang-label {
   font-size: var(--fs-small);
   color: var(--muted);

@@ -266,6 +266,14 @@ function setVoiceRecordLabel(label, icon) {
   refreshIcons();
 }
 
+/* The record button carries its state on the element (idle / recording / stopping) so the sheet
+   can show which of the three it is in without parsing labels — the label says what a tap will
+   do, the state says what is happening now. */
+function setVoiceRecordState(state) {
+  const btn = document.getElementById("voiceRecordBtn");
+  if (btn) btn.dataset.state = state;
+}
+
 function setVoiceDictateLabel(label, icon) {
   /* One-click capture keeps a single visible button (voiceRecordBtn). The old standalone
      “Dictate” button is gone from the sheet, but this helper is kept so any legacy caller
@@ -404,6 +412,9 @@ function startVoiceTranscription() {
     recognition.interimResults = true;
     recognition.onstart = () => setVoiceLiveTranscript("Listening… speak your capture.");
     recognition.onresult = (event) => {
+      // A superseded session (hot-swapped for another language, or stopped) must not keep
+      // writing: its late results would duplicate words the current session already has.
+      if (captureRecordRecognition !== recognition) return;
       let interim = "";
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const transcript = event.results[index][0]?.transcript || "";
@@ -437,11 +448,21 @@ function startVoiceTranscription() {
       applyVoiceTranscript(combined);
     };
     recognition.onerror = (event) => {
-      if (event.error === "no-speech") {
+      // Same staleness rule as onresult: only the session the app is listening to may speak.
+      if (captureRecordRecognition !== recognition) return;
+      if (event.error === "aborted") {
+        // The app stopped this session itself (a language swap, or the person tapped Stop).
+        // Reporting it would replace the final words with a failure that never happened.
+      } else if (event.error === "no-speech") {
         setVoiceLiveTranscript("Nothing was heard yet — keep speaking, or stop and type instead.");
       } else if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         captureRecordWantListening = false;
         setVoiceLiveTranscript("Microphone permission was denied — the recording is still saved.");
+      } else if (event.error === "language-not-supported") {
+        captureRecordWantListening = false;
+        setVoiceLiveTranscript(
+          "This browser cannot transcribe that language live — the recording is still saved, and the on-device reader can try it.",
+        );
       } else if (event.error === "audio-capture") {
         setVoiceLiveTranscript("No microphone was found — the recording is still saved.");
       } else if (event.error === "network") {
@@ -451,8 +472,11 @@ function startVoiceTranscription() {
       }
     };
     recognition.onend = () => {
+      // Only the live session's end means anything. A stale end arriving after a hot-swap
+      // must not schedule a second respawn beside the session that replaced it.
+      if (captureRecordRecognition !== recognition) return;
       const stillWanted = captureRecordWantListening && !voiceTranscriptionDone;
-      if (captureRecordRecognition === recognition) captureRecordRecognition = null;
+      captureRecordRecognition = null;
       if (stillWanted) {
         clearTimeout(captureRecordRestartTimer);
         captureRecordRestartTimer = setTimeout(() => {
@@ -511,15 +535,21 @@ function stopVoiceTranscription() {
 async function toggleVoiceRecording() {
   if (captureVoiceActive) stopVoiceDictation();
   if (voiceCaptureBusy) return;
-  if (mediaRecorder && mediaRecorder.state === "recording") {
+  const recording = Boolean(mediaRecorder && mediaRecorder.state === "recording");
+  /* Stop is offered whenever *anything* is running — the recorder, the recogniser, or both.
+     It used to ask only about the recorder, so a capture whose audio had failed (or had
+     already ended) could not be stopped at all: the same button started a second capture
+     over the one still listening. */
+  const listening = Boolean(captureRecordRecognition);
+  if (recording || listening) {
     /* Wait for the recogniser to actually finish instead of racing a timer.
 
-       This used to wait 400ms and then check whether anything had been heard. The browser delivers
-       the final transcript asynchronously, so a sentence that ended just before the tap was
-       discarded and the app confidently reported silence — which is exactly what the person was
-       told while they had been speaking the whole time. Timing cannot be fixed by guessing a longer
-       number; the recogniser emits its own end, and that is the only honest signal that it has
-       finished saying what it heard. */
+       This used to wait 400ms and then check whether anything had been heard. The browser
+       delivers the final transcript asynchronously, so a sentence that ended just before the
+       tap was discarded and the app confidently reported silence — which is exactly what the
+       person was told while they had been speaking the whole time. Timing cannot be fixed by
+       guessing a longer number; the recogniser emits its own end, and that is the only honest
+       signal that it has finished saying what it heard. */
     const finish = () => {
       clearTimeout(voiceTranscriptionStopTimer);
       voiceTranscriptionStopTimer = null;
@@ -530,74 +560,112 @@ async function toggleVoiceRecording() {
       const heard = voiceTranscript.trim();
       stopVoiceTranscription();
       voiceTranscriptionSettled = true;
+      setVoiceRecordState("idle");
       if (!heard) {
+        // `recording`, not pendingBlob: this runs before mediaRecorder.stop(), so the blob
+        // from *this* capture does not exist yet — the flag is what says audio is coming.
         setVoiceLiveTranscript(
-          "Nothing was heard in that recording. The audio is saved — type what you meant instead.",
+          recording
+            ? "Nothing was heard in that recording. The audio is saved — type what you meant instead."
+            : "Nothing was heard. Type what you meant instead.",
         );
         /* No words came back from the live recogniser: either this browser has none (Firefox), or it
            failed. Offer the private, on-device reader over the same recording — the one thing the Web
            Speech API cannot do. Shown only now, so the primary path stays the default and this reads
            as a second chance rather than a competing button. */
-        setVoiceLocalSttVisible(true);
+        if (recording) setVoiceLocalSttVisible(true);
+        else setVoiceLocalSttVisible(false);
       } else {
         setVoiceLocalSttVisible(false);
+        // The waiting state replaced whatever the last result showed; put the words back.
+        setVoiceLiveTranscript(`Heard: “${heard}”`);
       }
     };
-    if (voiceTranscriptionSettled) finish();
+    /* A live recogniser ends on its own once it has flushed its last words, and that end
+       finishes the capture. But when there is no recogniser instance to end — Firefox, a
+       denied permission, the gap between respawns — waiting can only ever hit the backstop,
+       and the tap appears frozen for three seconds. Finishing immediately is what makes Stop
+       instant in exactly the cases that used to feel broken. */
+    if (!listening || voiceTranscriptionSettled) finish();
     else {
       voiceTranscriptionSettled = true;
       voiceTranscriptionDone = finish;
+      setVoiceRecordState("stopping");
+      setVoiceLiveTranscript("Finishing — catching the last words…");
+      try {
+        // Ask the recogniser to wrap up now: the browser flushes its pending final results
+        // (which arrive through onresult) and then ends — and that end runs finish(). Waiting
+        // for a silence-based natural end instead is what made Stop feel like it lagged.
+        captureRecordRecognition.stop();
+      } catch (error) {
+        // Already ended; the backstop below still runs finish().
+      }
       // Backstop only. onend is what normally fires this; the timer exists for the browser that
       // never delivers it, because a stuck recogniser must not leave the sheet mid-reset.
       voiceTranscriptionStopTimer = setTimeout(finish, 3000);
     }
-    mediaRecorder.stop();
+    if (recording) mediaRecorder.stop();
     return;
   }
   let stream = null;
+  /* The guard goes up before the permission prompt, not after it: two taps during the prompt
+     used to both get past this check and race two recorders over one microphone. */
+  voiceCaptureBusy = true;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    voiceCaptureBusy = true;
     recordedChunks = [];
-    const mimeType =
-      (window.MediaRecorder?.isTypeSupported?.("audio/webm;codecs=opus") && "audio/webm;codecs=opus") ||
-      (window.MediaRecorder?.isTypeSupported?.("audio/webm") && "audio/webm") ||
-      (window.MediaRecorder?.isTypeSupported?.("audio/mp4") && "audio/mp4") ||
-      "";
-    const ext = mimeType.includes("mp4") ? "m4a" : "webm";
-    mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size) recordedChunks.push(e.data);
-    };
-    mediaRecorder.onstop = () => {
-      const type = mimeType || "audio/webm";
-      const blob = new Blob(recordedChunks, { type });
-      pendingBlob = blob;
-      pendingBlobExt = ext;
-      document.getElementById("voicePreview").src = URL.createObjectURL(blob);
-      document.getElementById("voicePreview").style.display = "block";
-      clearInterval(recordingInterval);
-      document.getElementById("voiceTimer").textContent = "";
-      setVoiceRecordLabel("Capture again", "mic");
-      stream.getTracks().forEach((t) => t.stop());
-    };
-    // Listen for the words over the same moment as the audio, not after it.
+    /* Words before audio. The recogniser reads the live microphone on its own, so it starts
+       the moment permission exists — a recorder that later fails to construct (some browsers
+       expose getUserMedia but not MediaRecorder) then costs the audio attachment, not the
+       capture. */
     startVoiceTranscription();
-    mediaRecorder.start(500);
+    try {
+      const mimeType =
+        (window.MediaRecorder?.isTypeSupported?.("audio/webm;codecs=opus") && "audio/webm;codecs=opus") ||
+        (window.MediaRecorder?.isTypeSupported?.("audio/webm") && "audio/webm") ||
+        (window.MediaRecorder?.isTypeSupported?.("audio/mp4") && "audio/mp4") ||
+        "";
+      const ext = mimeType.includes("mp4") ? "m4a" : "webm";
+      mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size) recordedChunks.push(e.data);
+      };
+      mediaRecorder.onstop = () => {
+        const type = mimeType || "audio/webm";
+        const blob = new Blob(recordedChunks, { type });
+        pendingBlob = blob;
+        pendingBlobExt = ext;
+        document.getElementById("voicePreview").src = URL.createObjectURL(blob);
+        document.getElementById("voicePreview").style.display = "block";
+        clearInterval(recordingInterval);
+        document.getElementById("voiceTimer").textContent = "";
+        setVoiceRecordLabel("Capture again", "mic");
+        stream.getTracks().forEach((t) => t.stop());
+      };
+      mediaRecorder.start(500);
+      recordingSeconds = 0;
+      recordingInterval = setInterval(() => {
+        recordingSeconds++;
+        document.getElementById("voiceTimer").textContent =
+          `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
+      }, 1000);
+    } catch (recordError) {
+      // getUserMedia succeeded, so the microphone itself works: what failed is recording from
+      // it. The words are already flowing, so the message must not claim the microphone is
+      // blocked or leave the person thinking nothing is happening.
+      mediaRecorder = null;
+      setVoiceLiveTranscript("This browser cannot save the audio — your words are still being captured.");
+    }
     // A fresh recording clears the previous one's private-reader offer; it is reshown only if this
     // recording also comes back with no words.
     setVoiceLocalSttVisible(false);
-    recordingSeconds = 0;
+    setVoiceRecordState("recording");
     setVoiceRecordLabel("Stop capture", "square");
-    recordingInterval = setInterval(() => {
-      recordingSeconds++;
-      document.getElementById("voiceTimer").textContent =
-        `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
-    }, 1000);
   } catch (e) {
     stopVoiceTranscription();
     if (stream) stream.getTracks().forEach((track) => track.stop());
     if (!mediaRecorder || mediaRecorder.state !== "recording") mediaRecorder = null;
+    setVoiceRecordState("idle");
     await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
   } finally {
     voiceCaptureBusy = false;
@@ -1933,6 +2001,7 @@ function openCapture() {
   /* Single one-click entry point: language is picked first (above), then this one button
      records + transcribes automatically into the capture pipeline. */
   setVoiceRecordLabel("Capture voice", "mic");
+  setVoiceRecordState("idle");
   /* The caret lands in the box, as it always has — a sheet you open and cannot type into is a sheet
      you have to tap before you can use. enterDialog keeps that behaviour and adds what was missing:
      Tab stays inside the sheet, and closing it hands focus back to whatever opened it. */
