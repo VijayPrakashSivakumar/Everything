@@ -48,7 +48,7 @@ function ticketBusy(busy) {
   label.textContent = busy ? 'Sending…' : 'Send to dev team';
 }
 
-async function ticketFetch(method, body) {
+async function createTicketSupabase(method, body) {
   const res = await fetch('/api/ticket', {
     method,
     headers: { 'Content-Type': 'application/json' },
@@ -152,7 +152,7 @@ async function loadTickets() {
   if (ticketState.loading) return;
   ticketState.loading = true;
   renderTicketList();
-  const { data, error } = await ticketFetch('GET');
+  const { data, error } = await fetchTicketsSupabase();
   ticketState.loading = false;
   ticketState.loaded = true;
   if (error) {
@@ -194,7 +194,7 @@ async function submitTicket(e) {
   ticketBusy(true);
   ticketMessage('Sending to the dev team…');
 
-  const { error } = await ticketFetch('POST', {
+  const { error } = await createTicketSupabase('POST', {
     title: titleText,
     description: bodyText,
     category: category ? category.value : 'question',
@@ -216,7 +216,7 @@ async function submitTicket(e) {
 }
 
 async function advanceTicket(id, next) {
-  const { error } = await ticketFetch('PATCH', { id, status: next });
+  const { error } = await createTicketSupabase('PATCH', { id, status: next });
   if (error) {
     ticketMessage(error, 'error');
     return;
@@ -267,4 +267,28 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initSupport);
 } else {
   initSupport();
+}
+// ── NEW: Supabase direct (no Vercel function needed) ──
+async function fetchTicketsSupabase() {
+  const { data, error } = await window.supabase.from('tickets').select('*').order('created_at', { ascending: false });
+  if (error) console.error('Supabase tickets error:', error);
+  return data;
+}
+
+async function createTicketSupabase(title, description, category, priority) {
+  const { data, error } = await window.supabase.from('tickets').insert({
+    title,
+    description,
+    category,
+    priority,
+    status: 'open',
+  }).select().single();
+  if (error) {
+    ticketMessage(error.message, 'error');
+    return null;
+  }
+  await fetchTicketsSupabase();
+  ticketMessage('Sent. The dev team has your ticket and will keep you posted here.', 'ok');
+  document.getElementById('ticketForm').reset();
+  return data;
 }

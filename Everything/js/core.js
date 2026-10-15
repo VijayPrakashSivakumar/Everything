@@ -1,4 +1,14 @@
-﻿const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
+﻿// Initialize Supabase client for the browser
+const supabaseUrl = 'https://mjvirhlrhkijhklltykr.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1qdmlyaGxyaGtpamhrbGx0eWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNDI4MTYsImV4cCI6MjEwNzYxODgxNn0.TrvcGlNeml193lkcF_Gg4VF1nHrJeNib3FW3gEsFhiM';
+
+window.supabase = supabase.createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
+const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
 const SUPABASE_KEY = "sb_publishable_jMzHLX9CER8VD5N7UPY89Q_4qh5fwjs";
 
 // This browser-facing key is the public publishable key; row-level security enforces access. Never put a secret/service-role key here.
