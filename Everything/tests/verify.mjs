@@ -54,6 +54,21 @@ for (const rel of appScripts) {
   if (!existsSync(path.join(appDir, rel))) note(`SHELL Everything/${rel} is loaded but missing.`);
 }
 
+function javascriptFilesUnder(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return entry.name === 'node_modules' ? [] : javascriptFilesUnder(fullPath);
+    }
+    return entry.isFile() && entry.name.endsWith('.js') ? [fullPath] : [];
+  });
+}
+
+const apiFiles = javascriptFilesUnder(path.join(appDir, 'api'));
+if (apiFiles.length > 12) {
+  note(`FUNCTION Everything/api has ${apiFiles.length} JavaScript files; the Vercel Hobby limit is 12.`);
+}
+
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
   if (result.status !== 0) {
@@ -112,14 +127,19 @@ const vendorScripts = [...htmlSource.matchAll(/<script src="(https:\/\/[^"]+)"><
 
 for (const url of vendorScripts) {
   let host = '';
-  try { host = new URL(url).hostname; } catch { /* not a URL at all; reported below */ }
+  let pathname = '';
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname;
+    pathname = parsed.pathname;
+  } catch { /* not a URL at all; reported below */ }
   if (!VENDOR_HOSTS.includes(host)) continue;
 
   // Version is the segment after the LAST @, because a scoped package name starts with one itself:
   // `@supabase/supabase-js@2.117.2` carries an @ that is not a version. Reading the first @ makes the
   // scope look like the package and the real version look exact by accident.
-  const spec = url.match(/\/npm\/(.+)@([^/@]+)|@([^/@]+)\/dist\//);
-  const version = spec ? (spec[2] || spec[3]) : '';
+  const packageSegment = pathname.split('/').reverse().find((segment) => segment.includes('@')) || '';
+  const version = packageSegment.slice(packageSegment.lastIndexOf('@') + 1);
   if (!version) {
     note(`CDN    ${url}\n       could not read a version out of this CDN URL; state it explicitly.`);
   } else if (FLOATING_VERSION.test(version)) {

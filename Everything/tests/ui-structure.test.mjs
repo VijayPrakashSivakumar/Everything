@@ -41,6 +41,18 @@ function check(name, fn) {
   return promise;
 }
 
+check('support tickets use the authenticated Supabase client without an API function', () => {
+  const support = fs.readFileSync(path.join(root, 'js/support.js'), 'utf8');
+  assert.match(support, /sb\.from\('tickets'\)\.insert/, 'tickets are not inserted through the app Supabase client');
+  assert.match(support, /user_id:\s*sbUser/, 'ticket ownership is not attached to the signed-in user');
+  assert.match(support, /\.eq\('user_id',\s*sbUser\)/, 'ticket reads and updates are not scoped to the signed-in user');
+  assert.doesNotMatch(support, /\/api\/ticket/, 'support still depends on the Vercel ticket function');
+  assert.equal((support.match(/async function createTicketSupabase/g) || []).length, 1,
+    'there must be exactly one ticket write implementation');
+  assert.equal(fs.existsSync(path.join(root, 'api/ticket.js')), false,
+    'the removed Vercel ticket function is still present');
+});
+
 check('the header search box is a real, focusable input', () => {
   assert.match(html, /id="searchInput"/, 'searchInput missing');
   assert.match(html, /id="searchInput"[\s\S]{0,400}?onfocus="openSearch\(\)"/, 'searchInput is not focus-wired');

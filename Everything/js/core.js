@@ -1,20 +1,10 @@
-﻿// Initialize Supabase client for the browser
-const supabaseUrl = 'https://mjvirhlrhkijhklltykr.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1qdmlyaGxyaGtpamhrbGx0eWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNDI4MTYsImV4cCI6MjEwNzYxODgxNn0.TrvcGlNeml193lkcF_Gg4VF1nHrJeNib3FW3gEsFhiM';
-
-window.supabase = supabase.createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
-});
-const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
+﻿const SUPABASE_URL = "https://fyikavzqkezjykvxhqnz.supabase.co"; // e.g. https://xxxx.supabase.co
 const SUPABASE_KEY = "sb_publishable_jMzHLX9CER8VD5N7UPY89Q_4qh5fwjs";
 
 // This browser-facing key is the public publishable key; row-level security enforces access. Never put a secret/service-role key here.
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-10-02.4";
+const APP_BUILD = "2026-10-15.1";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a

@@ -48,16 +48,95 @@ function ticketBusy(busy) {
   label.textContent = busy ? 'Sending…' : 'Send to dev team';
 }
 
+const TICKET_CATEGORIES = new Set(['bug', 'feature', 'question', 'other']);
+const TICKET_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+const TICKET_STATUS_ORDER = { open: 1, in_progress: 2, resolved: 3 };
+
+function ticketDbError(error, fallback) {
+  console.error('Support ticket request failed:', error);
+  return error && error.message ? error.message : fallback;
+}
+
+async function fetchTicketsSupabase() {
+  if (!sb) return { data: null, error: 'Support is unavailable because the database client did not load. Refresh and try again.' };
+  if (!sbUser) return { data: null, error: 'Sign in to view your support tickets.' };
+
+  try {
+    const { data, error } = await sb
+      .from('tickets')
+      .select('*')
+      .eq('user_id', sbUser)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) return { data: null, error: ticketDbError(error, 'Could not load your tickets.') };
+    return { data: { tickets: data || [] }, error: null };
+  } catch (error) {
+    return { data: null, error: ticketDbError(error, 'Could not connect to support. Check your connection and try again.') };
+  }
+}
+
 async function createTicketSupabase(method, body) {
-  const res = await fetch('/api/ticket', {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  let data = null;
-  try { data = await res.json(); } catch (e) { data = null; }
-  if (!res.ok) return { error: (data && data.error) || 'The server could not handle that.' };
-  return { data };
+  if (!sb) return { error: 'Support is unavailable because the database client did not load. Refresh and try again.' };
+  if (!sbUser) return { error: 'Sign in to create or update a support ticket.' };
+  const input = body && typeof body === 'object' ? body : {};
+
+  try {
+    if (method === 'POST') {
+      const title = String(input.title || '').trim();
+      const description = String(input.description || '').trim();
+      const category = String(input.category || 'question').trim().toLowerCase();
+      const priority = String(input.priority || 'normal').trim().toLowerCase();
+      if (!title) return { error: 'Enter a short title for your ticket.' };
+      if (!description) return { error: 'Describe what happened so the team can help.' };
+      if (!TICKET_CATEGORIES.has(category)) return { error: 'Choose a category that best describes the issue.' };
+      if (!TICKET_PRIORITIES.has(priority)) return { error: 'Choose a priority level.' };
+
+      const { data, error } = await sb.from('tickets').insert({
+        user_id: sbUser,
+        title,
+        description,
+        category,
+        priority,
+        status: 'open',
+      }).select().maybeSingle();
+      if (error) return { error: ticketDbError(error, 'Could not save your ticket.') };
+      if (!data) return { error: 'Could not save your ticket because no ticket was returned.' };
+      return { data: { ticket: data }, error: null };
+    }
+
+    if (method === 'PATCH') {
+      const id = String(input.id || '').trim();
+      const status = String(input.status || '').trim().toLowerCase();
+      if (!id) return { error: 'Ticket id is required.' };
+      if (!Object.hasOwn(TICKET_STATUS_ORDER, status)) return { error: 'Choose a valid status.' };
+
+      const current = await sb.from('tickets')
+        .select('id, status')
+        .eq('id', id)
+        .eq('user_id', sbUser)
+        .maybeSingle();
+      if (current.error) return { error: ticketDbError(current.error, 'Could not find that ticket.') };
+      if (!current.data) return { error: 'Ticket not found.' };
+      if (!Object.hasOwn(TICKET_STATUS_ORDER, current.data.status) ||
+          TICKET_STATUS_ORDER[status] <= TICKET_STATUS_ORDER[current.data.status]) {
+        return { error: 'You cannot move a ticket backwards.' };
+      }
+
+      const { data, error } = await sb.from('tickets')
+        .update({ status })
+        .eq('id', id)
+        .eq('user_id', sbUser)
+        .select()
+        .maybeSingle();
+      if (error) return { error: ticketDbError(error, 'Could not update the ticket.') };
+      if (!data) return { error: 'The ticket could not be updated because it no longer exists.' };
+      return { data: { ticket: data }, error: null };
+    }
+
+    return { error: 'Unsupported ticket operation.' };
+  } catch (error) {
+    return { error: ticketDbError(error, 'Could not connect to support. Check your connection and try again.') };
+  }
 }
 
 function ticketRelativeTime(iso) {
@@ -267,28 +346,4 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initSupport);
 } else {
   initSupport();
-}
-// ── NEW: Supabase direct (no Vercel function needed) ──
-async function fetchTicketsSupabase() {
-  const { data, error } = await window.supabase.from('tickets').select('*').order('created_at', { ascending: false });
-  if (error) console.error('Supabase tickets error:', error);
-  return data;
-}
-
-async function createTicketSupabase(title, description, category, priority) {
-  const { data, error } = await window.supabase.from('tickets').insert({
-    title,
-    description,
-    category,
-    priority,
-    status: 'open',
-  }).select().single();
-  if (error) {
-    ticketMessage(error.message, 'error');
-    return null;
-  }
-  await fetchTicketsSupabase();
-  ticketMessage('Sent. The dev team has your ticket and will keep you posted here.', 'ok');
-  document.getElementById('ticketForm').reset();
-  return data;
 }

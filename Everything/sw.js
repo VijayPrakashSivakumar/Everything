@@ -1,13 +1,14 @@
 s// Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
 // phones keep serving the previous cached version and the new UI appears not to work.
-/* v51 — every asset below this line changed while the name was still v50.
+/* v52 — Support now uses the shared authenticated Supabase client directly, and the tour and Support
+   scripts must be cached with the same shell as the markup that uses them.
 
    This is the deployment trap in this app: index.html is fetched network-first, so new markup
    arrives, while style.css and the js modules are served stale-while-revalidate from the shell
    cache. Bump this whenever either changes. A mixed build renders - the element is there and the
    rule that styles it is not - which is far harder to spot than an old build, because part of it is
    visibly current. */
-const CACHE_NAME = 'everything-shell-v51';
+const CACHE_NAME = 'everything-shell-v52';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed
@@ -24,10 +25,9 @@ const SHELL_FILES = [
   './',
   './index.html',
   './style.css',
-  // The app logic is fifteen files in a fixed load order. All fifteen are shell: they are the app.
-  // A list written by hand here would be a second copy of the order in index.html, and the two
-  // would drift — leaving a part uncached, which looks like a random offline failure rather than a
-  // cache miss. ui-structure.test.mjs derives this list from index.html and fails if they disagree.
+  // The app scripts form a fixed load order. Each one is part of the shell, and a script missing
+  // from this list can leave an offline page with markup whose handlers never loaded.
+  // ui-structure.test.mjs derives this list from index.html and fails if they disagree.
   './js/core.js',
   './js/model.js',
   './js/render.js',
@@ -43,6 +43,8 @@ const SHELL_FILES = [
   './js/utils.js',
   './js/reminders.js',
   './js/init.js',
+  './js/demo.js',
+  './js/support.js',
   './manifest.json',
   './icon.svg'
 ];
