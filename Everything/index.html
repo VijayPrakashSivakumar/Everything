@@ -665,6 +665,7 @@
             >
               <i data-lucide="sun-moon" aria-hidden="true"></i>
             </button>
+
             <div class="topbar-menu-wrap">
               <button
                 class="icon-btn"
@@ -757,6 +758,17 @@
                 >
                   Install app
                 </div>
+<div
+  onclick="supportOpen();"
+  style="
+    padding: 10px 14px;
+    font-size: 13.5px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  "
+>
+  Help &amp; demo
+</div>
                 <div
                   onclick="confirmSignOut()"
                   style="
@@ -3422,6 +3434,8 @@
     <script src="js/utils.js"></script>
     <script src="js/reminders.js"></script>
     <script src="js/init.js"></script>
+    <script src="js/demo.js"></script>
+    <script src="js/support.js"></script>
   <!-- Confirm dialog. The app used to call the browser's own confirm() in seven places, which rendered
          as flat grey chrome in the middle of a considered interface. It also blocked the thread, so it
          could not be styled, focused or animated at all.
@@ -3456,5 +3470,171 @@
       </div>
     </div>
 
+
+  <!-- Onboarding demo deck: shown on first login and anytime via Help. -->
+  <div
+    id="demoOverlay"
+    class="demo-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Quick tour of Everything"
+    hidden
+  >
+    <div class="demo-backdrop" data-demo-close></div>
+    <div class="demo-card" role="document">
+      <div class="demo-head">
+        <span class="demo-title">Quick tour</span>
+        <span class="demo-status" id="demoStatus">1 / 5</span>
+        <button class="demo-close" id="demoCloseTop" aria-label="Close tour" type="button">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
+
+      <div class="demo-slides" id="demoSlides">
+        <div class="demo-slide" data-demo-index="1" data-demo-label="Welcome">
+          <div class="demo-icon"><i data-lucide="sparkles" aria-hidden="true"></i></div>
+          <h2>Welcome to Everything</h2>
+          <p class="demo-eyebrow">One app for everything you capture</p>
+          <ul class="demo-list">
+            <li>Type a task, event, note or idea in one sentence.</li>
+            <li>It saves it, or asks what you meant.</li>
+            <li>Everything stays in your account, ready when you return.</li>
+          </ul>
+          <p class="demo-hint">Your first capture is the point — just type it.</p>
+        </div>
+
+        <div class="demo-slide" data-demo-index="2" data-demo-label="Inbox & capture">
+          <div class="demo-icon"><i data-lucide="inbox" aria-hidden="true"></i></div>
+          <h2>Inbox &amp; capture</h2>
+          <p class="demo-eyebrow">Capture first, tidy later</p>
+          <ul class="demo-list">
+            <li>The Inbox is where captured things land.</li>
+            <li>A tap turns a capture into a task, event or note.</li>
+            <li>Don't worry about being tidy at first — just capture.</li>
+          </ul>
+        </div>
+
+        <div class="demo-slide" data-demo-index="3" data-demo-label="Tasks & schedule">
+          <div class="demo-icon"><i data-lucide="calendar-days" aria-hidden="true"></i></div>
+          <h2>Tasks &amp; schedule</h2>
+          <p class="demo-eyebrow">What's due, and what's next</p>
+          <ul class="demo-list">
+            <li>Tasks live in your workflow: planned, today, in progress, waiting, done.</li>
+            <li>The schedule shows what's due today and what's coming up.</li>
+            <li>Drag an event to a new time to reschedule it in one move.</li>
+          </ul>
+        </div>
+
+        <div class="demo-slide" data-demo-index="4" data-demo-label="Notes, people & Ask">
+          <div class="demo-icon"><i data-lucide="brain" aria-hidden="true"></i></div>
+          <h2>Notes, people &amp; Ask</h2>
+          <p class="demo-eyebrow">Your memory, in context</p>
+          <ul class="demo-list">
+            <li>Notes and people sit alongside your tasks.</li>
+            <li>Ask finds things across your capture in natural language.</li>
+            <li>Projects and goals keep long-running work on track.</li>
+          </ul>
+        </div>
+
+        <div class="demo-slide" data-demo-index="5" data-demo-label="Review & help">
+          <div class="demo-icon"><i data-lucide="clipboard-check" aria-hidden="true"></i></div>
+          <h2>Review &amp; help</h2>
+          <p class="demo-eyebrow">Stay on top of it all</p>
+          <ul class="demo-list">
+            <li>Review clears the decks: overdue, waiting and next week.</li>
+            <li>Use Help &amp; demo anytime to re-run this tour.</li>
+            <li>Can't find something? Support reaches the dev team.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="demo-foot">
+        <div class="demo-dots"><span class="demo-dots-track"></span></div>
+        <div class="demo-ctrls">
+          <button class="btn ghost" id="demoPrev" disabled type="button">
+            <i data-lucide="chevron-left" aria-hidden="true"></i>
+            <span>Previous</span>
+          </button>
+          <span class="demo-ctrls-sep"></span>
+          <span class="demo-ctrls-label" id="demoLabel">Welcome</span>
+          <span class="demo-ctrls-sep"></span>
+          <button class="btn" id="demoNext" type="button">
+            <span>Next</span><i data-lucide="chevron-right" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="demo-bottom">
+          <button class="btn" id="demoDone" type="button">
+            <i data-lucide="check" aria-hidden="true"></i>
+            <span>Got it — back to app</span>
+          </button>
+          <span class="demo-bottom-sep"></span>
+          <button class="btn ghost" id="demoSkip" type="button">
+            <i data-lucide="skip-next" aria-hidden="true"></i>
+            <span>Skip for now</span>
+          </button>
+          <span class="demo-bottom-sep"></span>
+          <button class="btn ghost" id="demoRevisit" type="button">
+            <i data-lucide="life-ring" aria-hidden="true"></i>
+            <span>Revisit tour</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Support view. -->
+  <div class="view" id="view-support">
+    <div class="cards">
+      <div class="card">
+        <h1 class="page-title">Support</h1>
+        <p class="page-sub">Report an issue and the dev team gets a ticket. Track it here.</p>
+
+        <div class="form-card">
+          <h2 class="card-title">Report a problem</h2>
+          <form id="ticketForm" novalidate>
+            <div class="field-row">
+              <label class="field-label" for="ticketTitle">Title</label>
+              <input class="capture-input" id="ticketTitle" placeholder="A short description, e.g. Calendar drag stop working" required type="text" autocomplete="off" />
+            </div>
+            <div class="field-row">
+              <label class="field-label" for="ticketCategory">Category</label>
+              <select class="capture-input" id="ticketCategory">
+                <option value="bug">Bug</option>
+                <option value="feature">Feature</option>
+                <option value="question" selected>Question</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label class="field-label" for="ticketPriority">Priority</label>
+              <select class="capture-input" id="ticketPriority">
+                <option value="low">Low</option>
+                <option value="normal" selected>Normal</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label class="field-label" for="ticketBody">What happened</label>
+              <textarea class="capture-input" id="ticketBody" rows="4" placeholder="Steps, what you expected, what actually happened…" required></textarea>
+            </div>
+            <p id="ticketMessage" class="field-hint" role="status"></p>
+            <button class="btn primary" id="ticketSubmit" type="submit">
+              <i data-lucide="life-ring" aria-hidden="true"></i>
+              <span id="ticketSubmitLabel">Send to dev team</span>
+            </button>
+          </form>
+        </div>
+
+        <div class="divider"></div>
+
+        <h2 class="card-title">Your tickets</h2>
+        <p id="ticketEmpty" class="page-sub">No tickets yet.</p>
+        <div id="ticketList"></div>
+      </div>
+    </div>
+  </div>
+
+</body>
   </body>
 </html>

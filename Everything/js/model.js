@@ -13,6 +13,8 @@ const NAV = [
   { id: "review", icon: "clipboard-check", label: "Review" },
   { id: "reports", icon: "chart-no-axes-combined", label: "Reports" },
   { id: "insights", icon: "sparkles", label: "Insights" },
+  { id: "support", icon: "headset", label: "Support" },
+  { id: "help", icon: "life-ring", label: "Help & demo" },
   { id: "logout", icon: "log-out", label: "Logout", divider: true },
 ];
 

@@ -36,6 +36,10 @@ let activeView = "today";
    while still letting the nav and the back gesture agree about where you are. */
 function switchView(id, options = {}) {
   const mode = options.history === "push" ? "push" : "replace";
+  if (id === "demo" || id === "help") {
+    if (typeof demoToggle === "function") demoToggle();
+    return;
+  }
   if (!document.getElementById("view-" + id)) return;
   const changed = activeView !== id;
   if (changed && mode === "push") navPushView(id);
@@ -58,6 +62,7 @@ function switchView(id, options = {}) {
   if (id === "money") renderMoney();
   if (id === "people") renderPeople();
   if (id === "insights") renderInsights();
+  if (id === "support") renderSupport();
   if (id === "settings") renderSettings();
 
   // Keep the current entry truthful even when no new one was added, so a back press arriving

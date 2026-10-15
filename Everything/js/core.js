@@ -2152,6 +2152,9 @@ function handleAuthStateChange(event, session) {
   if (session) {
     authScreen.style.display = "none";
     currentUserEmail = session.user.email || "";
+if (!window.demoIsSeen() && typeof window.__showOnboardingDeck === "function") {
+  window.__showOnboardingDeck();
+}
     switchView("today");
     if (syncedUserId !== session.user.id) {
       syncedUserId = session.user.id;
