@@ -5995,16 +5995,22 @@ body.overlay-open .content {
     grid-column: auto !important;
     grid-template-columns: minmax(0, 1fr) !important;
     gap: 14px;
+  }
+}
 
 /* ---------- Onboarding demo deck ---------- */
 .demo-overlay {
   position: fixed;
   inset: 0;
-  padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
   background: rgba(0, 0, 0, 0.45);
   display: none;
   align-items: flex-end;
-  justify-content: flex-end;
+  justify-content: center;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -6015,17 +6021,16 @@ body.overlay-open .content {
   display: flex;
 }
 
-@media (min-width: 641px) {
+@media (min-width: 640px) {
   .demo-overlay {
     align-items: center;
-    justify-content: center;
   }
 }
 
 .demo-card {
   width: min(560px, 100%);
-  max-height: calc(100dvh - 48px);
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--card);
@@ -6196,6 +6201,36 @@ body.overlay-open .content {
   background: var(--border);
 }
 
+@media (max-width: 600px) {
+  .demo-ctrls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .demo-ctrls-sep,
+  .demo-ctrls-label {
+    display: none;
+  }
+
+  .demo-ctrls .btn {
+    width: 100%;
+  }
+
+  .demo-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .demo-bottom-sep {
+    display: none;
+  }
+
+  .demo-bottom .btn {
+    width: 100%;
+  }
+}
+
 /* ---------- Support tickets ---------- */
 .badge.normal {
   background: var(--border);
@@ -6305,7 +6340,38 @@ body.overlay-open .content {
   flex: 0 0 auto;
 }
 
+#ticketForm .field-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 150px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+#ticketForm .field-row > :last-child {
+  min-width: 0;
+  text-align: left;
+}
+
+#ticketForm .field-row .capture-input {
+  width: 100%;
+}
+
+#ticketSubmit {
+  margin-top: 8px;
+}
+
+@media (max-width: 600px) {
+  #ticketForm .field-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
   }
+
+  #ticketSubmit {
+    width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
 
   .settings-aside .hero-card {
     margin-bottom: 0;

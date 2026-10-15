@@ -171,6 +171,62 @@ try {
         m.overflowing.map((o) => o.sel + ' right=' + o.right + ' w=' + o.width).join('\n        '));
     }
   }
+  for (const { w, h, label } of WIDTHS) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => window.__showOnboardingDeck());
+    const demo = await page.evaluate(() => {
+      const overlay = document.getElementById('demoOverlay');
+      const card = overlay.querySelector('.demo-card');
+      const r = card.getBoundingClientRect();
+      const buttons = [...overlay.querySelectorAll('.demo-foot .btn')]
+        .filter((button) => button.getClientRects().length)
+        .map((button) => button.getBoundingClientRect());
+      return {
+        position: getComputedStyle(overlay).position,
+        overlay: overlay.getBoundingClientRect(),
+        card: r,
+        cardScrolls: card.scrollHeight > card.clientHeight,
+        controlsFit: buttons.every((button) =>
+          button.left >= r.left - 1 && button.right <= r.right + 1),
+      };
+    });
+    const dialogFits = demo.position === 'fixed' &&
+      demo.overlay.left >= -1 && demo.overlay.top >= -1 &&
+      demo.overlay.right <= w + 1 && demo.overlay.bottom <= h + 1 &&
+      demo.card.left >= -1 && demo.card.top >= -1 &&
+      demo.card.right <= w + 1 && demo.card.bottom <= h + 1;
+    record(dialogFits, `${w}px ${label}: demo stays within the viewport`,
+      `position=${demo.position} card=${Math.round(demo.card.left)},${Math.round(demo.card.top)} ` +
+      `${Math.round(demo.card.width)}x${Math.round(demo.card.height)} scrolls=${demo.cardScrolls}`);
+    record(demo.controlsFit, `${w}px ${label}: demo controls fit inside the card`);
+    await page.evaluate(() => window.demoSkip());
+
+    const support = await page.evaluate(() => {
+      document.querySelectorAll('.view.active').forEach((view) => view.classList.remove('active'));
+      document.getElementById('view-support').classList.add('active');
+      const form = document.getElementById('ticketForm');
+      const formRect = form.getBoundingClientRect();
+      const fields = [...form.querySelectorAll('.field-row')].map((row) => {
+        const label = row.querySelector('label').getBoundingClientRect();
+        const input = row.querySelector('input, select, textarea').getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const overlaps = label.left < input.right && label.right > input.left &&
+          label.top < input.bottom && label.bottom > input.top;
+        return {
+          withinRow: label.left >= rowRect.left - 1 && input.left >= rowRect.left - 1 &&
+            label.right <= rowRect.right + 1 && input.right <= rowRect.right + 1,
+          separated: !overlaps,
+        };
+      });
+      const submit = document.getElementById('ticketSubmit').getBoundingClientRect();
+      return {
+        fieldsFit: fields.every((field) => field.withinRow && field.separated),
+        submitFits: submit.left >= formRect.left - 1 && submit.right <= formRect.right + 1,
+      };
+    });
+    record(support.fieldsFit, `${w}px ${label}: support labels and fields do not overlap`);
+    record(support.submitFits, `${w}px ${label}: support submit button fits the form`);
+  }
 /* The month grid, measured on its own. Recorded as checks rather than printed, so a month grid that
      stops scrolling fails this suite instead of being noticed by hand on a phone. */
   for (const { w, label } of WIDTHS) {
