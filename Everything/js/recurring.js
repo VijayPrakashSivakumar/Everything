@@ -672,7 +672,13 @@ function renderDocuments() {
     // Within a bucket, soonest expiry first, and then newest first — the two orders a person
     // actually wants, and the tie-break has to be stable or rows would shuffle on every render.
     items.sort((a, b) => {
-      const byExpiry = String(a.expiresOn || "9999").localeCompare(String(b.expiresOn || "9999"));
+      const aDays = daysUntil(a.expiresOn);
+      const bDays = daysUntil(b.expiresOn);
+      // Items with no readable expiry sort last within their bucket.
+      if (aDays === null && bDays === null) return (b.created || 0) - (a.created || 0);
+      if (aDays === null) return 1;
+      if (bDays === null) return -1;
+      const byExpiry = aDays - bDays;
       if (byExpiry) return byExpiry;
       return (b.created || 0) - (a.created || 0);
     });
