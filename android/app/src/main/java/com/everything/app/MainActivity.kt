@@ -18,6 +18,7 @@ import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.everything.app.BuildConfig
 
 /**
  * Single-Activity native wrapper around the unchanged web app.
@@ -28,7 +29,12 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        const val PROD_URL = "https://everything-app-zeta.vercel.app/"
+        /* The app lives at the deployed URL; the wrapper only frames it. The URL is injected by
+           Gradle (BuildConfig.APP_URL, set from the APP_URL gradle property) so it can be changed
+           from one place — gradle.properties, -Papp.url=… or deploy.ps1 -Url — without editing this
+           file. A trailing slash is normalised once here because the host comparison below and the
+           deep-link handling both depend on it. */
+        val PROD_URL: String = BuildConfig.APP_URL.trimEnd('/') + "/"
         private const val FALLBACK_DISMISS_MS = 4000L
     }
 
@@ -130,13 +136,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        onBackPressedDispatcher.addCallback(this) {
-            if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
-            else {
-                remove()
-                onBackPressedDispatcher.onBackPressed()
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
+                else {
+                    remove()
+                    onBackPressedDispatcher.onBackPressed()
+                }
             }
-        }
+        })
 
         Handler(Looper.getMainLooper()).postDelayed(
             { webReady = true },

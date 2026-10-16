@@ -26,4 +26,14 @@ android/app/build/
 android/local.properties
 *.apk
 *.aab
+# Signing material. deploy.ps1 generates a stable debug keystore locally so every
+# build is update-compatible; it must never be committed (a leaked keystore lets
+# anyone sign as the app). keystore.properties points a real release build at a
+# real release keystore and holds its passwords.
+android/keystore.properties
+android/app/debug.keystore
+android/app/release.keystore
+android/app/*.jks
+android/app/*.keystore
+
 

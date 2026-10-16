@@ -10,7 +10,11 @@
     <application
         android:label="Everything"
         android:hardwareAccelerated="true"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules">
+
 
         <activity
             android:name=".MainActivity"

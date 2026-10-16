@@ -1,37 +1,97 @@
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id "com.android.application"
+}
+
+/* Loads android/keystore.properties when a real release keystore exists.
+   Absent is normal and is not an error: the build then falls back to the stable
+   debug keystore below, which is what keeps sideloaded updates installable. */
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new java.util.Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { is -> keystoreProperties.load(is) }
+}
+
+/* One version, one source. android/version.properties is read here so Gradle,
+   Android Studio and deploy.ps1 can never disagree â€” a mismatch is exactly how
+   a "new" APK ends up carrying the old versionCode and Android treats the
+   install as a no-op or a downgrade. */
+def versionProps = new java.util.Properties()
+def f = rootProject.file("version.properties")
+if (f.exists()) {
+    f.withInputStream { is -> versionProps.load(is) }
+}
+def versionProp = { String key, String fallback ->
+    (System.getProperty(key)
+        ?: System.getenv(key)
+        ?: versionProps.getProperty(key)
+        ?: fallback).trim()
 }
 
 android {
     namespace = "com.everything.app"
-    compileSdk = 34
+    compileSdk = 35
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     defaultConfig {
         applicationId = "com.everything.app"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 35
+        versionCode = versionProp("VERSION_CODE", "1").toInteger()
+        versionName = versionProp("VERSION_NAME", "1.0.0")
+
+        /* The URL the wrapper loads. Changed from one place (gradle.properties,
+           -Papp.url=â€¦ or deploy.ps1 -Url) instead of editing Kotlin, so pointing
+           a build at a preview deployment needs no source change and no risk of
+           the two drifting apart. */
+        buildConfigField "String", "APP_URL", "\"${versionProp('APP_URL', 'https://everything-app-zeta.vercel.app/').replaceAll('/$', '')}\""
+    }
+
+    signingConfigs {
+        /* A fixed, locally generated keystore. The point is that every build â€”
+           debug or release â€” is signed with the SAME key, so Android always
+           treats a new APK as an update of the installed one. A per-machine
+           debug key (the default) is the usual reason an "update" is refused
+           with INSTALL_FAILED_UPDATE_INCOMPATIBLE and the only way out becomes
+           an uninstall, which deletes the WebView's login session, settings and
+           any not-yet-synced data. */
+        create("stable") {
+            def props = keystoreProperties
+            def storeFilePath = props.getProperty("storeFile")
+            if (storeFilePath != null) {
+                storeFile = rootProject.file(storeFilePath)
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            } else {
+                storeFile = file("debug.keystore")
+                storePassword = "everything"
+                keyAlias = "everything"
+                keyPassword = "everything"
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            minifyEnabled = false
+            signingConfig = signingConfigs.getByName("stable")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("stable")
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 }
 
 dependencies {
     // AndroidX SplashScreen: the current best-practice splash API.
     // Same call on all API levels; backports the Android 12+ system splash.
-    implementation("androidx.core:core-splashscreen:1.0.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation "androidx.core:core-splashscreen:1.0.1"
+    implementation "androidx.appcompat:appcompat:1.7.0"
 }

@@ -1,0 +1,26 @@
+models:
+  - title: Qwen 2.5 Coder 7B (Local)
+    provider: ollama
+    model: qwen2.5-coder:7b
+  - title: Llama 3.1 8B
+    provider: ollama
+    model: llama3.1:8b
+  - name: Granite Code
+    provider: ollama
+    model: granite-code
+  - name: Llama3.1 Chat
+    provider: ollama
+    model: llama3.1-8b
+  - name: Llama3.1 Chat (1)
+    provider: ollama
+    model: llama3.1-8b
+  - name: Autodetect
+    provider: ollama
+    model: AUTODETECT
+tabAutocompleteModel:
+  title: Qwen2.5-Coder 1.5B
+  provider: ollama
+  model: qwen2.5-coder:1.5b-base
+embeddingsProvider:
+  provider: ollama
+  model: nomic-embed-text:latest

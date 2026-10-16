@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backup rules for Android 12+ (android:dataExtractionRules). Same intent as
+     res/xml/backup_rules.xml, which still covers Android 11 and below — both are
+     declared so a transfer between any two OS versions keeps the session and
+     the not-yet-synced local data. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="." />
+        <include domain="sharedpref" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="." />
+        <include domain="sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

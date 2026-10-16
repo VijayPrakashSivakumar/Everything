@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backup rules for Android 11 and below (android:fullBackupContent).
+     Everything the app holds lives in the WebView's own storage: the Supabase
+     session cookie, the per-account state in localStorage, and the offline sync
+     queue. Nothing here is excluded, so a device-to-device transfer or a cloud
+     backup carries the signed-in session and any data that had not synced yet —
+     the difference between "set the app up again" and "open it and everything
+     is still there". -->
+<full-backup-content>
+    <include domain="file" path="." />
+    <include domain="sharedpref" path="." />
+</full-backup-content>

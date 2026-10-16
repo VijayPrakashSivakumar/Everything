@@ -4,6 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "android:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File android/deploy.ps1",
+    "android:build": "powershell -NoProfile -ExecutionPolicy Bypass -File android/deploy.ps1 -BuildOnly",
+    "android:check": "powershell -NoProfile -ExecutionPolicy Bypass -File android/deploy.ps1 -Check",
     "verify": "node Everything/tests/verify.mjs",
     "test": "node Everything/tests/run-all.mjs",
     "test:plan": "node Everything/tests/plan-probe.mjs",
