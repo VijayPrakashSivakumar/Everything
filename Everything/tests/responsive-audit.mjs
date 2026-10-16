@@ -181,6 +181,17 @@ try {
       const buttons = [...overlay.querySelectorAll('.demo-foot .btn')]
         .filter((button) => button.getClientRects().length)
         .map((button) => button.getBoundingClientRect());
+      const buttonStyles = [...overlay.querySelectorAll('.demo-foot .btn')]
+        .filter((button) => button.getClientRects().length)
+        .map((button) => {
+          const rect = button.getBoundingClientRect();
+          const style = getComputedStyle(button);
+          return {
+            height: Math.round(rect.height),
+            radius: style.borderRadius,
+            borderWidth: style.borderTopWidth,
+          };
+        });
       return {
         position: getComputedStyle(overlay).position,
         overlay: overlay.getBoundingClientRect(),
@@ -188,6 +199,11 @@ try {
         cardScrolls: card.scrollHeight > card.clientHeight,
         controlsFit: buttons.every((button) =>
           button.left >= r.left - 1 && button.right <= r.right + 1),
+        buttonsMatch: buttonStyles.every((button) =>
+          button.height >= 42 &&
+          button.height === buttonStyles[0].height &&
+          button.radius === buttonStyles[0].radius &&
+          button.borderWidth === buttonStyles[0].borderWidth),
       };
     });
     const dialogFits = demo.position === 'fixed' &&
@@ -199,6 +215,7 @@ try {
       `position=${demo.position} card=${Math.round(demo.card.left)},${Math.round(demo.card.top)} ` +
       `${Math.round(demo.card.width)}x${Math.round(demo.card.height)} scrolls=${demo.cardScrolls}`);
     record(demo.controlsFit, `${w}px ${label}: demo controls fit inside the card`);
+    record(demo.buttonsMatch, `${w}px ${label}: demo buttons share a consistent shape and height`);
     await page.locator('#demoNext').click();
     const demoNext = await page.evaluate(() => ({
       label: document.querySelector('#demoNext span')?.textContent,
