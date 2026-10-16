@@ -13,6 +13,7 @@ if (window.claude) {
   };
   if (state.theme)
     document.documentElement.setAttribute("data-theme", state.theme);
+document.documentElement.setAttribute("data-concept", "premium");
 }
 restoreSidebarCollapse();
 syncSidebarMode();

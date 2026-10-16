@@ -5,6 +5,8 @@
         <item name="android:windowBackground">@color/app_bg</item>
         <item name="android:statusBarColor">@color/app_bg</item>
         <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
     <!-- Same windowBackground as the splash: no color pop on handoff. -->
     <style name="Theme.Everything" parent="Theme.AppCompat.NoActionBar">
