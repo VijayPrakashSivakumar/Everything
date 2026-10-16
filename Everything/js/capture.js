@@ -3852,7 +3852,10 @@ function extractLocally(text) {
   // receipt can still be a valid capture even when the calendar date is behind today. Only the
   // generic relative-past wording is rejected here; explicit dates are kept so the picture-choice
   // flow can still ask what to do with the date it actually read.
-  if (captureChannel !== "image" && result.dueDate && new Date(result.dueDate).getTime() < Date.now() - 60000)
+  // Documents are exempt: a driving licence or passport can be expired and still needs its
+  // expiry date preserved so it can be found later by searching "my driving licence expiry".
+  const looksDocumentHere = textLooksLikeDocument(text);
+  if (captureChannel !== "image" && result.dueDate && new Date(result.dueDate).getTime() < Date.now() - 60000 && !looksDocumentHere)
     result.dueDate = "";
 
   // A bare day of the month — "pay the bill on the 5th" — is the commonest way an Indian household
@@ -3947,7 +3950,7 @@ function extractLocally(text) {
   if (result.kind === "bill") result.billType = guessBillType(text) || "bill";
   // A document names its own drawer. Typed or dictated text is also admitted when it reads like a
   // document — a photographed paper keeps its stricter image path, this never overrides it.
-  const looksDocument = textLooksLikeDocument(text);
+  const looksDocument = looksDocumentHere;
   if (result.kind === "bill" && /\b(policy|premium|insurance)\b/i.test(text)) result.kind = "document";
   // Only a sentence with no task or event signal becomes a document: "Car insurance policy" fell
   // through detectType as a memory, while "Send the invoice to Ravi" carries the task verb "send"

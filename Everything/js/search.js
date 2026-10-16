@@ -45,6 +45,13 @@ function searchHaystack(item) {
     item?.recurrence && item.recurrence !== "none" ? item.recurrence : "",
     steps,
     item?.rawText,
+    /* Document fields. A search for "driving licence expiry" or "passport number" must reach
+       the item that carries those facts, not just its title. */
+    item?.docType,
+    item?.issuer,
+    item?.docNumber,
+    item?.issuedOn,
+    item?.expiresOn,
   ]
     .filter(Boolean)
     .join(" ")
@@ -401,6 +408,12 @@ function askContextPayload(items) {
       dueDate: item.dueDate || item.due_date || "",
       done: Boolean(item.done),
       checklist: steps.total ? `${steps.completed}/${steps.total} done` : "",
+      /* Document fields so the model can answer "when does my driving licence expire". */
+      docType: item.docType || "",
+      issuer: item.issuer || "",
+      docNumber: item.docNumber || "",
+      issuedOn: item.issuedOn || "",
+      expiresOn: item.expiresOn || "",
     };
   });
 }
@@ -420,6 +433,12 @@ function buildAskPrompt(q, items, today) {
         item.recurrence ? `repeats: ${item.recurrence}` : "",
         item.checklist ? `checklist: ${item.checklist}` : "",
         item.done ? "completed" : "",
+        /* Document fields so the model can answer expiry questions. */
+        item.docType ? `type: ${item.docType}` : "",
+        item.issuer ? `issuer: ${item.issuer}` : "",
+        item.docNumber ? `number: ${item.docNumber}` : "",
+        item.expiresOn ? `expires: ${item.expiresOn}` : "",
+        item.issuedOn ? `issued: ${item.issuedOn}` : "",
       ].filter(Boolean);
       return `- [${label}] ${bits}${meta.length ? ` (${meta.join(", ")})` : ""}`;
     })
