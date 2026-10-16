@@ -62,12 +62,18 @@ async function fetchTicketsSupabase() {
   if (!sbUser) return { data: null, error: 'Sign in to view your support tickets.' };
 
   try {
-    const { data, error } = await sb
+    let query = sb
       .from('tickets')
       .select('*')
-      .eq('user_id', sbUser)
-      .order('created_at', { ascending: false })
-      .limit(200);
+      .eq('user_id', sbUser);
+    // The deployed schema is mixed (`created` on the older prototype tables, `created_at` on the
+    // later ones), so ordering by a name the table lacks errors out and the tickets silently
+    // disappear. Probe once via the shared resolver, then use what actually exists.
+    const orderColumn = typeof structuredCreatedColumn === 'function'
+      ? await structuredCreatedColumn('tickets')
+      : 'created_at';
+    if (orderColumn) query = query.order(orderColumn, { ascending: false });
+    const { data, error } = await query.limit(200);
     if (error) return { data: null, error: ticketDbError(error, 'Could not load your tickets.') };
     return { data: { tickets: data || [] }, error: null };
   } catch (error) {
