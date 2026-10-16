@@ -381,16 +381,34 @@ function renderTasks(filter) {
 
   tasks.sort((a, b) => {
     if (filter === "archived") return (b.archivedAt || 0) - (a.archivedAt || 0);
+
+    // Overdue tasks surface first in any open-task view.
+    if (filter !== "completed" && filter !== "archived") {
+      const aOverdue = isOverdue(a) ? 0 : 1;
+      const bOverdue = isOverdue(b) ? 0 : 1;
+      if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+    }
+
     if (filter === "priority") {
       const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
       if (priorityDiff) return priorityDiff;
+      const titleDiff = String(a.title || "").localeCompare(String(b.title || ""));
+      if (titleDiff) return titleDiff;
+      return b.created - a.created;
     }
-    if (a.dueDate && b.dueDate)
-      return new Date(a.dueDate) - new Date(b.dueDate);
-    if (a.dueDate) return -1;
-    if (b.dueDate) return 1;
+
+    if (a.dueDate && b.dueDate) {
+      const dueDiff = new Date(a.dueDate) - new Date(b.dueDate);
+      if (dueDiff) return dueDiff;
+    } else if (a.dueDate) return -1;
+    else if (b.dueDate) return 1;
+
     const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
     if (priorityDiff) return priorityDiff;
+
+    const titleDiff = String(a.title || "").localeCompare(String(b.title || ""));
+    if (titleDiff) return titleDiff;
+
     return b.created - a.created;
   });
 

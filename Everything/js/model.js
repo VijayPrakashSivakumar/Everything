@@ -743,6 +743,7 @@ const TASK_STATUS_OPTIONS = [
   { value: "waiting", label: "Waiting" },
   { value: "someday", label: "Someday" },
   { value: "completed", label: "Completed" },
+  { value: "overdue", label: "Overdue" },
 ];
 
 const TASK_STATUS_ALIASES = {
@@ -757,6 +758,8 @@ const TASK_STATUS_ALIASES = {
   complete: "completed",
   done: "completed",
   cancelled: "someday",
+  "past due": "overdue",
+  overdue: "overdue",
 };
 
 function normalizeTaskStatus(value, fallback = "planned") {
@@ -1232,13 +1235,12 @@ function isToday(dueDate) {
   return new Date(dueDate).toDateString() === new Date().toDateString();
 }
 function isOverdue(item) {
-  return (
-    !isArchived(item) &&
-    !!item.dueDate &&
-    !item.done &&
-    new Date(item.dueDate).getTime() < Date.now() &&
-    !isToday(item.dueDate)
-  );
+  if (!item || isArchived(item) || !item.dueDate || item.done) return false;
+  const due = new Date(item.dueDate);
+  due.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return due.getTime() < today.getTime();
 }
 function greetingText() {
   const h = new Date().getHours();
@@ -1454,6 +1456,7 @@ function itemCollectionFor(item) {
 function taskStatusFromItem(item) {
   if (!item || item.kind !== "task") return "inbox";
   if (item.done) return "completed";
+  if (isOverdue(item)) return "overdue";
   const due = item.dueDate || item.due_date;
   const stored = normalizeTaskStatus(item.status);
   // A task marked "today" that is dated for another day is dated for another day.
