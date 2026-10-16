@@ -199,11 +199,20 @@ try {
       `position=${demo.position} card=${Math.round(demo.card.left)},${Math.round(demo.card.top)} ` +
       `${Math.round(demo.card.width)}x${Math.round(demo.card.height)} scrolls=${demo.cardScrolls}`);
     record(demo.controlsFit, `${w}px ${label}: demo controls fit inside the card`);
+    await page.locator('#demoNext').click();
+    const demoNext = await page.evaluate(() => ({
+      label: document.querySelector('#demoNext span')?.textContent,
+      iconRendered: !!document.querySelector('#demoNext svg'),
+      status: document.getElementById('demoStatus').textContent,
+    }));
+    record(demoNext.label === 'Next' && demoNext.iconRendered && demoNext.status === '2 / 5',
+      `${w}px ${label}: demo Next advances without losing its icon`);
     await page.evaluate(() => window.demoSkip());
 
     const support = await page.evaluate(() => {
       document.querySelectorAll('.view.active').forEach((view) => view.classList.remove('active'));
-      document.getElementById('view-support').classList.add('active');
+      const supportView = document.getElementById('view-support');
+      supportView.classList.add('active');
       const form = document.getElementById('ticketForm');
       const formRect = form.getBoundingClientRect();
       const fields = [...form.querySelectorAll('.field-row')].map((row) => {
@@ -220,10 +229,12 @@ try {
       });
       const submit = document.getElementById('ticketSubmit').getBoundingClientRect();
       return {
+        viewInContent: document.querySelector('.content').contains(supportView),
         fieldsFit: fields.every((field) => field.withinRow && field.separated),
         submitFits: submit.left >= formRect.left - 1 && submit.right <= formRect.right + 1,
       };
     });
+    record(support.viewInContent, `${w}px ${label}: support is inside the scrollable app content`);
     record(support.fieldsFit, `${w}px ${label}: support labels and fields do not overlap`);
     record(support.submitFits, `${w}px ${label}: support submit button fits the form`);
   }

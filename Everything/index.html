@@ -2184,6 +2184,66 @@
               </button>
             </div>
           </div>
+        <!-- SUPPORT VIEW -->
+        <div class="view" id="view-support">
+          <div class="cards">
+            <div class="card">
+              <header class="support-hero">
+                <span class="support-hero-icon" aria-hidden="true">
+                  <i data-lucide="headset"></i>
+                </span>
+                <div class="support-hero-copy">
+                  <p class="support-eyebrow">Support center</p>
+                  <h1 class="page-title">Support</h1>
+                  <p class="page-sub">Report an issue and the dev team gets a ticket. Track it here.</p>
+                </div>
+              </header>
+
+              <div class="form-card">
+                <h2 class="card-title">Report a problem</h2>
+                <form id="ticketForm" novalidate>
+                  <div class="field-row">
+                    <label class="field-label" for="ticketTitle">Title</label>
+                    <input class="capture-input" id="ticketTitle" placeholder="A short description, e.g. Calendar drag stop working" required type="text" autocomplete="off" />
+                  </div>
+                  <div class="field-row">
+                    <label class="field-label" for="ticketCategory">Category</label>
+                    <select class="capture-input" id="ticketCategory">
+                      <option value="bug">Bug</option>
+                      <option value="feature">Feature</option>
+                      <option value="question" selected>Question</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div class="field-row">
+                    <label class="field-label" for="ticketPriority">Priority</label>
+                    <select class="capture-input" id="ticketPriority">
+                      <option value="low">Low</option>
+                      <option value="normal" selected>Normal</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                  </div>
+                  <div class="field-row">
+                    <label class="field-label" for="ticketBody">What happened</label>
+                    <textarea class="capture-input" id="ticketBody" rows="4" placeholder="Steps, what you expected, what actually happened…" required></textarea>
+                  </div>
+                  <p id="ticketMessage" class="field-hint" role="status"></p>
+                  <button class="btn primary" id="ticketSubmit" type="submit">
+                    <i data-lucide="headset" aria-hidden="true"></i>
+                    <span id="ticketSubmitLabel">Send to dev team</span>
+                  </button>
+                </form>
+              </div>
+
+              <div class="divider"></div>
+
+              <h2 class="card-title">Your tickets</h2>
+              <p id="ticketEmpty" class="page-sub">No tickets yet.</p>
+              <div id="ticketList"></div>
+            </div>
+          </div>
+        </div>
         </div>
       </div>
     </div>
@@ -3569,76 +3629,15 @@
           </button>
           <span class="demo-bottom-sep"></span>
           <button class="btn ghost" id="demoSkip" type="button">
-            <i data-lucide="skip-next" aria-hidden="true"></i>
+            <i data-lucide="chevron-right" aria-hidden="true"></i>
             <span>Skip for now</span>
           </button>
           <span class="demo-bottom-sep"></span>
           <button class="btn ghost" id="demoRevisit" type="button">
-            <i data-lucide="life-ring" aria-hidden="true"></i>
+            <i data-lucide="headset" aria-hidden="true"></i>
             <span>Revisit tour</span>
           </button>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Support view. -->
-  <div class="view" id="view-support">
-    <div class="cards">
-      <div class="card">
-        <header class="support-hero">
-          <span class="support-hero-icon" aria-hidden="true">
-            <i data-lucide="life-buoy"></i>
-          </span>
-          <div class="support-hero-copy">
-            <p class="support-eyebrow">Support center</p>
-            <h1 class="page-title">Support</h1>
-            <p class="page-sub">Report an issue and the dev team gets a ticket. Track it here.</p>
-          </div>
-        </header>
-
-        <div class="form-card">
-          <h2 class="card-title">Report a problem</h2>
-          <form id="ticketForm" novalidate>
-            <div class="field-row">
-              <label class="field-label" for="ticketTitle">Title</label>
-              <input class="capture-input" id="ticketTitle" placeholder="A short description, e.g. Calendar drag stop working" required type="text" autocomplete="off" />
-            </div>
-            <div class="field-row">
-              <label class="field-label" for="ticketCategory">Category</label>
-              <select class="capture-input" id="ticketCategory">
-                <option value="bug">Bug</option>
-                <option value="feature">Feature</option>
-                <option value="question" selected>Question</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-            <div class="field-row">
-              <label class="field-label" for="ticketPriority">Priority</label>
-              <select class="capture-input" id="ticketPriority">
-                <option value="low">Low</option>
-                <option value="normal" selected>Normal</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </div>
-            <div class="field-row">
-              <label class="field-label" for="ticketBody">What happened</label>
-              <textarea class="capture-input" id="ticketBody" rows="4" placeholder="Steps, what you expected, what actually happened…" required></textarea>
-            </div>
-            <p id="ticketMessage" class="field-hint" role="status"></p>
-            <button class="btn primary" id="ticketSubmit" type="submit">
-              <i data-lucide="life-ring" aria-hidden="true"></i>
-              <span id="ticketSubmitLabel">Send to dev team</span>
-            </button>
-          </form>
-        </div>
-
-        <div class="divider"></div>
-
-        <h2 class="card-title">Your tickets</h2>
-        <p id="ticketEmpty" class="page-sub">No tickets yet.</p>
-        <div id="ticketList"></div>
       </div>
     </div>
   </div>

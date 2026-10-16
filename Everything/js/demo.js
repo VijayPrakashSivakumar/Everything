@@ -25,7 +25,7 @@ function show(n, focus) {
   const next = document.getElementById('demoNext');
   const isLast = st.i === st.total;
   next.dataset.action = isLast ? 'done' : 'next';
-  next.textContent = isLast ? 'Got it \u2014 back to app' : 'Next';
+  next.querySelector('span').textContent = isLast ? 'Got it \u2014 back to app' : 'Next';
   document.getElementById('demoDone').hidden = !isLast;
   if (focus) {
     setTimeout(() => {
