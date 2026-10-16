@@ -317,6 +317,7 @@ function onTicketListClick(e) {
    until then keeps the empty state honest: an app that is not signed in still says why. */
 function renderSupport() {
   ticketState.loaded = false;
+  ticketState.loading = false;
   ticketState.tickets = [];
   renderTicketList();
   ticketMessage('');
