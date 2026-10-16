@@ -1,15 +1,19 @@
 package com.everything.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -17,6 +21,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.everything.app.BuildConfig
 
 /**
@@ -74,6 +80,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         webView = findViewById(R.id.webView)
         webView.setBackgroundColor(Color.parseColor("#F5F6FB"))
+        requestNotificationPermission()
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -131,6 +138,10 @@ class MainActivity : AppCompatActivity() {
                     true
                 }.getOrDefault(false)
             }
+
+            override fun onPermissionRequest(request: PermissionRequest) {
+                request.grant(request.resources)
+            }
         }
 
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
@@ -180,6 +191,32 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         if (::webView.isInitialized) webView.destroy()
         super.onDestroy()
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    1001)
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1001) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                // Notification permission granted — web app can now show notifications
+            } else {
+                // Permission denied — web app notifications will not work
+            }
+        }
     }
 }
 
