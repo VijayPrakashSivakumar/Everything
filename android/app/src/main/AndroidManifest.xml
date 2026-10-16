@@ -9,6 +9,8 @@
 
     <application
         android:label="Everything"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="false"
         android:allowBackup="true"
