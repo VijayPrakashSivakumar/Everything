@@ -6232,6 +6232,119 @@ body.overlay-open .content {
 }
 
 /* ---------- Support tickets ---------- */
+#view-support .cards {
+  width: min(100%, 900px);
+  margin: 0 auto;
+}
+
+#view-support > .cards > .card {
+  padding: clamp(18px, 3vw, 32px);
+}
+
+#view-support .support-hero {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 20px;
+  margin-bottom: 24px;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+}
+
+#view-support .support-hero-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 52px;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-ctl);
+  background: var(--blue-bg);
+  color: var(--blue-fg);
+}
+
+#view-support .support-hero-icon svg {
+  width: 25px;
+  height: 25px;
+  stroke-width: 1.8;
+}
+
+#view-support .support-hero-copy {
+  min-width: 0;
+}
+
+#view-support .support-eyebrow {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#view-support .support-hero .page-sub {
+  margin: 4px 0 0;
+  line-height: var(--lh-base);
+}
+
+#view-support .form-card {
+  padding: 20px;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+}
+
+#view-support .card-title {
+  margin: 0 0 14px;
+  font-size: var(--fs-title);
+  font-weight: var(--fw-semibold);
+}
+
+#view-support .divider {
+  margin: 24px 0;
+}
+
+#view-support #ticketEmpty {
+  margin-bottom: 12px;
+}
+
+#view-support #ticketList {
+  display: grid;
+  gap: 10px;
+}
+
+@media (max-width: 600px) {
+  #view-support > .cards > .card {
+    padding: 16px;
+  }
+
+  #view-support .support-hero {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    margin-bottom: 18px;
+  }
+
+  #view-support .support-hero-icon {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+  }
+
+  #view-support .support-hero-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  #view-support .form-card {
+    padding: 16px;
+  }
+
+  #view-support .divider {
+    margin: 20px 0;
+  }
+}
+
 .badge.normal {
   background: var(--border);
   color: var(--muted);
