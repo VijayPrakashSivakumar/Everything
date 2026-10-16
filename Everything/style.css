@@ -6017,8 +6017,20 @@ body.overlay-open .content {
   z-index: 110;
 }
 
+/* Backdrop fills the overlay so clicks never reach the page behind the tour. */
+.demo-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
 .demo-overlay.open {
   display: flex;
+}
+
+/* Lock the body so the page behind cannot scroll or be clicked while the tour is open. */
+body.demo-open {
+  overflow: hidden;
 }
 
 @media (min-width: 640px) {
@@ -6028,6 +6040,8 @@ body.overlay-open .content {
 }
 
 .demo-card {
+  position: relative;
+  z-index: 2;
   width: min(560px, 100%);
   max-height: calc(100vh - 48px);
   max-height: calc(100dvh - 48px);
