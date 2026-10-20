@@ -115,6 +115,9 @@ function searchScore(item, terms, phrase) {
 /* Below this length, words are too close together to match safely: "car" is one edit from
    "cat", "bar" and "can", so fuzzy matching at that size is mostly noise. */
 const SEARCH_FUZZY_MIN_LENGTH = 4;
+/* How far a completed item sinks in the ranking: one term hit is worth 1 and a title hit 3,
+   so 5 pushes done work below any open item that genuinely matches, without burying it. */
+const SEARCH_DONE_PENALTY = 5;
 const SEARCH_FUZZY_MAX_DISTANCE = 2;
 /* Stops a pathological query from scanning a huge archive on every keystroke. */
 const SEARCH_FUZZY_SCAN_LIMIT = 400;
@@ -220,10 +223,18 @@ function searchMatches(q) {
   const terms = searchTerms(phrase);
   const live = state.items.filter((item) => !isArchived(item));
 
+  /* Finished work must not outrank open work: a completed task that mentions the query
+     should still be found, but below anything still needing you. The penalty is applied
+     to the sort key rather than the match score, so filtering (`score > 0`) is untouched
+     and a strongly-matching done item only sinks a little instead of vanishing. */
+  const sortMatches = (a, b) =>
+    b.score - (b.item?.done ? SEARCH_DONE_PENALTY : 0) - (a.score - (a.item?.done ? SEARCH_DONE_PENALTY : 0)) ||
+    (b.item.created || 0) - (a.item.created || 0);
+
   const exact = live
     .map((item) => ({ item, score: searchScore(item, terms, phrase) }))
     .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score || (b.item.created || 0) - (a.item.created || 0))
+    .sort(sortMatches)
     .map((entry) => entry.item);
 
   if (exact.length) return exact;
@@ -233,7 +244,7 @@ function searchMatches(q) {
     .slice(0, SEARCH_FUZZY_SCAN_LIMIT)
     .map((item) => ({ item, score: searchFuzzyScore(item, terms) }))
     .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score || (b.item.created || 0) - (a.item.created || 0))
+    .sort(sortMatches)
     .map((entry) => entry.item);
 }
 

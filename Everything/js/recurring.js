@@ -382,8 +382,20 @@ function renderTasks(filter) {
   tasks.sort((a, b) => {
     if (filter === "archived") return (b.archivedAt || 0) - (a.archivedAt || 0);
 
-    // Overdue tasks surface first in any open-task view.
-    if (filter !== "completed" && filter !== "archived") {
+    /* Completed is a history, not a plan: most recently finished first, with the same
+       stable tail as every other list. Sorting it by due date buried yesterday's win
+       under next month's plan. */
+    if (filter === "completed") {
+      const doneDiff = compareDatesDesc(a, b, (i) => i?.completedAt || i?.created);
+      if (doneDiff) return doneDiff;
+      const titleDiff = String(a?.title || "").localeCompare(String(b?.title || ""));
+      if (titleDiff) return titleDiff;
+      return (b?.created || 0) - (a?.created || 0);
+    }
+
+    /* Overdue-first only where overdue can appear. Overdue/Upcoming/Today exclude it
+       by filter, so the check was dead weight that also confused the next reader. */
+    if (filter !== "overdue" && filter !== "upcoming" && filter !== "today") {
       const aOverdue = isOverdue(a) ? 0 : 1;
       const bOverdue = isOverdue(b) ? 0 : 1;
       if (aOverdue !== bOverdue) return aOverdue - bOverdue;
@@ -397,11 +409,9 @@ function renderTasks(filter) {
       return b.created - a.created;
     }
 
-    if (a.dueDate && b.dueDate) {
-      const dueDiff = new Date(a.dueDate) - new Date(b.dueDate);
-      if (dueDiff) return dueDiff;
-    } else if (a.dueDate) return -1;
-    else if (b.dueDate) return 1;
+    /* Null-safe: compareDueDates puts undated last instead of NaN-scrambling the order. */
+    const dueDiff = compareDueDates(a, b);
+    if (dueDiff) return dueDiff;
 
     const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
     if (priorityDiff) return priorityDiff;
@@ -631,7 +641,7 @@ function renderMoney() {
   const query = searchInput ? searchInput.value.trim() : "";
   const all = expenseItems();
   const matched = query ? searchMatches(query).filter((i) => isExpense(i) && !isArchived(i)) : all;
-  const sorted = [...matched].sort((a, b) => String(expenseSpentOn(b)).localeCompare(String(expenseSpentOn(a))) || (b.created || 0) - (a.created || 0));
+  const sorted = [...matched].sort((a, b) => compareDayStringsDesc(expenseSpentOn(a), expenseSpentOn(b), a.created, b.created));
 
   listEl.innerHTML = sorted.length
     ? sorted.slice(0, 50).map(expenseRow).join("")

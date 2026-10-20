@@ -314,9 +314,15 @@ function agendaGroups() {
   const tomorrow = [];
   const dated = new Map();
   const byDueThenNewest = (a, b) => {
-    if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
-    if (a.dueDate) return -1;
-    if (b.dueDate) return 1;
+    /* Shared, null-safe due compare (items reaching here are dated, but a malformed one
+       slips past toDate only to NaN here), then the same priority → title → newest
+       tie-breaks the Tasks list uses, so agenda rows never shuffle render to render. */
+    const dueDiff = compareDueDates(a, b);
+    if (dueDiff) return dueDiff;
+    const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
+    if (priorityDiff) return priorityDiff;
+    const titleDiff = String(a?.title || "").localeCompare(String(b?.title || ""));
+    if (titleDiff) return titleDiff;
     return (b.created || 0) - (a.created || 0);
   };
   const horizon = Date.now() + AGENDA_WINDOW_DAYS * 864e5;
@@ -419,6 +425,7 @@ function renderToday() {
   renderAgenda();
 
   const recent = document.getElementById("recentList");
+
   recent.innerHTML = "";
   [...state.items]
     .filter((item) => !isArchived(item))

@@ -500,6 +500,80 @@ function daysUntilBill(item) {
   const end = new Date(time);
   const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
   return Math.round((endDay.getTime() - start.getTime()) / 86400000);
+
+}
+
+/* ---------- Shared sort comparators ----------
+   Every list used to compare dates its own way: `new Date(a)-new Date(b)` (NaN on a
+   missing date, so order went unstable), `String(x).localeCompare(String(y))` (works
+   for YYYY-MM-DD only, breaks on "" / datetimes / malformed), and bare created-desc
+   with no stable final key. One place, one rule:
+     - missing/unparseable dates sort LAST (they are "no date", never "earliest")
+     - ties break by priority, then title, then newest — so rows never shuffle render to render */
+function dateTimeOf(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+/* Ascending due-date compare, null-safe: dated before undated, earliest first. */
+function compareDueDates(a, b) {
+  const ta = dateTimeOf(a?.dueDate);
+  const tb = dateTimeOf(b?.dueDate);
+  if (ta === null && tb === null) return 0;
+  if (ta === null) return 1;
+  if (tb === null) return -1;
+  return ta - tb;
+}
+
+/* Descending date compare for completion-style lists, null-safe: most recent first,
+   items with no date last. `get` extracts the timestamp from each row. */
+function compareDatesDesc(a, b, get) {
+  const ta = dateTimeOf(get(a));
+  const tb = dateTimeOf(get(b));
+  if (ta === null && tb === null) return 0;
+  if (ta === null) return 1;
+  if (tb === null) return -1;
+  return tb - ta;
+}
+
+/* Full open-task ordering: overdue first, then due date, priority, title, newest.
+   The same rule Tasks, Today and the notification bell share, so the badge can never
+   disagree with the list about what needs you first. */
+function compareOpenTasks(a, b) {
+  const aOverdue = isOverdue(a) ? 0 : 1;
+  const bOverdue = isOverdue(b) ? 0 : 1;
+  if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+  const dueDiff = compareDueDates(a, b);
+  if (dueDiff) return dueDiff;
+  const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
+  if (priorityDiff) return priorityDiff;
+  const titleDiff = String(a?.title || "").localeCompare(String(b?.title || ""));
+  if (titleDiff) return titleDiff;
+  return (b?.created || 0) - (a?.created || 0);
+}
+
+/* Day-granularity date compare (expiry, spent-on), newest first: parsed as dates,
+   not compared as strings, with missing/unparseable sorting last. */
+function compareDayStringsDesc(aDay, bDay, aCreated, bCreated) {
+  const aTime = parseIsoDate(aDay) ? dateTimeOf(aDay) : null;
+  const bTime = parseIsoDate(bDay) ? dateTimeOf(bDay) : null;
+  if (aTime === null && bTime === null) return (bCreated || 0) - (aCreated || 0);
+  if (aTime === null) return 1;
+  if (bTime === null) return -1;
+  return bTime - aTime || (bCreated || 0) - (aCreated || 0);
+}
+
+/* Same rules, oldest first — the triage order, where the expired one bites hardest
+   and the one expiring next month waits its turn. Missing dates still sort last. */
+function compareDayStringsAsc(aDay, bDay, aCreated, bCreated) {
+  const aTime = parseIsoDate(aDay) ? dateTimeOf(aDay) : null;
+  const bTime = parseIsoDate(bDay) ? dateTimeOf(bDay) : null;
+  if (aTime === null && bTime === null) return (bCreated || 0) - (aCreated || 0);
+  if (aTime === null) return 1;
+  if (bTime === null) return -1;
+  return aTime - bTime || (bCreated || 0) - (aCreated || 0);
 }
 
 function billLabelFor(item) {
@@ -733,7 +807,7 @@ function documentItems() {
 function documentsNeedingAttention() {
   return documentItems()
     .filter((i) => ["expired", "week"].includes(documentBucket(i)))
-    .sort((a, b) => String(a.expiresOn || "").localeCompare(String(b.expiresOn || "")));
+    .sort((a, b) => compareDayStringsAsc(a.expiresOn, b.expiresOn, a.created, b.created));
 }
 
 const TASK_STATUS_OPTIONS = [
