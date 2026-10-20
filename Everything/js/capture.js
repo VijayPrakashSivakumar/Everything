@@ -374,8 +374,13 @@ function applyVoiceTranscript(finalText) {
   }
 }
 
-/* Best-effort: a browser without the Web Speech API still records, and says why there are no
-   words, rather than failing the whole capture. */
+/* Velora-shaped voice: transcription first, recording second.
+   The Web Speech recogniser reads the live microphone on its OWN — it needs no
+   getUserMedia stream, no MediaRecorder, no blob. So it starts FIRST, before any
+   permission prompt for recording. If the recorder then fails (no MediaRecorder,
+   denied mic, Android WebView quirk), the words are already flowing and the
+   capture still works — exactly how Velora's listen() behaves. Recording is an
+   attachment, never a gate. */
 function startVoiceTranscription() {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
@@ -612,13 +617,27 @@ async function toggleVoiceRecording() {
      used to both get past this check and race two recorders over one microphone. */
   voiceCaptureBusy = true;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    /* Velora order: words FIRST, audio second. The recogniser needs no stream, so it
+       starts before getUserMedia — on a phone where the recorder fails, the words are
+       already on screen instead of the whole capture dying at the permission prompt. */
+    const transcriptionLive = startVoiceTranscription();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (micError) {
+      // The microphone prompt was denied or has no device. Velora keeps listening anyway
+      // when it can and says plainly what happened — the words path is independent.
+      if (transcriptionLive) {
+        setVoiceLiveTranscript("Listening… speak your capture. (Audio attachment unavailable — words still work.)");
+        setVoiceRecordState("recording");
+        setVoiceRecordLabel("Stop capture", "square");
+      } else {
+        stopVoiceTranscription();
+        setVoiceRecordState("idle");
+        await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+      }
+      return;
+    }
     recordedChunks = [];
-    /* Words before audio. The recogniser reads the live microphone on its own, so it starts
-       the moment permission exists — a recorder that later fails to construct (some browsers
-       expose getUserMedia but not MediaRecorder) then costs the audio attachment, not the
-       capture. */
-    startVoiceTranscription();
     try {
       const mimeType =
         (window.MediaRecorder?.isTypeSupported?.("audio/webm;codecs=opus") && "audio/webm;codecs=opus") ||

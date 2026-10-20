@@ -4,6 +4,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voice capture: the WebView microphone (SpeechRecognition + MediaRecorder) needs
+         the native RECORD_AUDIO grant, otherwise the web permission prompt can never
+         succeed on-device. onPermissionRequest in MainActivity forwards it. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Needed only so the WebView can check connectivity, not for the app itself. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Required for Android 13+ notification prompts from web content. -->

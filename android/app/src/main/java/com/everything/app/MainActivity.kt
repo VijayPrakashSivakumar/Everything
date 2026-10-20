@@ -65,6 +65,26 @@ class MainActivity : AppCompatActivity() {
         fileChooser = null
     }
 
+    /* Voice capture bridge: the web SpeechRecognition/MediaRecorder path needs the native
+       RECORD_AUDIO grant first. A blind grant() in onPermissionRequest answers the WebView
+       while Android still denies the mic — which is exactly the "tap does nothing" failure.
+       So the web request is parked here and replayed once the user answers the system dialog.
+       Activity scope (not inside the anonymous WebChromeClient below): registerForActivityResult
+       must be registered before the Activity is STARTED, and an object expression is not a
+       LifecycleOwner that can do that. */
+    private var pendingVoiceRequest: PermissionRequest? = null
+    private val audioPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val pending = pendingVoiceRequest
+            pendingVoiceRequest = null
+            if (pending == null) return@registerForActivityResult
+            if (granted) {
+                runOnUiThread { pending.grant(pending.resources) }
+            } else {
+                runOnUiThread { pending.deny() }
+            }
+        }
+
     /** Optional pixel-perfect handoff: page calls window.AndroidSplash.hide(). */
     inner class SplashBridge {
         @JavascriptInterface
@@ -139,8 +159,26 @@ class MainActivity : AppCompatActivity() {
                 }.getOrDefault(false)
             }
 
+            /* Park-and-replay: the launcher above lives at Activity scope; this just routes. */
             override fun onPermissionRequest(request: PermissionRequest) {
-                request.grant(request.resources)
+                val wantsAudio = request.resources.any {
+                    it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+                }
+                if (!wantsAudio) {
+                    request.grant(request.resources)
+                    return
+                }
+                if (ContextCompat.checkSelfPermission(
+                        this@MainActivity, Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    request.grant(request.resources)
+                    return
+                }
+                // A second mic tap while the system dialog is open must not lose the request.
+                pendingVoiceRequest?.deny()
+                pendingVoiceRequest = request
+                audioPermission.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
 
