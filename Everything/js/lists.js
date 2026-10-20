@@ -544,6 +544,14 @@ function closeCommandPalette() {
   leaveDialog(overlay);
 }
 
+/* Open the palette from the mobile sidebar drawer. The drawer closes first so
+   the palette overlay is the only active layer, and so scroll-lock ends up
+   owned by the palette (closeSidebar unlocks, then openCommandPalette re-locks). */
+function openPaletteFromSidebar() {
+  closeSidebar();
+  openCommandPalette();
+}
+
 function saveDashboardLayout() {
   const layout = [...document.querySelectorAll("[data-dashboard-section]")].map(
     (section) => ({

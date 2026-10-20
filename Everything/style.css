@@ -1655,6 +1655,73 @@ h1.page-title,
   outline-offset: 2px;
 }
 
+/* The quick-jump launcher inside the mobile sidebar drawer. Kept out of the
+   phone top bar on purpose; it lives here so a thumb can reach it without
+   stretching for the header. */
+.sidebar-palette-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+  color: var(--sidebar-fg-strong);
+  box-shadow: var(--shadow-none);
+  font-family: inherit;
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  transition: opacity var(--dur-3) var(--ease), transform var(--dur-3) var(--ease);
+}
+
+.sidebar-palette-btn svg,
+.sidebar-palette-btn [data-lucide] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  stroke-width: 1.8;
+  color: var(--sidebar-fg-strong);
+}
+
+.sidebar-palette-label {
+  color: var(--sidebar-fg-strong);
+}
+
+.sidebar-palette-btn:hover {
+  background: transparent;
+  color: var(--sidebar-fg-strong);
+  opacity: 0.82;
+  transform: translateY(-1px);
+}
+
+.sidebar-palette-btn:active {
+  background: transparent;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.sidebar-palette-btn:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+/* Collapsed rail: centre the icon and drop the text label. */
+.sidebar.collapsed .sidebar-palette-btn {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsed .sidebar-palette-label {
+  display: none;
+}
+
 /* The Capture control uses the same infinity mark and gradient as the brand. */
 .capture-icon {
   display: inline-flex;

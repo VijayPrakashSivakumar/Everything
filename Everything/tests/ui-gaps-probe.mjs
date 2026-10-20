@@ -743,18 +743,27 @@ try {
   await check('the palette can be reached by touch, not only by keyboard', async () => {
     /* The bug this exists for: Ctrl+Shift+K was the *only* way to open the palette, so on a phone —
        which is where this app is used — the feature did not exist. Fourteen desktop checks passed
-       while it was unreachable on the device that matters. */
+       while it was unreachable on the device that matters. The phone top bar deliberately does not
+       carry the launcher (it stays hidden at <= 600px); instead the drawer carries a reachable
+       quick-jump button that opens the palette and closes the drawer in one tap. */
     // hasTouch, because `tap` is only supported on a touch context. Without it the check died on
     // "The page does not support tap" and proved nothing about the button.
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
     try {
       await phone.goto(testUrl(PORT), { waitUntil: 'commit' });
-      await phone.waitForFunction(() => typeof window.openCommandPalette === 'function');
+      await phone.waitForFunction(() => typeof window.openPaletteFromSidebar === 'function');
       await phone.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
+
+      // Open the drawer first: the quick-jump launcher lives inside it, not in the top bar.
+      await phone.locator('#hamburger').click();
+      await phone.waitForFunction(() => {
+        const s = document.getElementById('sidebar');
+        return s.classList.contains('open') && s.getBoundingClientRect().left >= 0;
+      });
 
       // Visible means it takes layout space, not merely that the element is in the DOM.
       const seen = await phone.evaluate(() => {
-        const btn = document.getElementById('paletteBtn');
+        const btn = document.getElementById('sidebarPaletteBtn');
         if (!btn) return { exists: false };
         const box = btn.getBoundingClientRect();
         return {
@@ -765,22 +774,25 @@ try {
           label: btn.getAttribute('aria-label') || '',
         };
       });
-      assert.ok(seen.exists, 'there is no button to open the palette on a phone');
+      assert.ok(seen.exists, 'there is no palette launcher in the mobile sidebar drawer');
       assert.ok(seen.width > 0 && seen.height > 0,
-        'the palette button is in the DOM but hidden on a 390px screen — the palette is still unreachable');
-      assert.ok(seen.insideScreen, 'the palette button overflows the screen and cannot be tapped');
+        'the sidebar palette button is in the DOM but hidden on a 390px screen — still unreachable');
+      assert.ok(seen.insideScreen, 'the sidebar palette button overflows the screen and cannot be tapped');
       assert.match(seen.label, /page|task|person|project/i,
-        'the palette button has no label saying what it does');
+        'the sidebar palette button has no label saying what it does');
 
-      // And tapping it must actually open the palette, focus it, and show rows.
-      await phone.tap('#paletteBtn');
+      // And tapping it must open the palette, focus it, show rows, and leave the drawer closed so
+      // the drawer and the palette overlay are never active at the same time.
+      await phone.tap('#sidebarPaletteBtn');
       await phone.waitForTimeout(300);
       const opened = await phone.evaluate(() => ({
         open: document.getElementById('commandPalette').classList.contains('open'),
+        drawerOpen: document.getElementById('sidebar').classList.contains('open'),
         focused: document.activeElement?.id,
         rows: document.querySelectorAll('#commandList .command-row').length,
       }));
-      assert.ok(opened.open, 'tapping the palette button on a phone did not open it');
+      assert.ok(opened.open, 'tapping the sidebar palette button on a phone did not open it');
+      assert.equal(opened.drawerOpen, false, 'tapping the palette button left the drawer open too');
       assert.equal(opened.focused, 'commandInput', 'the palette opened without taking focus');
       assert.ok(opened.rows > 5, `the palette opened empty on a phone (${opened.rows} rows)`);
     } finally {
