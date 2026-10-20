@@ -2461,6 +2461,25 @@
             <span class="voice-lang-label">Spoken language — auto-detected, tap to correct</span>
             <div class="type-row" id="voiceLangRow"></div>
           </div>
+          <!-- 3. Translation is a choice, never a guess: off by default, and when it is on the
+               original words stay visible next to the translation so the two can never be
+               confused. The keys stay on the server; a failure keeps what was said. -->
+          <div class="voice-lang-block">
+            <span class="voice-lang-label">Translate speech to — off keeps your own words</span>
+            <select
+              id="voiceTranslateTarget"
+              class="voice-translate-select"
+              onchange="onVoiceTranslateChange(this.value)"
+            >
+              <option value="">Off — keep what I said</option>
+              <option value="en-IN">English — translate to English</option>
+              <option value="ta-IN">தமிழ் — translate to Tamil</option>
+              <option value="hi-IN">हिन्दी — translate to Hindi</option>
+              <option value="te-IN">తెలుగు — translate to Telugu</option>
+              <option value="kn-IN">ಕನ್ನಡ — translate to Kannada</option>
+              <option value="ml-IN">മലയാളം — translate to Malayalam</option>
+            </select>
+          </div>
           <!-- 2. One-click capture: records audio AND transcribes it in the chosen language, then
                feeds the words straight into the capture pipeline — no second step. -->
           <button
@@ -2630,11 +2649,27 @@
         </div>
 
         <!-- Main text -->
-        <textarea
-          id="captureText"
-          placeholder="What's on your mind?"
-          oninput="onCaptureInput()"
-        ></textarea>
+        <!-- Main text. The mic sits ON the box: one tap from any channel starts a capture, so
+             nobody has to find the Voice menu first. The panel's own button stays for the fuller
+             voice flow — language chips, audio preview, the private on-device reader. -->
+        <div class="capture-text-wrap">
+          <textarea
+            id="captureText"
+            placeholder="What's on your mind?"
+            oninput="onCaptureInput()"
+          ></textarea>
+          <button
+            class="capture-mic-btn"
+            id="captureMicBtn"
+            type="button"
+            data-state="idle"
+            aria-pressed="false"
+            aria-label="Start voice capture"
+            onclick="toggleVoiceRecording()"
+          >
+            <i data-lucide="mic" aria-hidden="true"></i>
+          </button>
+        </div>
 
         <!-- Smart capture suggestions: every value is editable before saving. -->
         <div class="capture-hint-row">

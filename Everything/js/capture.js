@@ -216,6 +216,7 @@ function pickVoiceLang(tag, manual = true) {
 function resetVoiceLangForCapture() {
   captureVoiceLangAuto = true;
   pickVoiceLang(defaultVoiceLang(), false);
+  syncVoiceTranslateRow();
 }
 
 function syncVoiceLangChips() {
@@ -272,6 +273,7 @@ function setVoiceRecordLabel(label, icon) {
 function setVoiceRecordState(state) {
   const btn = document.getElementById("voiceRecordBtn");
   if (btn) btn.dataset.state = state;
+  syncCaptureMicState(state);
 }
 
 function setVoiceDictateLabel(label, icon) {
@@ -283,6 +285,187 @@ function setVoiceDictateLabel(label, icon) {
   const labelId = btn.id === "voiceRecordBtn" ? "voiceRecordLabel" : "voiceDictateLabel";
   btn.innerHTML = `<i data-lucide="${icon || "mic"}" aria-hidden="true"></i><span id="${labelId}">${label}</span>`;
   refreshIcons();
+}
+
+/* The mic on the text box and the button in the Voice panel are two faces of one control, so
+   both show the same state — idle, listening, converting — without either becoming a second
+   source of truth. */
+function syncCaptureMicState(state) {
+  const mic = document.getElementById("captureMicBtn");
+  if (!mic) return;
+  mic.dataset.state = state;
+  mic.setAttribute("aria-pressed", state === "recording" ? "true" : "false");
+  mic.setAttribute(
+    "aria-label",
+    state === "recording"
+      ? "Stop voice capture"
+      : state === "stopping"
+        ? "Converting speech to text"
+        : "Start voice capture",
+  );
+}
+
+/* Silence auto-stop, armed when the recogniser actually starts (never during the permission
+   prompt — nobody should be cut off for reading a dialog) and re-armed by every word. */
+function armVoiceSilenceStop() {
+  clearVoiceSilenceStop();
+  voiceSilenceTimer = setTimeout(handleVoiceSilence, voiceSilenceMs);
+}
+function clearVoiceSilenceStop() {
+  clearTimeout(voiceSilenceTimer);
+  voiceSilenceTimer = null;
+}
+function handleVoiceSilence() {
+  clearVoiceSilenceStop();
+  // A tap on Stop is already waiting on the last words — never race it with a second finish.
+  if (voiceTranscriptionDone) return;
+  if (!captureRecordWantListening && !captureRecordRecognition) return;
+  settleVoiceCapture();
+}
+
+/* The one finish path — reached from a tap on Stop, from silence auto-stop, and from the
+   3-second backstop. `voiceRecordingWasLive` remembers whether this capture got a recorder
+   going, which is what the "no words" message and the private-reader offer hinge on. */
+/* ---------- Optional translation ----------
+
+   Recognition and translation are deliberately two different things. The words land in the box
+   first, in the language they were spoken; only a target the person explicitly chose sends them
+   to the model, and a failure keeps the original words with an honest message. The keys live on
+   the server (same provider chain as Ask) — nothing secret is ever in this file. */
+const VOICE_TRANSLATE_MEMORY_KEY = "everything_capture_translate";
+/* null = not read from storage yet; "" = read, and translation is off. */
+let captureVoiceTranslateTarget = null;
+
+function rememberedVoiceTranslateTarget() {
+  try {
+    const stored = localStorage.getItem(VOICE_TRANSLATE_MEMORY_KEY);
+    return VOICE_LANGUAGES.some((entry) => entry.tag === stored) ? stored : "";
+  } catch (err) {
+    // Private mode or blocked storage: the choice holds for this sheet, just not the next one.
+    return "";
+  }
+}
+
+function rememberVoiceTranslateTarget(tag) {
+  try {
+    if (tag) localStorage.setItem(VOICE_TRANSLATE_MEMORY_KEY, tag);
+    else localStorage.removeItem(VOICE_TRANSLATE_MEMORY_KEY);
+  } catch (err) {
+    // Same as above: storage is a convenience, never a dependency.
+  }
+}
+
+function syncVoiceTranslateRow() {
+  if (captureVoiceTranslateTarget === null) captureVoiceTranslateTarget = rememberedVoiceTranslateTarget();
+  const select = document.getElementById("voiceTranslateTarget");
+  if (!select) return;
+  // A target from an older build's list must not leave the select blank — off is the honest state.
+  if (captureVoiceTranslateTarget && !Array.from(select.options).some((option) => option.value === captureVoiceTranslateTarget)) {
+    captureVoiceTranslateTarget = "";
+  }
+  select.value = captureVoiceTranslateTarget;
+}
+
+function onVoiceTranslateChange(value) {
+  captureVoiceTranslateTarget = VOICE_LANGUAGES.some((entry) => entry.tag === value) ? value : "";
+  rememberVoiceTranslateTarget(captureVoiceTranslateTarget);
+}
+
+function voiceTagToTranslateName(tag) {
+  const entry = VOICE_LANGUAGES.find((item) => item.tag === tag);
+  return entry ? `${entry.label} (${entry.hint})` : "English";
+}
+
+async function translateVoiceText(text, sourceTag, targetTag) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9000);
+  try {
+    const res = await apiFetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "translate",
+        text,
+        source: sourceTag ? voiceTagToTranslateName(sourceTag) : "",
+        target: voiceTagToTranslateName(targetTag),
+      }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.translated) throw new Error(data.error || `translate:${res.status}`);
+    return String(data.translated).trim();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function maybeTranslateVoiceCapture(heard) {
+  const target = captureVoiceTranslateTarget;
+  if (!target || !heard) return;
+  const sourceTag = captureVoiceLanguage || captureVoiceLang || "";
+  // The same language twice is not translation — and asking a model for it invites it to
+  // "helpfully" rewrite the words the person just said.
+  if (sourceTag === target) return;
+  const token = (voiceTranslateToken += 1);
+  setVoiceRecordLabel("Translating…", "languages");
+  setVoiceLiveTranscript(`Translating to ${voiceTagToTranslateName(target)}…`);
+  translateVoiceText(heard, sourceTag, target)
+    .then((translated) => {
+      if (token !== voiceTranslateToken) return; // a newer capture owns the box now
+      const input = document.getElementById("captureText");
+      if (!input || !translated) return;
+      // The original-language words are replaced by the translation — the mode the person
+      // chose — while the live line keeps both, so nothing the microphone heard is invisible.
+      input.value = [voiceTranscriptBase, translated].filter(Boolean).join(" ");
+      setVoiceLiveTranscript(
+        `Heard “${heard}” — translated to ${voiceTagToTranslateName(target)}: “${translated}”`,
+      );
+      onCaptureInput();
+    })
+    .catch(() => {
+      if (token !== voiceTranslateToken) return;
+      setVoiceLiveTranscript(
+        `Heard “${heard}”. Translation is unavailable right now — the original words were kept. Tap the mic to speak again.`,
+      );
+    })
+    .finally(() => {
+      if (token === voiceTranslateToken) setVoiceRecordLabel("Capture again", "mic");
+    });
+}
+
+function settleVoiceCapture() {
+  clearTimeout(voiceTranscriptionStopTimer);
+  voiceTranscriptionStopTimer = null;
+  voiceTranscriptionDone = null;
+  /* Read the settled flag first: stopVoiceTranscription clears the want-flag and nulls onend,
+     so calling it before checking would report silence even when words arrived. */
+  const heard = voiceTranscript.trim();
+  stopVoiceTranscription();
+  // Silence (or the backstop) can finish a capture without a tap, so the recorder must be
+  // closed here too — an abandoned capture must not keep the microphone open. On the tap
+  // path this is a no-op: the tap already stopped it.
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+  voiceTranscriptionSettled = true;
+  setVoiceRecordState("idle");
+  setVoiceRecordLabel(heard ? "Capture again" : "Capture voice", "mic");
+  if (!heard) {
+    setVoiceLiveTranscript(
+      voiceRecordingWasLive
+        ? "Nothing was heard in that recording. The audio is saved — type what you meant instead. Tap the mic to try again."
+        : "Nothing was heard. Type what you meant instead. Tap the mic to try again.",
+    );
+    /* No words came back from the live recogniser: either this browser has none (Firefox), or
+       it failed. Offer the private, on-device reader over the same recording — the one thing
+       the Web Speech API cannot do. Shown only now, so the primary path stays the default. */
+    setVoiceLocalSttVisible(voiceRecordingWasLive);
+    return;
+  }
+  setVoiceLocalSttVisible(false);
+  // The waiting state replaced whatever the last result showed; put the words back.
+  setVoiceLiveTranscript(`Heard: “${heard}”`);
+  // Translation is a separate, opt-in step and never blocks or replaces the transcript: the
+  // words are already in the box before it starts, and they stay there if it fails.
+  maybeTranslateVoiceCapture(heard);
 }
 
 function setVoiceDictationStatus(message) {
@@ -344,6 +527,30 @@ let voiceTranscriptBase = "";
 let voiceTranscriptionSettled = false;
 let voiceTranscriptionDone = null;
 let voiceTranscriptionStopTimer = null;
+/* Silence auto-stop. The recogniser is continuous, so without a deadline an abandoned capture
+   keeps listening — and recording — until someone remembers to stop it. The window is long
+   enough for a breath between sentences and is re-armed by every word, so it ends a forgotten
+   capture, never a paused speaker. Mutable so a test can watch it fire. */
+const VOICE_SILENCE_MS = 8000;
+let voiceSilenceMs = VOICE_SILENCE_MS;
+let voiceSilenceTimer = null;
+/* True once any word has come back this session: silence before the first word is a person
+   settling in, silence after it is a person who has finished. */
+let voiceHeardWords = false;
+/* Consecutive transport failures. Chrome's speech service answers `network` when offline, and an
+   endless respawn behind "keep speaking" hides that truth instead of telling it. */
+let voiceNetworkMisses = 0;
+/* The microphone stream promise for the live capture — kept so a recognition `not-allowed` that
+   arrives *before* the Android permission bridge answers can wait for the real answer instead of
+   killing the words path over a denial the person never gave. */
+let voiceMicPermission = null;
+let voiceMicRetryUsed = false;
+/* Whether THIS capture got a recorder going. The "no words" message and the private-reader offer
+   hinge on it; a module-level flag is what lets silence auto-stop share the same finish path. */
+let voiceRecordingWasLive = false;
+/* Bumps when a newer capture starts, so a translation in flight can never write into the next
+   capture's box. */
+let voiceTranslateToken = 0;
 
 function setVoiceLiveTranscript(text) {
   const live = document.getElementById("voiceLiveTranscript");
@@ -393,9 +600,17 @@ function startVoiceTranscription() {
   if (!captureVoiceLang) captureVoiceLang = defaultVoiceLang();
   captureVoiceLanguage = captureVoiceLang;
   const input = document.getElementById("captureText");
-  voiceTranscriptBase = input.value.trim();
+  /* Selected text is the person pointing at what to replace; everything else is the person
+     adding to what they already wrote. */
+  const selection = input.selectionEnd > input.selectionStart ? [input.selectionStart, input.selectionEnd] : null;
+  voiceTranscriptBase = (selection ? input.value.slice(0, selection[0]) + input.value.slice(selection[1]) : input.value).trim();
   voiceTranscript = "";
   voiceLangSwapCount = 0;
+  voiceHeardWords = false;
+  voiceNetworkMisses = 0;
+  voiceMicRetryUsed = false;
+  // A translation from the previous capture must never land in this one's box.
+  voiceTranslateToken += 1;
   voiceTranscriptionSettled = false;
   voiceTranscriptionDone = null;
   clearTimeout(voiceTranscriptionStopTimer);
@@ -415,7 +630,11 @@ function startVoiceTranscription() {
     // pause returns half of what was said. Interim results so the sheet shows the words landing.
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.onstart = () => setVoiceLiveTranscript("Listening… speak your capture.");
+    recognition.onstart = () => {
+      setVoiceLiveTranscript("Listening… speak your capture.");
+      // Only now — while a permission dialog is open, nobody is "silent", they are reading.
+      armVoiceSilenceStop();
+    };
     recognition.onresult = (event) => {
       // A superseded session (hot-swapped for another language, or stopped) must not keep
       // writing: its late results would duplicate words the current session already has.
@@ -427,6 +646,9 @@ function startVoiceTranscription() {
         else interim += transcript;
       }
       const combined = `${final} ${interim}`.trim();
+      // Every word pushes the silence deadline back: a pause mid-sentence is not the end.
+      if (combined) voiceHeardWords = true;
+      armVoiceSilenceStop();
       interimSnapshot = combined;
       if (captureVoiceLangAuto && interim) {
         const detected = detectCaptureLanguage(interim);
@@ -459,21 +681,51 @@ function startVoiceTranscription() {
         // The app stopped this session itself (a language swap, or the person tapped Stop).
         // Reporting it would replace the final words with a failure that never happened.
       } else if (event.error === "no-speech") {
-        setVoiceLiveTranscript("Nothing was heard yet — keep speaking, or stop and type instead.");
+        setVoiceLiveTranscript(
+          voiceHeardWords
+            ? "Paused — still listening…"
+            : "Nothing was heard yet — keep speaking, or stop and type instead.",
+        );
       } else if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        // On Android the WebView routes the recogniser's mic request through the same native
+        // bridge as getUserMedia, so this `not-allowed` can arrive while the system dialog is
+        // still open — a denial the person has not given yet. If the microphone promise is
+        // still pending, wait for its answer: when the grant lands, listening resumes itself.
+        if (!voiceMicRetryUsed && voiceMicPermission) {
+          voiceMicPermission.then((micStream) => {
+            if (!micStream || !captureRecordWantListening || captureRecordRecognition) return;
+            voiceMicRetryUsed = true;
+            setVoiceLiveTranscript("Microphone is ready — listening again…");
+            clearTimeout(captureRecordRestartTimer);
+            captureRecordRestartTimer = setTimeout(() => {
+              if (captureRecordWantListening && !captureRecordRecognition && !voiceTranscriptionDone) spawnRecognition();
+            }, 150);
+          });
+          return;
+        }
         captureRecordWantListening = false;
-        setVoiceLiveTranscript("Microphone permission was denied — the recording is still saved.");
+        setVoiceLiveTranscript(
+          "Microphone permission was denied — the recording is still saved. Allow the microphone for this site, then tap the mic to try again.",
+        );
       } else if (event.error === "language-not-supported") {
         captureRecordWantListening = false;
         setVoiceLiveTranscript(
-          "This browser cannot transcribe that language live — the recording is still saved, and the on-device reader can try it.",
+          "This browser cannot transcribe that language live — the recording is still saved, and the on-device reader can try it. Tap the mic to record again.",
         );
       } else if (event.error === "audio-capture") {
-        setVoiceLiveTranscript("No microphone was found — the recording is still saved.");
+        setVoiceLiveTranscript("No microphone was found — the recording is still saved. Tap the mic to try again.");
       } else if (event.error === "network") {
-        setVoiceLiveTranscript("Speech service is offline — keep speaking, the recording is still saved.");
+        voiceNetworkMisses += 1;
+        setVoiceLiveTranscript(
+          voiceNetworkMisses > 2
+            ? "The speech service keeps failing — check the connection, then tap the mic to try again."
+            : "Speech service is unreachable — retrying on its own. The recording is still saved.",
+        );
+        // Three strikes: the service is genuinely gone. Stop honestly rather than looping
+        // behind a "keep speaking" that can never be heard.
+        if (voiceNetworkMisses > 2) captureRecordWantListening = false;
       } else {
-        setVoiceLiveTranscript("Speech could not be transcribed — the recording is still saved.");
+        setVoiceLiveTranscript("Speech could not be transcribed — the recording is still saved. Tap the mic to try again.");
       }
     };
     recognition.onend = () => {
@@ -519,6 +771,7 @@ function startVoiceTranscription() {
 function stopVoiceTranscription() {
   captureRecordWantListening = false;
   clearTimeout(captureRecordRestartTimer);
+  clearVoiceSilenceStop();
   captureRecordRestartTimer = null;
   if (!captureRecordRecognition) return;
   const recognition = captureRecordRecognition;
@@ -555,59 +808,32 @@ async function toggleVoiceRecording() {
        person was told while they had been speaking the whole time. Timing cannot be fixed by
        guessing a longer number; the recogniser emits its own end, and that is the only honest
        signal that it has finished saying what it heard. */
-    const finish = () => {
-      clearTimeout(voiceTranscriptionStopTimer);
-      voiceTranscriptionStopTimer = null;
-      voiceTranscriptionDone = null;
-      /* Read the settled flag first: stopVoiceTranscription clears the want-flag and
-         nulls onend, so calling it before checking would report silence even when
-         words arrived. */
-      const heard = voiceTranscript.trim();
-      stopVoiceTranscription();
-      voiceTranscriptionSettled = true;
-      setVoiceRecordState("idle");
-      if (!heard) {
-        // `recording`, not pendingBlob: this runs before mediaRecorder.stop(), so the blob
-        // from *this* capture does not exist yet — the flag is what says audio is coming.
-        setVoiceLiveTranscript(
-          recording
-            ? "Nothing was heard in that recording. The audio is saved — type what you meant instead."
-            : "Nothing was heard. Type what you meant instead.",
-        );
-        /* No words came back from the live recogniser: either this browser has none (Firefox), or it
-           failed. Offer the private, on-device reader over the same recording — the one thing the Web
-           Speech API cannot do. Shown only now, so the primary path stays the default and this reads
-           as a second chance rather than a competing button. */
-        if (recording) setVoiceLocalSttVisible(true);
-        else setVoiceLocalSttVisible(false);
-      } else {
-        setVoiceLocalSttVisible(false);
-        // The waiting state replaced whatever the last result showed; put the words back.
-        setVoiceLiveTranscript(`Heard: “${heard}”`);
-      }
-    };
     /* A live recogniser ends on its own once it has flushed its last words, and that end
        finishes the capture. But when there is no recogniser instance to end — Firefox, a
        denied permission, the gap between respawns — waiting can only ever hit the backstop,
        and the tap appears frozen for three seconds. Finishing immediately is what makes Stop
-       instant in exactly the cases that used to feel broken. */
-    if (!listening || voiceTranscriptionSettled) finish();
+       instant in exactly the cases that used to feel broken.
+
+       The settle itself lives at module level (settleVoiceCapture) because silence auto-stop
+       and this tap must share one finish path — two finish paths is two last words. */
+    if (!listening || voiceTranscriptionSettled) settleVoiceCapture();
     else {
       voiceTranscriptionSettled = true;
-      voiceTranscriptionDone = finish;
+      voiceTranscriptionDone = settleVoiceCapture;
       setVoiceRecordState("stopping");
-      setVoiceLiveTranscript("Finishing — catching the last words…");
+      setVoiceRecordLabel("Converting speech to text…", "loader-circle");
+      setVoiceLiveTranscript("Converting speech to text…");
       try {
         // Ask the recogniser to wrap up now: the browser flushes its pending final results
-        // (which arrive through onresult) and then ends — and that end runs finish(). Waiting
-        // for a silence-based natural end instead is what made Stop feel like it lagged.
+        // (which arrive through onresult) and then ends — and that end runs the settle.
+        // Waiting for a silence-based natural end instead is what made Stop feel like it lagged.
         captureRecordRecognition.stop();
       } catch (error) {
-        // Already ended; the backstop below still runs finish().
+        // Already ended; the backstop below still runs the settle.
       }
       // Backstop only. onend is what normally fires this; the timer exists for the browser that
       // never delivers it, because a stuck recogniser must not leave the sheet mid-reset.
-      voiceTranscriptionStopTimer = setTimeout(finish, 3000);
+      voiceTranscriptionStopTimer = setTimeout(settleVoiceCapture, 3000);
     }
     if (recording) mediaRecorder.stop();
     return;
@@ -616,13 +842,27 @@ async function toggleVoiceRecording() {
   /* The guard goes up before the permission prompt, not after it: two taps during the prompt
      used to both get past this check and race two recorders over one microphone. */
   voiceCaptureBusy = true;
+  voiceRecordingWasLive = false;
   try {
     /* Velora order: words FIRST, audio second. The recogniser needs no stream, so it
        starts before getUserMedia — on a phone where the recorder fails, the words are
        already on screen instead of the whole capture dying at the permission prompt. */
     const transcriptionLive = startVoiceTranscription();
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const micStreamPromise = navigator.mediaDevices.getUserMedia({ audio: true });
+      // Kept so a recognition `not-allowed` that lands before the system dialog is answered
+      // can wait for the real answer and resume — see the not-allowed branch above.
+      voiceMicPermission = micStreamPromise.then((micStream) => micStream, () => null);
+      stream = await micStreamPromise;
+      // The sheet can be closed while the permission prompt is open. A capture nobody can see
+      // must not keep the microphone warm: the stream is stopped rather than promoted.
+      const sheet = document.getElementById("captureModal");
+      if (sheet && !sheet.classList.contains("open")) {
+        stream.getTracks().forEach((track) => track.stop());
+        stopVoiceTranscription();
+        voiceMicPermission = null;
+        return;
+      }
     } catch (micError) {
       // The microphone prompt was denied or has no device. Velora keeps listening anyway
       // when it can and says plainly what happened — the words path is independent.
@@ -662,6 +902,7 @@ async function toggleVoiceRecording() {
         stream.getTracks().forEach((t) => t.stop());
       };
       mediaRecorder.start(500);
+      voiceRecordingWasLive = true;
       recordingSeconds = 0;
       recordingInterval = setInterval(() => {
         recordingSeconds++;
@@ -2005,6 +2246,7 @@ function openCapture() {
   voiceTranscriptBase = "";
   voiceLangSwapCount = 0;
   voiceCaptureBusy = false;
+  voiceRecordingWasLive = false;
   stopVoiceTranscription();
   setVoiceLiveTranscript("");
   // The private reader is offered only after a specific recording comes back empty, so it starts

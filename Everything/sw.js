@@ -1,4 +1,4 @@
-s// Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
+// Bump whenever a shell file (index.html / style.css / js/*.js) changes, otherwise returning
 // phones keep serving the previous cached version and the new UI appears not to work.
 /* v52 — Support now uses the shared authenticated Supabase client directly, and the tour and Support
    scripts must be cached with the same shell as the markup that uses them.
@@ -8,7 +8,13 @@ s// Bump whenever a shell file (index.html / style.css / js/*.js) changes, other
    cache. Bump this whenever either changes. A mixed build renders - the element is there and the
    rule that styles it is not - which is far harder to spot than an old build, because part of it is
    visibly current. */
-const CACHE_NAME = 'everything-shell-v52';
+/* v53 — Voice capture rebuilt to production quality: the mic now sits on the capture box
+   itself, an Android permission-race retry resumes listening when the system grant lands
+   (the "tap does nothing" failure), network retries are bounded, silence stops an abandoned
+   capture on its own, and an optional translate-to mode runs through /api/ask with the keys
+   kept on the server. Also carries the sort-ordering (7ce14ef), voice Velora-order (69c8125)
+   and document (c0f292b) fixes that phones never received while the cache still said v52. */
+const CACHE_NAME = 'everything-shell-v53';
 
 /* Tiny persistent store for the reminder schedule. Cache Storage is used because it is
    available to the service worker at any time (unlike page memory), so a reminder armed

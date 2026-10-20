@@ -552,6 +552,232 @@ try {
     assert.equal(out.afterText.text, 'keep me', 'text must not clear the typed selection');
     assert.equal(out.afterText.priority, 'high', 'text must not reset field selections');
   });
+
+  await check('the mic on the text box is the same capture as the voice panel, in every state', async () => {
+    // The promise is one click from wherever the sheet is open: the mic sits on the capture box
+    // itself, and its state is the panel button's state — never a second thing to keep in sync.
+    const out = await page.evaluate(() => {
+      const mic = document.getElementById('captureMicBtn');
+      const wrap = mic?.closest('.capture-text-wrap');
+      const seen = {};
+      for (const state of ['recording', 'stopping', 'idle']) {
+        setVoiceRecordState(state);
+        seen[state] = {
+          dataset: mic?.dataset.state,
+          pressed: mic?.getAttribute('aria-pressed'),
+          label: mic?.getAttribute('aria-label') || '',
+        };
+      }
+      const select = document.getElementById('voiceTranslateTarget');
+      return {
+        exists: !!mic,
+        wired: (mic?.getAttribute('onclick') || '').includes('toggleVoiceRecording()'),
+        onTheBox: !!wrap?.contains(document.getElementById('captureText')),
+        seen,
+        translateOffByDefault: select ? select.value === '' : false,
+        translateHasOff: select ? Array.from(select.options).some((option) => option.value === '') : false,
+      };
+    });
+    assert.ok(out.exists, 'the inline mic must exist');
+    assert.ok(out.wired, 'the inline mic must call toggleVoiceRecording');
+    assert.ok(out.onTheBox, 'the mic must sit on the capture box itself');
+    assert.equal(out.seen.recording.dataset, 'recording', 'the mic must show the listening state');
+    assert.equal(out.seen.recording.pressed, 'true', 'aria-pressed must follow the listening state');
+    assert.match(out.seen.recording.label, /stop/i, 'while listening the mic must say it stops');
+    assert.equal(out.seen.idle.pressed, 'false', 'idle must release aria-pressed');
+    assert.match(out.seen.idle.label, /start/i, 'idle must say it starts');
+    assert.ok(out.translateOffByDefault, 'translation must be off until the person chooses it');
+    assert.ok(out.translateHasOff, 'the translate select must offer off explicitly');
+  });
+
+  await check('a silent capture stops itself instead of listening to the room forever', async () => {
+    // The recogniser is continuous: without a deadline an abandoned capture keeps listening —
+    // and recording — until someone remembers. Silence ends it through the same settle as a tap.
+    const outcome = await page.evaluate(async () => {
+      const previousSpeechRecognition = window.SpeechRecognition;
+      const previousMediaRecorder = window.MediaRecorder;
+      const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+      const previousSilenceMs = voiceSilenceMs;
+      let live;
+      class SilentRecognition {
+        start() { live = this; live?.onstart?.(); }
+        stop() {}
+      }
+      class SilentRecorder {
+        constructor() { this.state = 'inactive'; }
+        start() { this.state = 'recording'; }
+        stop() { this.state = 'inactive'; this.onstop?.(); }
+      }
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: SilentRecognition });
+      window.MediaRecorder = SilentRecorder;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
+      });
+      voiceSilenceMs = 150;
+      try {
+        document.getElementById('captureText').value = '';
+        captureVoiceLang = 'en-IN';
+        await toggleVoiceRecording();
+        await new Promise((r) => setTimeout(r, 500));
+        return {
+          stopped: !captureRecordWantListening && !captureRecordRecognition && !voiceCaptureBusy,
+          recorderClosed: !mediaRecorder || mediaRecorder.state !== 'recording',
+          state: document.getElementById('voiceRecordBtn').dataset.state,
+          micState: document.getElementById('captureMicBtn').dataset.state,
+          live: document.getElementById('voiceLiveTranscript').textContent,
+        };
+      } finally {
+        voiceSilenceMs = previousSilenceMs;
+        clearVoiceSilenceStop();
+        clearInterval(recordingInterval);
+        document.getElementById('voiceTimer').textContent = '';
+        captureRecordWantListening = false;
+        captureRecordRecognition = null;
+        voiceTranscriptionDone = null;
+        voiceTranscriptionSettled = true;
+        voiceMicPermission = null;
+        voiceMicRetryUsed = false;
+        stopVoiceTranscription();
+        if (previousSpeechRecognition === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previousSpeechRecognition;
+        if (previousMediaRecorder === undefined) delete window.MediaRecorder;
+        else window.MediaRecorder = previousMediaRecorder;
+        if (mediaDevicesDescriptor) Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+        else delete navigator.mediaDevices;
+      }
+    });
+    assert.ok(outcome.stopped, 'silence must end the session on its own');
+    assert.ok(outcome.recorderClosed, 'the recorder must not keep the microphone open after silence');
+    assert.equal(outcome.state, 'idle', 'the record button must return to idle');
+    assert.equal(outcome.micState, 'idle', 'the inline mic must return to idle with it');
+    assert.match(outcome.live, /nothing was heard/i, 'it must say honestly that nothing was heard');
+  });
+
+  await check('a mic denial that lands before the system dialog does not kill the words', async () => {
+    // On Android the WebView answers the recogniser's mic request through the same native
+    // bridge as getUserMedia, so `not-allowed` can arrive while the dialog is still open. A
+    // denial the person has not given yet must not end the capture: the keeper respawns the
+    // moment the recogniser's own end arrives, and the grant path backstops that.
+    const outcome = await page.evaluate(async () => {
+      const previousSpeechRecognition = window.SpeechRecognition;
+      const previousMediaRecorder = window.MediaRecorder;
+      const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+      let spawns = 0;
+      let live;
+      let resolveMic;
+      class RaceRecognition {
+        start() {
+          spawns += 1;
+          live = this;
+          if (spawns === 1) {
+            setTimeout(() => {
+              live?.onerror?.({ error: 'not-allowed' });
+              live?.onend?.();
+            }, 10);
+          }
+        }
+        stop() {}
+      }
+      class RaceRecorder {
+        constructor() { this.state = 'inactive'; }
+        start() { this.state = 'recording'; }
+        stop() { this.state = 'inactive'; this.onstop?.(); }
+      }
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: RaceRecognition });
+      window.MediaRecorder = RaceRecorder;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: {
+          getUserMedia: () => new Promise((resolve) => {
+            resolveMic = () => resolve({ getTracks: () => [{ stop() {} }] });
+          }),
+        },
+      });
+      try {
+        document.getElementById('captureText').value = '';
+        captureVoiceLang = 'en-IN';
+        toggleVoiceRecording(); // deliberately not awaited: the mic prompt is still open
+        await new Promise((r) => setTimeout(r, 60)); // the premature denial lands here
+        resolveMic(); // the person answers the system dialog: granted
+        await new Promise((r) => setTimeout(r, 400)); // keeper respawn + retry window
+        return {
+          spawns,
+          want: captureRecordWantListening,
+          live: document.getElementById('voiceLiveTranscript').textContent,
+        };
+      } finally {
+        clearInterval(recordingInterval);
+        document.getElementById('voiceTimer').textContent = '';
+        clearVoiceSilenceStop();
+        captureRecordWantListening = false;
+        captureRecordRecognition = null;
+        voiceTranscriptionDone = null;
+        voiceTranscriptionSettled = true;
+        voiceMicPermission = null;
+        voiceMicRetryUsed = false;
+        voiceCaptureBusy = false;
+        stopVoiceTranscription();
+        if (previousSpeechRecognition === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previousSpeechRecognition;
+        if (previousMediaRecorder === undefined) delete window.MediaRecorder;
+        else window.MediaRecorder = previousMediaRecorder;
+        if (mediaDevicesDescriptor) Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+        else delete navigator.mediaDevices;
+      }
+    });
+    assert.ok(outcome.spawns >= 2, `listening must resume after a premature denial (spawns: ${outcome.spawns})`);
+    assert.ok(outcome.want, 'the words path must still be wanted after a denial the person never gave');
+  });
+
+  await check('translation is a separate, chosen step that can never lose the spoken words', async () => {
+    // Recognition and translation are different things: the words land first, only an explicit
+    // target sends them to the model, and a failure keeps the original with an honest message.
+    const outcome = await page.evaluate(async () => {
+      const originalApiFetch = window.apiFetch;
+      const input = document.getElementById('captureText');
+      const results = {};
+      try {
+        captureVoiceLanguage = 'ta-IN';
+        voiceTranscriptBase = '';
+        // Off: nothing is sent anywhere and nothing changes.
+        captureVoiceTranslateTarget = '';
+        input.value = 'nalla irukku';
+        maybeTranslateVoiceCapture('nalla irukku');
+        await new Promise((r) => setTimeout(r, 50));
+        results.off = { value: input.value, live: document.getElementById('voiceLiveTranscript').textContent };
+        // On: the model's translation replaces the words, and both are shown in the live line.
+        captureVoiceTranslateTarget = 'en-IN';
+        window.apiFetch = async (url, options) => {
+          results.request = { url, body: JSON.parse(options.body) };
+          return { ok: true, status: 200, json: async () => ({ translated: 'nice' }) };
+        };
+        maybeTranslateVoiceCapture('nalla irukku');
+        await new Promise((r) => setTimeout(r, 80));
+        results.ok = { value: input.value, live: document.getElementById('voiceLiveTranscript').textContent };
+        // Failing: the original words stay, and the message says so — never an empty box.
+        input.value = 'nalla irukku';
+        window.apiFetch = async () => ({ ok: false, status: 503, json: async () => ({ error: 'AI search is not configured.' }) });
+        maybeTranslateVoiceCapture('nalla irukku');
+        await new Promise((r) => setTimeout(r, 80));
+        results.failed = { value: input.value, live: document.getElementById('voiceLiveTranscript').textContent };
+        return results;
+      } finally {
+        window.apiFetch = originalApiFetch;
+        captureVoiceTranslateTarget = '';
+        voiceTranslateToken += 1; // discard anything still in flight
+        input.value = '';
+      }
+    });
+    assert.equal(outcome.off.value, 'nalla irukku', 'with translation off the box must not change');
+    assert.equal(outcome.request.url, '/api/ask', 'translation must go through the server, never a browser-exposed key');
+    assert.equal(outcome.request.body.action, 'translate', 'the translate action must be explicit');
+    assert.equal(outcome.ok.value, 'nice', 'the translated words must replace the original in the box');
+    assert.match(outcome.ok.live, /translated to/i, 'the live line must say this is a translation');
+    assert.match(outcome.ok.live, /nalla irukku/, 'the original words must stay visible next to it');
+    assert.equal(outcome.failed.value, 'nalla irukku', 'a failed translation must keep the spoken words');
+    assert.match(outcome.failed.live, /original words were kept/i, 'a failed translation must say what happened');
+  });
 } finally {
   await browser.close();
   server.kill();

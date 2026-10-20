@@ -612,6 +612,23 @@ Captures:
 ${list}`;
 }
 
+/* Translation for the voice capture flow. The output rule is the whole job: the model must
+   return ONLY the translation, in the target language's own script, keeping the punctuation
+   and sentence spacing of the original — anything else would land in a text box the person is
+   about to save. `source` is advisory (the browser's own detection), never required: a wrong
+   guess must not fail the request. */
+export function buildTranslationPrompt({ text, source, target }) {
+  const from = source
+    ? `The speaker was speaking ${source}. `
+    : 'The speaker may have mixed Indian languages and English. ';
+  return `You are a translation engine inside a personal productivity app. Translate the following spoken text into ${target}.
+${from}Preserve the meaning exactly, keep any names, numbers, dates and amounts unchanged, and keep natural punctuation and sentence spacing. Write the translation in the native script of ${target}.
+Respond with ONLY the translation text — no quotes, no labels, no explanation, no romanisation.
+
+Spoken text:
+${text}`;
+}
+
 export function parseCategorization(raw) {
   const text = String(raw || '').trim();
   if (!text) return null;
@@ -688,6 +705,32 @@ export default async function handler(req, res) {
       provider: result.provider,
       model: result.model,
     });
+  }
+
+  // Voice translation. Same provider chain, same keys, same budget discipline as extract —
+  // and, like extract, a failure is never fatal: the browser keeps the original-language
+  // transcript and says so rather than losing the words the person just said.
+  if (body.action === 'translate') {
+    const text = String(body.text || '').trim().slice(0, 4000);
+    const target = String(body.target || '').trim().slice(0, 60);
+    const source = String(body.source || '').trim().slice(0, 60);
+    if (!text) return res.status(400).json({ error: 'Missing text' });
+    if (!target) return res.status(400).json({ error: 'Missing target language' });
+
+    const result = await complete({
+      prompt: buildTranslationPrompt({ text, source, target }),
+      // A spoken sentence or two — a generous ceiling so a transcript is never cut off, small
+      // enough that a translation always fits inside the function's total budget.
+      maxTokens: 800,
+    });
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error, reason: result.reason });
+    }
+    const translated = String(result.answer || '').trim();
+    if (!translated) {
+      return res.status(502).json({ error: 'The model returned an empty translation.', reason: `${result.provider}:empty` });
+    }
+    return res.status(200).json({ translated, provider: result.provider, model: result.model });
   }
 
   // Inbox categorization. Proposes only: the response carries ids and kinds, and the browser

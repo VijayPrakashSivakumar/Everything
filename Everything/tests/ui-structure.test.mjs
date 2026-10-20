@@ -2259,7 +2259,9 @@ check('a recording with no live transcript can be read privately on the device',
   assert.doesNotMatch(html, /@huggingface\/transformers/, 'the speech engine must not load on every page view');
   assert.match(html, /id="voiceLocalSttBtn"/, 'the on-device reader has no entry point in the sheet');
   // Offered only when the live recogniser came back empty, and cleared on every fresh sheet.
-  assert.match(js, /setVoiceLocalSttVisible\(true\)/, 'the reader is never offered after an empty recording');
+  // The flag is whether THIS capture got a recorder going — the shared settle reads it the
+  // same way the old inline `true` did, but silence auto-stop needs it at module level.
+  assert.match(js, /setVoiceLocalSttVisible\(voiceRecordingWasLive\)/, 'the reader is never offered after an empty recording');
   assert.match(js, /setVoiceLocalSttVisible\(false\)/, 'the reader is never hidden again');
   // Its words enter the same capture pipeline as the live path, or they are just an attachment.
   // The window is bounded so the call cannot drift into some other function, but generous enough

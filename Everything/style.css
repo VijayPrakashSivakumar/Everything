@@ -4015,6 +4015,89 @@ h1.page-title {
   margin-top: 4px;
 }
 
+/* The mic on the capture text box: the single-click entry point to voice, wherever the sheet
+   is open. Red and pulsing while listening, amber while the last words are converted — the
+   same two signals the Voice panel's button carries, on the control people actually see. */
+.capture-text-wrap {
+  position: relative;
+}
+.capture-text-wrap #captureText {
+  padding-right: 50px;
+}
+.capture-mic-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+.capture-mic-btn:hover {
+  color: var(--text);
+  transform: scale(1.05);
+}
+.capture-mic-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.capture-mic-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.capture-mic-btn[data-state="recording"] {
+  color: var(--red-fg);
+  border-color: var(--red-fg);
+  animation: capture-mic-pulse 1.2s ease-in-out infinite;
+}
+.capture-mic-btn[data-state="stopping"] {
+  color: var(--amber-fg);
+  border-color: var(--amber-fg);
+}
+@keyframes capture-mic-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+/* The pulse is decoration; the state is already carried by colour, label and aria-pressed. */
+@media (prefers-reduced-motion: reduce) {
+  .capture-mic-btn {
+    animation: none;
+  }
+}
+/* Thumbs are bigger than cursors: the inline mic grows to a full touch target on coarse
+   pointers without changing the desktop layout. */
+@media (pointer: coarse) {
+  .capture-mic-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+/* Translation target for voice capture. A select, not a chip row: seven languages of chips
+   would push the record button off a phone screen, and this is a choice made once. */
+.voice-translate-select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+}
 #voiceRecordBtn {
   width: 100%;
 }
