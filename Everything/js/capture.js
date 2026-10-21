@@ -753,6 +753,7 @@ function startVoiceTranscription() {
       return true;
     } catch (error) {
       captureRecordRecognition = null;
+      captureRecordWantListening = false;
       if (String(error?.name || "").toLowerCase().includes("invalidstate")) {
         clearTimeout(captureRecordRestartTimer);
         captureRecordRestartTimer = setTimeout(() => {
@@ -838,6 +839,23 @@ async function toggleVoiceRecording() {
     if (recording) mediaRecorder.stop();
     return;
   }
+  /* ---------- Upfront availability checks ---------- */
+  const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const hasMediaRecorder = !!window.MediaRecorder;
+
+  if (!hasSpeechRecognition && !hasMediaDevices) {
+    setVoiceLiveTranscript("Your browser cannot record or transcribe voice — please type your capture instead.");
+    setVoiceRecordState("idle");
+    await alertDialog({ title: "Voice not available", body: "This browser does not support speech recognition or microphone access. Use the text input to create tasks, events and notes." });
+    return;
+  }
+  if (!hasSpeechRecognition) {
+    setVoiceLiveTranscript("This browser cannot transcribe speech — the recording will still be saved if your microphone works.");
+  } else if (!hasMediaDevices || !hasMediaRecorder) {
+    setVoiceLiveTranscript("This browser cannot record audio — speech-to-text will still work if the recogniser can start.");
+  }
+
   let stream = null;
   /* The guard goes up before the permission prompt, not after it: two taps during the prompt
      used to both get past this check and race two recorders over one microphone. */
@@ -873,7 +891,17 @@ async function toggleVoiceRecording() {
       } else {
         stopVoiceTranscription();
         setVoiceRecordState("idle");
-        await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+        const hasSR = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+        const hasMD = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        if (!hasSR && !hasMD) {
+          await alertDialog({ title: "Voice unavailable", body: "This browser cannot record audio or transcribe speech. Use the text input to create tasks, events and notes instead." });
+        } else if (!hasSR) {
+          await alertDialog({ title: "Microphone blocked", body: "Speech recognition is not available in this browser, and microphone access was denied. You can still type your capture." });
+        } else if (!hasMD) {
+          await alertDialog({ title: "Microphone unavailable", body: "This browser cannot access the microphone. Speech recognition may still work — try tapping the mic again. Otherwise, type your capture instead." });
+        } else {
+          await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+        }
       }
       return;
     }
@@ -926,7 +954,17 @@ async function toggleVoiceRecording() {
     if (stream) stream.getTracks().forEach((track) => track.stop());
     if (!mediaRecorder || mediaRecorder.state !== "recording") mediaRecorder = null;
     setVoiceRecordState("idle");
-    await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+    const hasSR = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    const hasMD = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    if (!hasSR && !hasMD) {
+      await alertDialog({ title: "Voice unavailable", body: "This browser cannot record audio or transcribe speech. Use the text input to create tasks, events and notes instead." });
+    } else if (!hasSR) {
+      await alertDialog({ title: "Voice not available", body: "Speech recognition is not available in this browser. You can still type your capture to create tasks, events and notes." });
+    } else if (!hasMD) {
+      await alertDialog({ title: "Microphone unavailable", body: "This browser cannot access the microphone. Speech recognition may still work — try tapping the mic again. Otherwise, type your capture instead." });
+    } else {
+      await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+    }
   } finally {
     voiceCaptureBusy = false;
   }
