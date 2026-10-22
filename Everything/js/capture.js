@@ -460,6 +460,11 @@ function settleVoiceCapture() {
     setVoiceLocalSttVisible(voiceRecordingWasLive);
     return;
   }
+  /* The transcript is the captured voice — persist it so the save path can store it
+     alongside the item. This is the only place a capture finishes, so it is the single
+     point of truth for what was dictated. The translation (if any) only rewrites the box;
+     it never replaces the original transcript kept here. */
+  captureVoiceFinal = heard;
   setVoiceLocalSttVisible(false);
   // The waiting state replaced whatever the last result showed; put the words back.
   setVoiceLiveTranscript(`Heard: “${heard}”`);
