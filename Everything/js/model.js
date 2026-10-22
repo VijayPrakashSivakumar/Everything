@@ -538,22 +538,6 @@ function compareDatesDesc(a, b, get) {
   return tb - ta;
 }
 
-/* Full open-task ordering: overdue first, then due date, priority, title, newest.
-   The same rule Tasks, Today and the notification bell share, so the badge can never
-   disagree with the list about what needs you first. */
-function compareOpenTasks(a, b) {
-  const aOverdue = isOverdue(a) ? 0 : 1;
-  const bOverdue = isOverdue(b) ? 0 : 1;
-  if (aOverdue !== bOverdue) return aOverdue - bOverdue;
-  const dueDiff = compareDueDates(a, b);
-  if (dueDiff) return dueDiff;
-  const priorityDiff = taskPriorityRank(a) - taskPriorityRank(b);
-  if (priorityDiff) return priorityDiff;
-  const titleDiff = String(a?.title || "").localeCompare(String(b?.title || ""));
-  if (titleDiff) return titleDiff;
-  return (b?.created || 0) - (a?.created || 0);
-}
-
 /* Day-granularity date compare (expiry, spent-on), newest first: parsed as dates,
    not compared as strings, with missing/unparseable sorting last. */
 function compareDayStringsDesc(aDay, bDay, aCreated, bCreated) {

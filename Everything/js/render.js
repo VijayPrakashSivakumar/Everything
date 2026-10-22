@@ -36,8 +36,23 @@ let activeView = "today";
    while still letting the nav and the back gesture agree about where you are. */
 function switchView(id, options = {}) {
   const mode = options.history === "push" ? "push" : "replace";
-  if (id === "demo" || id === "help") {
+  if (id === "demo") {
     if (typeof demoToggle === "function") demoToggle();
+    return;
+  }
+  if (id === "help") {
+    const helpOverlay = document.getElementById("demoOverlay");
+    if (helpOverlay) {
+      helpOverlay.hidden = false;
+      helpOverlay.classList.add("open");
+      document.body.classList.add("demo-open");
+    }
+    activeView = id;
+    document
+      .querySelectorAll(".view")
+      .forEach((v) => v.classList.remove("active"));
+    const helpView = document.getElementById("view-help");
+    if (helpView) helpView.classList.add("active");
     return;
   }
   if (!document.getElementById("view-" + id)) return;

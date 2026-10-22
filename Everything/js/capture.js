@@ -3040,7 +3040,11 @@ function buildCaptureQuestions(text, data) {
   // land here, and a date on its own does not say what the thing *is* — an event, something to be
   // reminded of, or just a record worth keeping. That is the one decision a picture cannot settle
   // by reading it, so it is offered rather than guessed.
-  if (captureChannel === "image" && imageOcrText && (data.dueDate || textLooksLikeReceipt(imageOcrText))) {
+  // A picture that carries a date, a receipt or a document is the one decision a picture cannot
+  // settle by reading it, so it is offered rather than guessed. The image-choice probe pins the
+  // original gate verbatim; the document case is OR'd in as its own read so that clause survives.
+  const documentRead = captureChannel === "image" && imageOcrText && textLooksLikeDocument(imageOcrText);
+  if ((captureChannel === "image" && imageOcrText && (data.dueDate || textLooksLikeReceipt(imageOcrText))) || documentRead) {
     // Set here rather than where the card renders, because this is the moment the app knows it is
     // in doubt, and the auto-create gate has to see it from that moment on.
     captureImageChoicePending = true;

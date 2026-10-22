@@ -124,10 +124,8 @@ window.demoSkip = demoSkip;
 window.demoRevisit = toggleDemo;
 window.demoNext = () => { if (document.getElementById('demoNext').dataset.action === 'done') demoDone(); else show(st.i + 1, true); };
 window.demoPrev = () => show(st.i - 1, true);
-window.demoGoToSlide = (n) => show(n, true);
 window.demoToggle = toggleDemo;
 window.demoIsSeen = () => { try { return localStorage.getItem(SEEN_KEY) === '1'; } catch (e) { return false; } };
-window.demoMarkSeen = () => { try { localStorage.setItem(SEEN_KEY, '1'); } catch (e) { /* ignore */ } };
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', bind);

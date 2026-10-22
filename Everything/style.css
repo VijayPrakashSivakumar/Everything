@@ -1986,12 +1986,12 @@ h1.page-title,
   display: flex;
 }
 
+/* Two things compete for the search field here. The palette button took 42px, dropping the box to
+   106px against the audit's 120px floor; the theme toggle was the control removed to compensate,
+   wrongly — `prefers-color-scheme` only picks the initial scheme, so the header toggle is the only
+   one-tap route back from a deliberate dark choice. Both are back, with the width reclaimed below
+   from the topbar gap, the side padding and the capture mark: 128px at 390px, over the floor. */
 @media (max-width: 900px) {
-  /* Two things compete for the search field here. The palette button took 42px, dropping the box to
-     106px against the audit's 120px floor; the theme toggle was the control removed to compensate,
-     wrongly — `prefers-color-scheme` only picks the initial scheme, so the header toggle is the only
-     one-tap route back from a deliberate dark choice. Both are back, with the width reclaimed below
-     from the topbar gap, the side padding and the capture mark: 128px at 390px, over the floor. */
   .search-box .kbd {
     display: none;
   }
@@ -6597,7 +6597,6 @@ body.demo-open {
   font-size: var(--fs-meta);
 }
 
-.ticket-empty-note,
 .ticket-updated {
   font-size: var(--fs-meta);
   color: var(--muted);
