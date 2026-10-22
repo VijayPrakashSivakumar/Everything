@@ -530,10 +530,6 @@
         </div>
         <div class="sidebar-caption">MENU</div>
         <div class="nav" id="navList"></div>
-        <button class="sidebar-palette-btn" id="sidebarPaletteBtn" onclick="openPaletteFromSidebar()" title="Jump to anything" aria-label="Jump to a page, task, person or project">
-          <i data-lucide="command" aria-hidden="true"></i>
-          <span class="sidebar-palette-label">Jump</span>
-        </button>
         <button class="capture-btn" onclick="openCapture()">
           <span class="capture-icon" aria-hidden="true">
             <svg class="capture-mark brand-loader brand-loader--md" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -2254,6 +2250,8 @@
 
     <!-- Command palette. Ctrl+K / ⌘K opens Ask, so the palette lives on Ctrl+Shift+K and "/"
          stays with Ask. Two different things behind one key is how a shortcut becomes a coin flip. -->
+    <button id="floatingJump" class="floating-jump" aria-label="Jump to anything" title="Jump to anything" onclick="openCommandPalette()">☰</button>
+
     <div class="ask-overlay" id="commandPalette" role="dialog" aria-modal="true" aria-label="Command palette" onclick="if (event.target === this) closeCommandPalette();">
       <div class="ask-panel">
         <input
@@ -3680,6 +3678,20 @@
       </div>
     </div>
   </div>
+
+<script>
+(function(){
+  var b=document.getElementById('floatingJump'); if(!b) return;
+  var dragging=false,ox=0,oy=0;
+  function start(e){dragging=true;b.style.transition='none';var t=e.touches?e.touches[0]:e;ox=t.clientX-b.offsetLeft;oy=t.clientY-b.offsetTop;e.preventDefault();}
+  function move(e){if(!dragging)return;var t=e.touches?e.touches[0]:e;b.style.left=(t.clientX-ox)+'px';b.style.right='auto';b.style.top=(t.clientY-oy)+'px';b.style.bottom='auto';}
+  function end(){if(dragging){dragging=false;b.style.transition='';localStorage.setItem('floatingJumpPos',JSON.stringify({left:b.style.left,top:b.style.top}));}}
+  b.addEventListener('mousedown',start);b.addEventListener('touchstart',start,{passive:false});
+  window.addEventListener('mousemove',move);window.addEventListener('touchmove',move,{passive:false});
+  window.addEventListener('mouseup',end);window.addEventListener('touchend',end);
+  try{var p=JSON.parse(localStorage.getItem('floatingJumpPos')||'null');if(p&&p.left){b.style.left=p.left;b.style.top=p.top;b.style.right='auto';b.style.bottom='auto';}}catch(e){}
+})();
+</script>
 
 </body>
   </body>
