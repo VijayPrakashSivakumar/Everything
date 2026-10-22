@@ -42,8 +42,32 @@ function repairVersionMismatch() {
    Every later use is already written as `sb?.…`, so null is the shape the rest of the file expects.
    The one thing that must not happen is throwing here, because a top-level throw takes the page
    down with it. */
+const REMEMBERED_SESSION_KEY = "everything_remembered_session_until";
+const REMEMBERED_SESSION_MS = 24 * 60 * 60 * 1000;
+
+/* Supabase normally keeps its session in localStorage indefinitely. The opt-in choice below
+   lasts one day; otherwise the auth token lives for this browser tab/session. Passwords are never
+   stored here: only Supabase's refreshable auth session is persisted. */
 const sb = typeof supabase !== "undefined" && supabase?.createClient
-  ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: {
+        storage: {
+          getItem(key) {
+            return localStorage.getItem(key) ?? sessionStorage.getItem(key);
+          },
+          setItem(key, value) {
+            const rememberUntil = Number(localStorage.getItem(REMEMBERED_SESSION_KEY) || 0);
+            const persistent = rememberUntil > Date.now();
+            (persistent ? localStorage : sessionStorage).setItem(key, value);
+            (persistent ? sessionStorage : localStorage).removeItem(key);
+          },
+          removeItem(key) {
+            localStorage.removeItem(key);
+            sessionStorage.removeItem(key);
+          },
+        },
+      },
+    })
   : null;
 
 /* Opening index.html straight from disk runs the app on the file:// protocol, where the
@@ -692,8 +716,13 @@ function restoreRememberedEmail() {
   const emailInput = document.getElementById("authEmail");
   const rememberMe = document.getElementById("rememberMe");
   const rememberedEmail = localStorage.getItem(REMEMBERED_EMAIL_KEY);
+  const rememberUntil = Number(localStorage.getItem(REMEMBERED_SESSION_KEY) || 0);
   if (emailInput && rememberedEmail) emailInput.value = rememberedEmail;
-  if (rememberMe) rememberMe.checked = Boolean(rememberedEmail);
+  if (rememberMe) rememberMe.checked = Boolean(rememberedEmail && rememberUntil > Date.now());
+  if (rememberUntil && rememberUntil <= Date.now()) {
+    localStorage.removeItem(REMEMBERED_SESSION_KEY);
+    localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+  }
 }
 
 function isAppInstalled() {
@@ -779,8 +808,10 @@ async function authSignIn() {
     }
     if (rememberMe?.checked) {
       localStorage.setItem(REMEMBERED_EMAIL_KEY, email);
+      localStorage.setItem(REMEMBERED_SESSION_KEY, String(Date.now() + REMEMBERED_SESSION_MS));
     } else {
       localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+      localStorage.removeItem(REMEMBERED_SESSION_KEY);
     }
     authError.textContent = "";
   } catch (err) {

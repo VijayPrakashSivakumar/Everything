@@ -59,6 +59,7 @@ try {
         const first = getComputedStyle(run).strokeDashoffset;
         const animations = run.getAnimations().filter((animation) => animation.playState === 'running');
         const animation = animations[0];
+        const gradientId = run.getAttribute('stroke')?.match(/^url\(#(.+)\)$/)?.[1];
         await new Promise((resolve) => setTimeout(resolve, 260));
         return {
           count: animations.length,
@@ -68,6 +69,9 @@ try {
           name: animation?.animationName,
           duration: getComputedStyle(run).animationDuration,
           dashLengths: animation?.effect.getKeyframes().map((frame) => frame.strokeDasharray),
+          stroke: run.getAttribute('stroke'),
+          gradientExists: Boolean(gradientId && document.getElementById(gradientId)),
+          track: Boolean(document.querySelector('.mobile-capture-btn .loader-track')),
         };
       });
     } finally {
@@ -82,8 +86,59 @@ try {
       `the Capture mark is not using its scoped animation (${motion.name})`);
     assert.equal(motion.duration, '1.4s',
       `the Capture animation timing changed (${motion.duration})`);
+    assert.equal(motion.gradientExists, true,
+      `the Capture animation refers to a missing brand colour (${motion.stroke})`);
+    assert.equal(motion.track, true, 'the topbar mark lost its visible brand track');
     assert.deepEqual(motion.dashLengths, ['0.06px, 0.94px', '0.45px, 0.55px', '0.06px, 0.94px'],
       `the traveling segment is not 25% smaller at both animation sizes (${motion.dashLengths})`);
+  });
+
+  await check('the Everything wordmark carries the same moving blue-purple gradient', async () => {
+    const motion = await page.evaluate(async () => {
+      const name = document.querySelector('.brand-name');
+      const first = getComputedStyle(name).backgroundPosition;
+      const animation = name.getAnimations().find((entry) => entry.playState === 'running');
+      await new Promise((resolve) => setTimeout(resolve, 280));
+      const style = getComputedStyle(name);
+      return {
+        gradient: style.backgroundImage,
+        clip: style.backgroundClip,
+        first,
+        second: style.backgroundPosition,
+        animation: animation?.animationName,
+      };
+    });
+    assert.match(motion.gradient, /linear-gradient.*rgb\(/i,
+      `the wordmark gradient is missing (${motion.gradient})`);
+    assert.equal(motion.clip, 'text', `the gradient is not clipped to the letters (${motion.clip})`);
+    assert.equal(motion.animation, 'brand-name-gradient',
+      `the wordmark has no gradient animation (${motion.animation})`);
+    assert.notEqual(motion.first, motion.second, 'the wordmark gradient does not move');
+  });
+
+  await check('premium colorway shuffling changes only the wordmark', async () => {
+    const result = await page.evaluate(() => {
+      const name = document.querySelector('.brand-name');
+      const previous = name.dataset.palette;
+      const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+      const markStroke = document.querySelector('.brand-capture-mark .loader-run').getAttribute('stroke');
+      const next = shuffleBrandNamePalette();
+      return {
+        previous,
+        next,
+        paletteCount: BRAND_NAME_PALETTES.length,
+        accent,
+        accentAfter: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+        markStroke,
+        markStrokeAfter: document.querySelector('.brand-capture-mark .loader-run').getAttribute('stroke'),
+        startColor: name.style.getPropertyValue('--brand-name-color-start'),
+      };
+    });
+    assert.ok(result.paletteCount >= 5, 'the wordmark needs several premium colorways');
+    assert.notEqual(result.next, result.previous, 'the next palette repeated immediately');
+    assert.match(result.startColor, /^#[0-9a-f]{6}$/i, 'the new palette was not applied to the wordmark');
+    assert.equal(result.accentAfter, result.accent, 'shuffling changed the app accent color');
+    assert.equal(result.markStrokeAfter, result.markStroke, 'shuffling changed the Capture mark');
   });
 
   await check('navigating to a view plays an arrival animation', async () => {
@@ -306,14 +361,18 @@ await check('every motion keyframe uses tokens, not literal durations', async ()
     assert.equal(scale, '0', `--motion-scale is "${scale}" under reduced motion, expected 0`);
   });
 
-  await check('reduced motion leaves the topbar Capture mark still and readable', async () => {
+  await check('reduced motion leaves the topbar Capture mark and wordmark still and readable', async () => {
     const desktop = still.viewportSize();
     let motion;
     try {
       await still.setViewportSize({ width: 390, height: 844 });
       motion = await still.evaluate(() => {
         const style = getComputedStyle(document.querySelector('.mobile-capture-btn .loader-run'));
-        return { animation: style.animationName, dasharray: style.strokeDasharray };
+        return {
+          animation: style.animationName,
+          dasharray: style.strokeDasharray,
+          wordmarkAnimation: getComputedStyle(document.querySelector('.brand-name')).animationName,
+        };
       });
     } finally {
       await still.setViewportSize(desktop);
@@ -321,6 +380,7 @@ await check('every motion keyframe uses tokens, not literal durations', async ()
     assert.equal(motion.animation, 'none', 'the Capture mark still moves under reduced motion');
     assert.equal(motion.dasharray, '0.5px, 0.5px',
       `the still Capture mark is not drawn as a solid status mark (${motion.dasharray})`);
+    assert.equal(motion.wordmarkAnimation, 'none', 'the wordmark still moves under reduced motion');
   });
 
   await check('reduced motion also beats the theme concepts', async () => {

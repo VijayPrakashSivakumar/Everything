@@ -41,6 +41,22 @@ function check(name, fn) {
   return promise;
 }
 
+check('sign-in can remember a session for one day without storing the password', () => {
+  assert.match(html, /id="rememberMe"[^>]*\/>\s*Stay signed in for 1 day on this device/,
+    'the login checkbox must explain its one-day session behavior');
+  assert.match(js, /const REMEMBERED_SESSION_MS = 24 \* 60 \* 60 \* 1000/,
+    'the remember choice must expire after one day');
+  assert.match(js, /storage:\s*\{[\s\S]*?getItem\(key\)[\s\S]*?setItem\(key, value\)[\s\S]*?removeItem\(key\)/,
+    'Supabase must use the selected browser storage for its auth session');
+  assert.match(js, /localStorage\.setItem\(REMEMBERED_SESSION_KEY, String\(Date\.now\(\) \+ REMEMBERED_SESSION_MS\)\)/,
+    'checking Remember must set the one-day expiry');
+  assert.match(js, /sessionStorage\)\.setItem\(key, value\)/,
+    'unchecked sign-in must keep the session to the current browser session');
+  assert.doesNotMatch(between('async function authSignIn', 'function togglePasswordVisibility'),
+    /localStorage\.setItem\([^\n]*password/i,
+    'the account password must never be written to browser storage');
+});
+
 check('support tickets use the authenticated Supabase client without an API function', () => {
   const support = fs.readFileSync(path.join(root, 'js/support.js'), 'utf8');
   assert.match(support, /sb\.from\('tickets'\)\.insert/, 'tickets are not inserted through the app Supabase client');
@@ -189,7 +205,8 @@ check('a pale theme cannot leave sidebar text unreadable', () => {
   assert.match(css, /\.nav-item \{[\s\S]{0,400}?color: var\(--nav-fg\)/, 'nav text ignores the token');
   assert.match(css, /\.nav-item\.active \{[\s\S]{0,120}?color: var\(--sidebar-fg-strong\)/, 'active nav is hard-coded white');
   assert.match(css, /\.capture-label \{[\s\S]{0,80}?color: var\(--sidebar-fg-strong\)/, 'the Capture label is hard-coded white');
-  assert.match(css, /\.brand-name \{[\s\S]{0,200}?color: var\(--sidebar-fg-strong\)/, 'the brand name is hard-coded white');
+  assert.match(css, /\.brand-name \{[\s\S]{0,500}?background-clip: text/, 'the brand name is missing its gradient treatment');
+  assert.match(css, /\.brand-name \{[\s\S]{0,500}?color: #[0-9a-f]{6}/i, 'the brand name has no readable fallback color');
   assert.match(css, /\.hero-card \{[\s\S]{0,80}?background: var\(--brand-gradient\)/, 'the hero card gradient is hard-coded');
   // The nav was fixed first and the bottom of the sidebar was missed: the profile block and the
   // capture button were still hard-coded white, which vanishes on a pale sidebar.

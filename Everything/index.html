@@ -305,7 +305,7 @@
             "
           >
             <input id="rememberMe" type="checkbox" />
-            Remember my email
+            Stay signed in for 1 day on this device
           </label>
           <p style="text-align: right; margin: 6px 0 0">
             <span
@@ -389,8 +389,8 @@
               2. Sign in
             </p>
             <p style="margin: 0 0 12px">
-              Use the same email and password. Tick <b>Remember my email</b> and the app will
-              fill it in next time. Anyone in your household can add a task to your shared
+              Use the same email and password. Tick <b>Stay signed in for 1 day</b> to keep this
+              device signed in until tomorrow. Anyone in your household can add a task to your shared
               lists once they have joined with your invite code (Settings &rarr; Household).
             </p>
 
@@ -572,11 +572,26 @@
           >
             <!-- Same brand paint as the sidebar mark, so both read as one logo. -->
             <svg class="capture-mark" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <defs>
+                <linearGradient id="mobileCaptureGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#4361ee" />
+                  <stop offset="100%" stop-color="#7b2ff7" />
+                </linearGradient>
+              </defs>
+              <path
+                class="loader-track"
+                d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
+                fill="none"
+                stroke="var(--accent)"
+                stroke-width="4.5"
+                stroke-linecap="round"
+                pathLength="1"
+              />
               <path
                 class="loader-run"
                 d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
                 fill="none"
-                stroke="url(#logoGrad)"
+                stroke="url(#mobileCaptureGrad)"
                 stroke-width="4.5"
                 stroke-linecap="round"
                 pathLength="1"
