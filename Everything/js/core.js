@@ -2182,6 +2182,7 @@ if (!window.demoIsSeen() && typeof window.__showOnboardingDeck === "function") {
     syncReadyPromise = null;
     authScreen.style.display = "flex";
   }
+  if (window.__updateFloatingJump) window.__updateFloatingJump();
 }
 
 /* Top-level, so it runs while core.js is still evaluating — and it used to throw

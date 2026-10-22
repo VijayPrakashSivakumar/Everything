@@ -83,6 +83,7 @@ function switchView(id, options = {}) {
   // Keep the current entry truthful even when no new one was added, so a back press arriving
   // from outside (a restored tab, a hardware back) still knows which view to show.
   if (changed && mode === "replace") navReplaceView(id);
+  if (window.__updateFloatingJump) window.__updateFloatingJump();
 
   const content = document.querySelector(".content");
   if (content) content.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -109,18 +110,20 @@ function switchView(id, options = {}) {
 function syncSidebarMode() {
   const sidebar = document.getElementById("sidebar");
   const btn = document.querySelector(".sidebar-collapse");
-  if (!sidebar || !btn) return;
+  if (!sidebar) return;
   const isMobile = sidebarMedia.matches;
   const collapsed = sidebar.classList.contains("collapsed");
-  const name = isMobile ? "x" : collapsed ? "chevron-right" : "chevron-left";
-  const label = isMobile
-    ? "Close menu"
-    : collapsed
-      ? "Expand sidebar"
-      : "Collapse sidebar";
-  btn.innerHTML = icon(name);
-  btn.title = label;
-  btn.setAttribute("aria-label", label);
+  if (btn) {
+    const name = isMobile ? "x" : collapsed ? "chevron-right" : "chevron-left";
+    const label = isMobile
+      ? "Close menu"
+      : collapsed
+        ? "Expand sidebar"
+        : "Collapse sidebar";
+    btn.innerHTML = icon(name);
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+  }
   const hamburger = document.getElementById("hamburger");
   if (hamburger) {
     hamburger.style.display = isMobile ? "flex" : "none";
@@ -176,6 +179,29 @@ function toggleSidebarCollapse() {
   syncSidebarMode();
 }
 
+/* Desktop collapsed rail behaves like an auto-hiding taskbar: entering expands it,
+   leaving returns it to the compact icon rail. Touch drawers remain explicitly controlled. */
+function initSidebarAutoHide() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+  const canHover = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const expandedByHover = { value: false };
+  const enter = () => {
+    if (!canHover.matches || sidebarMedia.matches || !sidebar.classList.contains("collapsed")) return;
+    expandedByHover.value = true;
+    sidebar.classList.remove("collapsed");
+  };
+  const leave = () => {
+    if (!expandedByHover.value) return;
+    expandedByHover.value = false;
+    if (!sidebarMedia.matches && localStorage.getItem("everything_sidebar_collapsed") === "1") {
+      sidebar.classList.add("collapsed");
+    }
+  };
+  sidebar.addEventListener("pointerenter", enter);
+  sidebar.addEventListener("pointerleave", leave);
+}
+
 function restoreSidebarCollapse() {
   if (localStorage.getItem("everything_sidebar_collapsed") === "1")
     document.getElementById("sidebar").classList.add("collapsed");
@@ -184,6 +210,7 @@ function restoreSidebarCollapse() {
 const sidebarMedia = window.matchMedia("(max-width:900px)");
 if (typeof sidebarMedia.addEventListener === "function")
   sidebarMedia.addEventListener("change", syncSidebarMode);
+initSidebarAutoHide();
 
 /* The search placeholder is prose, and prose is the first thing to break when the field is narrow.
 

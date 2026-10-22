@@ -1,6 +1,7 @@
-.floating-jump{position:fixed;bottom:24px;right:24px;width:48px;height:48px;border-radius:50%;border:none;background:var(--accent,#6366f1);color:#fff;font-size:20px;cursor:grab;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.3);touch-action:none;display:none;}
+.floating-jump{position:fixed;bottom:24px;right:24px;width:48px;height:48px;padding:0;border-radius:50%;border:none;background:var(--accent,#6366f1);color:#fff;font-size:20px;cursor:grab;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.3);touch-action:none;display:none;align-items:center;justify-content:center;line-height:1;}
 .floating-jump:active{cursor:grabbing;}
-.floating-jump.show{display:block;}
+.floating-jump.show{display:flex;}
+.floating-jump svg,.floating-jump [data-lucide]{display:block;width:20px;height:20px;margin:0;padding:0;flex:0 0 20px;stroke-width:1.8;pointer-events:none;}
 
 :root {
   --sidebar: #10152b;
@@ -1382,8 +1383,29 @@ h1.page-title,
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px 18px;
+  padding: 6px 0 18px;
 }
+
+.brand-home {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  min-width: max-content;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+  box-shadow: var(--shadow-none);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.brand-home:hover { background: transparent; }
+.brand-home:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
 
 /* Soft ambient glow behind the mark: depth without adding chrome. */
 .brand::before {
@@ -1413,12 +1435,25 @@ h1.page-title,
   transition: transform var(--dur-4) var(--ease), filter var(--dur-4) var(--ease);
 }
 
-.brand:hover .brand-mark {
+.brand-capture-mark .loader-track {
+  stroke: var(--accent);
+  opacity: 0.2;
+}
+
+.brand-capture-mark .loader-run {
+  stroke: url(#sidebarLogoGrad);
+  stroke-dasharray: 0.06 0.94;
+  animation: capture-mark-loader-run 1.4s linear infinite;
+}
+
+.brand-home:hover .brand-mark {
   transform: translateY(-1px);
   filter: drop-shadow(0 4px 10px rgba(124, 58, 237, 0.42));
 }
 
 .brand-name {
+  display: block;
+  white-space: nowrap;
   font-weight: var(--fw-bold);
   font-size: var(--fs-title);
   letter-spacing: var(--tracking-wide);
@@ -1456,30 +1491,39 @@ h1.page-title,
 
 /* Collapsed rail: the mark stays centred and the same button expands it again. */
 .sidebar.collapsed .brand {
-  flex-wrap: wrap;
+  display: flex;
+  height: 48px;
+  min-height: 48px;
+  flex: 0 0 48px;
+  align-items: center;
   justify-content: center;
-  row-gap: 8px;
-  padding-left: 0;
-  padding-right: 0;
+  padding: 0;
+}
+
+.sidebar.collapsed .brand-home {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  margin: 0;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.sidebar.collapsed .brand-home .brand-mark {
+  width: 44px;
+  pointer-events: auto;
 }
 
 .sidebar.collapsed .brand::before {
   left: 50%;
-  top: 2px;
+  top: 4px;
   width: 50px;
   transform: translateX(-50%);
 }
 
-.sidebar.collapsed .brand-mark {
-  width: 44px;
-}
-
 .sidebar.collapsed .brand-name {
   display: none;
-}
-
-.sidebar.collapsed .sidebar-collapse {
-  margin-left: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1489,8 +1533,14 @@ h1.page-title,
     transition: none;
   }
 
-  .brand:hover .brand-mark {
+  .brand-home:hover .brand-mark {
     transform: none;
+  }
+
+  .brand-capture-mark .loader-run {
+    animation: none;
+    stroke-dasharray: 0.5 0.5;
+    stroke-dashoffset: 0;
   }
 }
 
@@ -2457,7 +2507,8 @@ h1.page-title,
   /* A loader that stops moving has to stop looking like a spinner and start looking like a status,
      or it becomes a still ring nobody can tell from a stuck app — the exact problem it was built to
      solve. Half the loop is drawn solid instead, which is static and still unmistakably "working". */
-  .brand-loader .loader-run {
+  .brand-loader .loader-run,
+  .brand-capture-mark .loader-run {
     animation: none;
     stroke-dasharray: 0.5 0.5;
     stroke-dashoffset: 0;
@@ -4207,8 +4258,51 @@ h1.page-title {
   display: flex;
   flex-shrink: 0;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   margin-top: 14px;
+}
+
+/* Capture sheet controls share one height and icon/label baseline. The generic chips and buttons
+   otherwise inherit slightly different line heights, which makes the picker and actions look uneven. */
+.modal-capture .btn {
+  box-sizing: border-box;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  line-height: 1.2;
+}
+
+.modal-capture .type-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-capture .type-chip {
+  box-sizing: border-box;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.modal-capture .modal-actions .btn {
+  min-width: 96px;
+}
+
+.modal-capture #imageCaptureUI > div[style*="display: flex"] {
+  align-items: stretch;
+  gap: 8px !important;
+}
+
+.modal-capture #imageCaptureUI > div[style*="display: flex"] .btn {
+  flex: 1 1 0;
 }
 
 /* Search / Ask panel */
@@ -5089,10 +5183,33 @@ h1.page-title {
   }
 
   .sidebar.collapsed .brand {
+    display: flex;
+    height: auto;
+    min-height: 0;
+    flex: 0 0 auto;
     flex-wrap: nowrap;
     justify-content: flex-start;
     padding-left: 8px;
     padding-right: 8px;
+  }
+
+  .sidebar.collapsed .brand-home {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    justify-content: flex-start;
+    flex: 0 0 auto;
+    min-width: max-content;
+    margin: 0;
+    pointer-events: auto;
+  }
+
+  .sidebar.collapsed .sidebar-collapse {
+    position: static;
+    z-index: auto;
+    margin-left: auto;
   }
 
   .sidebar.collapsed .brand::before {
@@ -5110,7 +5227,6 @@ h1.page-title {
   .sidebar.collapsed .sidebar-collapse,
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .nav-badge,
-  .sidebar.collapsed .capture-label,
   .sidebar.collapsed .sidebar-caption,
   .sidebar.collapsed .sidebar-profile-copy {
     display: revert;
@@ -6850,6 +6966,15 @@ body.demo-open {
     min-height: 38px;
     flex: 0 0 auto;
     scroll-snap-align: start;
+  }
+
+  .modal-capture .modal-actions {
+    gap: 10px;
+  }
+
+  .modal-capture .modal-actions .btn {
+    min-width: 0;
+    flex: 1 1 0;
   }
 
   #typeRow .type-chip {

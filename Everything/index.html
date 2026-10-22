@@ -275,6 +275,7 @@
               placeholder="Password"
               type="password"
               style="padding-right: 42px"
+              onkeydown="if (event.key === 'Enter') { event.preventDefault(); authSignIn(); }"
             />
             <span
               onclick="
@@ -499,74 +500,44 @@
     <div class="app">
       <div class="sidebar" id="sidebar">
         <div class="brand">
+          <button class="brand-home" type="button" onclick="openCapture()" title="Open Capture" aria-label="Everything — open Capture">
           <svg
-            class="brand-mark"
+            class="brand-mark brand-capture-mark"
             viewBox="0 0 40 24"
             xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
           >
             <defs>
-              <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <linearGradient id="sidebarLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stop-color="#4361ee" />
                 <stop offset="100%" stop-color="#7b2ff7" />
               </linearGradient>
             </defs>
             <path
+              class="loader-track"
               d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
               fill="none"
-              stroke="url(#logoGrad)"
+              stroke="var(--accent)"
               stroke-width="4.5"
               stroke-linecap="round"
+              pathLength="1"
+            />
+            <path
+              class="loader-run"
+              d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
+              fill="none"
+              stroke="url(#sidebarLogoGrad)"
+              stroke-width="4.5"
+              stroke-linecap="round"
+              pathLength="1"
+              stroke-dasharray="0.08 0.92"
             />
           </svg>
-          <div class="brand-name">EVERYTHING</div>
-          <button
-            class="sidebar-collapse"
-            onclick="toggleSidebarCollapse()"
-            title="Collapse sidebar"
-            aria-label="Collapse sidebar"
-          >
-            <i data-lucide="chevron-left" aria-hidden="true"></i>
+          <span class="brand-name">EVERYTHING</span>
           </button>
         </div>
         <div class="sidebar-caption">MENU</div>
         <div class="nav" id="navList"></div>
-        <button class="capture-btn" onclick="openCapture()">
-          <span class="capture-icon" aria-hidden="true">
-            <svg class="capture-mark brand-loader brand-loader--md" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <defs>
-                <linearGradient id="captureGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#4361ee" />
-                  <stop offset="100%" stop-color="#7b2ff7" />
-                </linearGradient>
-              </defs>
-              <!-- Static track: the whole loop, held quietly so the travelling segment has a
-                   known path to travel rather than appearing out of nowhere. -->
-              <path
-                class="loader-track"
-                d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
-                fill="none"
-                stroke="var(--accent)"
-                stroke-width="4.5"
-                stroke-linecap="round"
-                pathLength="1"
-              />
-              <!-- Travelling segment: the same mark, poured along the track with a swell as it
-                   reaches the widest point and a retract as it returns. Matches the in-app loader
-                   and the topbar capture logo so the dashboard capture module reads as one animation,
-                   not two. -->
-              <path
-                class="loader-run"
-                d="M8,12 C8,6 14,6 20,12 C26,18 32,18 32,12 C32,6 26,6 20,12 C14,18 8,18 8,12 Z"
-                fill="none"
-                stroke="url(#captureGrad)"
-                stroke-width="4.5"
-                stroke-linecap="round"
-                pathLength="1"
-                stroke-dasharray="0.08 0.92"
-              />
-            </svg>
-          </span><span class="capture-label">Capture</span>
-        </button>
         <button class="sidebar-profile" onclick="switchView('settings')" title="Open settings">
           <span class="sidebar-profile-avatar" id="sidebarProfileInitial">?</span>
           <span class="sidebar-profile-copy"><strong id="sidebarProfileName">Your account</strong><small>Settings</small></span>
@@ -2250,7 +2221,7 @@
 
     <!-- Command palette. Ctrl+K / ⌘K opens Ask, so the palette lives on Ctrl+Shift+K and "/"
          stays with Ask. Two different things behind one key is how a shortcut becomes a coin flip. -->
-    <button id="floatingJump" class="floating-jump" aria-label="Jump to anything" title="Jump to anything" onclick="openCommandPalette()">☰</button>
+    <button id="floatingJump" class="floating-jump" type="button" aria-label="Jump to anything" title="Jump to anything"><i data-lucide="command" aria-hidden="true"></i></button>
 
     <div class="ask-overlay" id="commandPalette" role="dialog" aria-modal="true" aria-label="Command palette" onclick="if (event.target === this) closeCommandPalette();">
       <div class="ask-panel">
@@ -3682,17 +3653,56 @@
 <script>
 (function(){
   var b=document.getElementById('floatingJump'); if(!b) return;
-  function update(){var a=document.getElementById('authScreen');var loggedIn=!(a&&a.offsetParent!==null&&getComputedStyle(a).display!=='none');if(loggedIn)b.classList.add('show');else b.classList.remove('show');}
-  update();setInterval(update,1000);
-  var dragging=false,moved=false,sx=0,sy=0,ox=0,oy=0;
-  function start(e){moved=false;var t=e.touches?e.touches[0]:e;sx=t.clientX;sy=t.clientY;ox=t.clientX-b.offsetLeft;oy=t.clientY-b.offsetTop;dragging=true;b.style.transition='none';}
-  function move(e){if(!dragging)return;var t=e.touches?e.touches[0]:e;if(Math.abs(t.clientX-sx)>6||Math.abs(t.clientY-sy)>6)moved=true;if(!moved)return;if(moved){e.preventDefault();b.style.left=(t.clientX-ox)+'px';b.style.right='auto';b.style.top=(t.clientY-oy)+'px';b.style.bottom='auto';}}
-  function end(){if(dragging){dragging=false;b.style.transition='';if(moved)localStorage.setItem('floatingJumpPos',JSON.stringify({left:b.style.left,top:b.style.top}));}}
-  b.addEventListener('mousedown',start);b.addEventListener('touchstart',start,{passive:true});
-  window.addEventListener('mousemove',move);window.addEventListener('touchmove',move,{passive:false});
-  window.addEventListener('mouseup',end);window.addEventListener('touchend',end);
-  b.addEventListener('click',function(e){if(moved){e.preventDefault();e.stopPropagation();moved=false;}});
-  try{var p=JSON.parse(localStorage.getItem('floatingJumpPos')||'null');if(p&&p.left){b.style.left=p.left;b.style.top=p.top;b.style.right='auto';b.style.bottom='auto';}}catch(e){}
+  var drag=null, moved=false, clickTimer=0;
+  function update(){
+    var auth=document.getElementById('authScreen');
+    var dashboard=document.getElementById('view-today');
+    var signedIn=!!auth&&getComputedStyle(auth).display==='none';
+    var onDashboard=!!dashboard&&dashboard.classList.contains('active');
+    var mobileOrTablet=window.matchMedia('(max-width: 1024px)').matches;
+    b.classList.toggle('show',signedIn&&onDashboard&&mobileOrTablet);
+  }
+  window.__updateFloatingJump=update;
+  update();
+  if(window.refreshIcons) window.refreshIcons();
+  var observer=new MutationObserver(update);
+  var auth=document.getElementById('authScreen'), dashboard=document.getElementById('view-today');
+  if(auth) observer.observe(auth,{attributes:true,attributeFilter:['style','class']});
+  if(dashboard) observer.observe(dashboard,{attributes:true,attributeFilter:['class']});
+  var viewport=window.matchMedia('(max-width: 1024px)');
+  if(viewport.addEventListener) viewport.addEventListener('change',update);
+  else viewport.addListener(update);
+  function point(e){return {x:e.clientX,y:e.clientY};}
+  b.addEventListener('pointerdown',function(e){
+    if(!b.classList.contains('show')||e.button!==0)return;
+    var p=point(e); moved=false;
+    drag={id:e.pointerId,x:p.x,y:p.y,left:b.offsetLeft,top:b.offsetTop};
+    b.setPointerCapture(e.pointerId);
+  });
+  b.addEventListener('pointermove',function(e){
+    if(!drag||drag.id!==e.pointerId)return;
+    var p=point(e),dx=p.x-drag.x,dy=p.y-drag.y;
+    if(!moved&&Math.hypot(dx,dy)>8){moved=true;b.style.transition='none';}
+    if(!moved)return;
+    e.preventDefault();
+    var x=Math.max(0,Math.min(innerWidth-b.offsetWidth,drag.left+dx));
+    var y=Math.max(0,Math.min(innerHeight-b.offsetHeight,drag.top+dy));
+    b.style.left=x+'px';b.style.top=y+'px';b.style.right='auto';b.style.bottom='auto';
+  });
+  function end(e){
+    if(!drag||drag.id!==e.pointerId)return;
+    drag=null;b.style.transition='';
+    if(moved){
+      try{localStorage.setItem('floatingJumpPos',JSON.stringify({left:b.style.left,top:b.style.top}));}catch(_){ }
+      clearTimeout(clickTimer);clickTimer=setTimeout(function(){moved=false;},400);
+    }
+  }
+  b.addEventListener('pointerup',end);b.addEventListener('pointercancel',end);
+  b.addEventListener('click',function(e){
+    if(moved){e.preventDefault();e.stopPropagation();moved=false;clearTimeout(clickTimer);return;}
+    openCommandPalette();
+  });
+  try{var saved=JSON.parse(localStorage.getItem('floatingJumpPos')||'null');if(saved&&Number.isFinite(parseFloat(saved.left))&&Number.isFinite(parseFloat(saved.top))){b.style.left=saved.left;b.style.top=saved.top;b.style.right='auto';b.style.bottom='auto';}}catch(e){}
 })();
 </script>
 
