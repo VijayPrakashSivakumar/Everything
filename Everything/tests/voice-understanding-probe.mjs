@@ -79,6 +79,7 @@ try {
     return {
       channel: captureChannel,
       type: captureType,
+      language: captureVoiceLang,
       // The panel the person can still see — a re-typed capture must not hide the recorder.
       voicePanel: getComputedStyle(document.getElementById('voiceCaptureUI')).display,
       person: document.getElementById('capturePerson').value,
@@ -108,6 +109,43 @@ try {
     assert.equal(r.channel, 'voice', 'the capture must still be a voice capture');
     assert.equal(r.type, 'event', `expected an event, got ${r.type}`);
     assert.ok(r.due, 'the time was not read out of the sentence');
+  });
+
+  await check('Tamil text is preserved and its task date is understood', async () => {
+    const sentence = 'நாளை ரவிக்கு அழைக்க வேண்டும்';
+    const r = await dictate(sentence);
+    assert.equal(r.channel, 'voice');
+    assert.equal(r.type, 'task', `Tamil task was classified as ${r.type}`);
+    assert.equal(r.language, 'ta-IN', 'Tamil script did not select Tamil for voice input');
+    assert.ok(r.due, 'Tamil நாளை (tomorrow) was not resolved');
+    assert.equal(await page.locator('#captureText').inputValue(), sentence, 'the Tamil sentence was translated or rewritten');
+  });
+
+  await check('typed Tamil text uses the same editable classification path', async () => {
+    const sentence = 'நாளை ரவிக்கு அழைக்க வேண்டும்';
+    const r = await page.evaluate(async (value) => {
+      openCapture();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const input = document.getElementById('captureText');
+      input.value = value;
+      onCaptureInput();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return { channel: captureChannel, type: captureType, due: document.getElementById('captureDueDate').value, text: input.value };
+    }, sentence);
+    assert.equal(r.channel, 'text');
+    assert.equal(r.type, 'task');
+    assert.ok(r.due, 'Tamil date was not parsed in text capture');
+    assert.equal(r.text, sentence, 'the text capture was rewritten');
+  });
+
+  await check('Tamil-English mixed text is preserved and understood', async () => {
+    const sentence = 'naalaiku Ravi ku call pannanum';
+    const r = await dictate(sentence);
+    assert.equal(r.channel, 'voice');
+    assert.equal(r.type, 'task', `mixed Tamil-English task was classified as ${r.type}`);
+    assert.equal(r.language, 'ta-IN', 'Tanglish did not select Tamil for voice input');
+    assert.ok(r.due, 'Tanglish naalaiku (tomorrow) was not resolved');
+    assert.equal(await page.locator('#captureText').inputValue(), sentence, 'the mixed-language sentence was rewritten');
   });
 
   await check('a dictated sentence is never left as a voice note, whatever it says', async () => {

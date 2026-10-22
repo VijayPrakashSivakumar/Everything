@@ -476,6 +476,7 @@ function cleanExtraction(parsed) {
     dueDate: str(parsed.dueDate).slice(0, 40),
     person: str(parsed.person).slice(0, 80),
     project: str(parsed.project).slice(0, 80),
+    location: str(parsed.location).slice(0, 80),
     priority: oneOf(parsed.priority, EXTRACTION_PRIORITY, ''),
     recurrence: oneOf(parsed.recurrence, EXTRACTION_RECURRENCE, 'none'),
     confidence: oneOf(parsed.confidence, EXTRACTION_CONFIDENCE, 'medium'),
@@ -483,10 +484,13 @@ function cleanExtraction(parsed) {
   };
 }
 
-export function buildExtractionPrompt(text, today) {
+export function buildExtractionPrompt(text, today, timeZone = "the user's local timezone") {
   return `You turn one captured sentence into structured data for a personal productivity app called Everything. Today is ${today}.
 
 Rules:
+- Understand the sentence in its original language, including Tamil, Hindi, Telugu, Kannada, Malayalam, English, transliteration, and mixed-language speech/OCR. Keep every title in the language and script the person used; do not translate or discard meaning.
+- Classify by intent, not by language: tasks/reminders, events, facts/memories, waiting items, and open questions. Preserve people and named places in their original spelling.
+- Resolve relative dates against ${today} in ${timeZone}. Return an ISO 8601 local date/time with offset when the sentence gives enough information. Never invent a missing date, time, or place.
 - One sentence often carries SEVERAL things (a meeting plus what to discuss plus what to send afterwards). Return ONE entry per distinct thing, most important first. Do not merge them into one title, and do not drop them.
 - "agenda" is for a talking point belonging to a meeting in the same sentence ("need to discuss the new app"). It is not something the person does afterwards.
 - A follow-up mentioned after a meeting ("send the proposal afterwards") is its own task, and inherits the meeting's date only when the sentence says it happens after.
@@ -498,7 +502,7 @@ Rules:
 - One sentence carrying a single thing still gets a one-entry list.
 
 Respond with ONLY raw JSON, no prose and no code fence:
-{"items":[{"kind":"task|event|memory|waiting|openloop|agenda","title":"short imperative title","dueDate":"ISO 8601 datetime or empty string","person":"name or empty string","project":"name or empty string","priority":"high|medium|low or empty string","recurrence":"none|daily|weekly|monthly","confidence":"high|medium|low","ambiguous":"one short question if something is genuinely unclear, otherwise empty string"}]}
+{"items":[{"kind":"task|event|memory|waiting|openloop|agenda","title":"short title in the original language","dueDate":"ISO 8601 datetime with offset or empty string","person":"name or empty string","project":"name or empty string","location":"named place or empty string","priority":"high|medium|low or empty string","recurrence":"none|daily|weekly|monthly","confidence":"high|medium|low","ambiguous":"one short question in the original language if something is genuinely unclear, otherwise empty string"}]}
 
 Worked example — Sentence: "Tomorrow we have a meeting with the design team at 9 AM. Need to discuss the new app and send the proposal afterward."
 {"items":[{"kind":"event","title":"Design team meeting","dueDate":"<tomorrow at 09:00, ISO 8601>","person":"","project":"","priority":"","recurrence":"none","confidence":"high","ambiguous":""},{"kind":"agenda","title":"Discuss the new app","dueDate":"","person":"","project":"","priority":"","recurrence":"none","confidence":"high","ambiguous":""},{"kind":"task","title":"Send the proposal","dueDate":"","person":"","project":"","priority":"","recurrence":"none","confidence":"medium","ambiguous":""}]}
@@ -670,7 +674,7 @@ export default async function handler(req, res) {
   if (!auth) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const body = req.body || {};
-  const { query, items, today } = body;
+  const { query, items, today, timeZone } = body;
   // The browser knows the user's real local date; the server clock may be UTC. Preferring the
   // client value is what lets "today" and "this week" be answered correctly.
   const currentDate = String(today || '').slice(0, 60) || new Date().toDateString();
@@ -682,7 +686,7 @@ export default async function handler(req, res) {
     if (!text) return res.status(400).json({ error: 'Missing text' });
 
     const result = await complete({
-      prompt: buildExtractionPrompt(text, currentDate),
+      prompt: buildExtractionPrompt(text, currentDate, String(timeZone || "the user's local timezone").slice(0, 80)),
       // A reasoning model needs headroom before it emits visible text; too small a budget
       // returns 200 with an empty body, which is what made this look like a failure. A plan of
       // several items is longer than the old single read, so the budget goes up with it.

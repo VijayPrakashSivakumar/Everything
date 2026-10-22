@@ -126,6 +126,8 @@ try {
     return {
       status: (document.getElementById('imageOcrStatus')?.textContent || '').replace(/\s+/g, ' ').trim(),
       text: document.getElementById('captureText')?.value || '',
+      kind: captureType,
+      due: document.getElementById('captureDueDate')?.value || '',
     };
   }, lang);
 
@@ -170,6 +172,13 @@ for (const lang of LANGUAGES) {
   await check('no language pack is ever answered with an error', () => {
     const bad = packs.filter((p) => p.status !== 200);
     assert.deepEqual(bad, [], `these packs did not load: ${JSON.stringify(bad)}`);
+  });
+
+  await check('Tamil OCR feeds the shared task and date classifier', async () => {
+    const read = await readText({ tag: 'ta', phrase: 'நாளை ரவிக்கு அழைக்க வேண்டும்' });
+    assert.match(read.text, /[\u0B80-\u0BFF]/, `Tamil OCR returned ${JSON.stringify(read.text)}`);
+    assert.equal(read.kind, 'task', `Tamil OCR (${JSON.stringify(read.text)}) was classified as ${read.kind}`);
+    assert.ok(read.due, 'Tamil OCR date was not resolved');
   });
 
   await check('the recognised text is the text that was in the image', () => {

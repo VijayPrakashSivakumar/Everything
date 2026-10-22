@@ -94,11 +94,11 @@ const CAPTURE_LATIN_TAG = "en-IN";
    when the recogniser started in English: the first few Latin words betray the
    language and trigger a hot-swap. */
 const CAPTURE_ROMAN_WORDS = [
-  { re: /\b(nalla|illa|irukku|iruku|vanakkam|nandri|nanri|eppadi|enna|ungal|unakku|yen|inga|anga|ponga|vaanga|seri|illainga|sapadu|amma|appa)\b/i, tag: "ta-IN" },
-  { re: /\b(aap|tum|aapka|tumhara|kya|kaise|accha|achha|nahi|haan|shukriya|dhanyavad|bhai|kaam|paani|khana|ghar|mera|tera|bahut|zaroor)\b/i, tag: "hi-IN" },
-  { re: /\b(bagunnara|ela|emi|cheppu|avunu|kadhu|ledhu|dhanyavadalu|namaste|anna|akka|chelli|tammudu|intlo|bayata|tindi|nenu|nuvvu|chala|manchi)\b/i, tag: "te-IN" },
-  { re: /\b(hegiddira|hegiddeera|yenu|yelli|illa|houdu|dhanyavada|namaskara|anna|akka|sari|oota|mane|nanna|ninna|bahala|chennagide)\b/i, tag: "kn-IN" },
-  { re: /\b(sukhamano|enthina|evide|illa|athe|nanni|sheri|namaskaram|chetta|chechi|veed|kazhichu|bhakshanam|ente|ninte|valare|kollam)\b/i, tag: "ml-IN" },
+  { re: /\b(nalla|illa|irukku|iruku|vanakkam|nandri|nanri|eppadi|enna|ungal|unakku|yen|inga|anga|ponga|vaanga|seri|illainga|sapadu|amma|appa|pannanum|pannunga|seiyanum|venum|naalaiku|naalai|innaiku|inniku|sollu|anupu|romba|konjam|irukken|varuven)\b/i, tag: "ta-IN" },
+  { re: /\b(aap|tum|aapka|tumhara|kya|kaise|accha|achha|nahi|haan|shukriya|dhanyavad|bhai|kaam|paani|khana|ghar|mera|tera|bahut|zaroor|karna|karo|kal|aaj|bhejo|chahiye|mujhe|milna|yaad)\b/i, tag: "hi-IN" },
+  { re: /\b(bagunnara|ela|emi|cheppu|avunu|kadhu|ledhu|dhanyavadalu|namaste|anna|akka|chelli|tammudu|intlo|bayata|tindi|nenu|nuvvu|chala|manchi|repu|ivala|cheyali|kavali|piluvu)\b/i, tag: "te-IN" },
+  { re: /\b(hegiddira|hegiddeera|yenu|yelli|illa|houdu|dhanyavada|namaskara|anna|akka|sari|oota|mane|nanna|ninna|bahala|chennagide|naale|ivattu|beku|maadi|heli|barutte)\b/i, tag: "kn-IN" },
+  { re: /\b(sukhamano|enthina|evide|illa|athe|nanni|sheri|namaskaram|chetta|chechi|veed|kazhichu|bhakshanam|ente|ninte|valare|kollam|nale|innu|venam|cheyyanam|parayu|vilikku)\b/i, tag: "ml-IN" },
 ];
 
 function detectCaptureLanguage(text) {
@@ -158,6 +158,13 @@ function rememberedCaptureLanguage() {
     // Private mode has no memory. The browser default is used, exactly as before.
     return "";
   }
+}
+
+function defaultOcrLang() {
+  const remembered = voiceTagToOcrTag(rememberedCaptureLanguage());
+  if (remembered && OCR_LANGUAGES.some((entry) => entry.tag === remembered)) return remembered;
+  const browserTag = String(navigator.language || "").toLowerCase().split("-")[0];
+  return OCR_LANGUAGES.some((entry) => entry.tag === browserTag) ? browserTag : "en";
 }
 
 function rememberCaptureLanguage(tag) {
@@ -1402,10 +1409,7 @@ function setImageOcrStatus(message) {
 function pickOcrLang(tag, manual = true) {
   if (tag === "auto") {
     captureOcrLangAuto = true;
-    const remembered = voiceTagToOcrTag(rememberedCaptureLanguage());
-    if (remembered && OCR_LANGUAGES.some((entry) => entry.tag === remembered)) {
-      captureOcrLang = remembered;
-    }
+    captureOcrLang = defaultOcrLang();
     syncOcrLangChips();
     return;
   }
@@ -2106,7 +2110,9 @@ const AUTO_SAVE_SETTLE_MS = 1400;
 function capturePlanIsClear(items) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   if (!list.length) return false;
-  return list.every((entry) => String(entry.title || "").trim() && entry.kind && !entry.ambiguous);
+  return list.every((entry) =>
+    String(entry.title || "").trim() && entry.kind && entry.confidence === "high" && !entry.ambiguous,
+  );
 }
 
 function cancelAutoSave() {
@@ -2245,10 +2251,7 @@ function openCapture() {
   // photographs Tamil documents reads them in Tamil without ever touching a chip, and a chip they
   // did tap is still only a default rather than a lock.
   captureOcrLangAuto = true;
-  const rememberedOcrLang = voiceTagToOcrTag(rememberedCaptureLanguage());
-  if (rememberedOcrLang && OCR_LANGUAGES.some((entry) => entry.tag === rememberedOcrLang)) {
-    captureOcrLang = rememberedOcrLang;
-  }
+  captureOcrLang = defaultOcrLang();
   imageOcrText = "";
   lastOcrWritten = "";
   renderOcrLanguages();
@@ -2398,11 +2401,15 @@ function syncCaptureLocationField() {
 
 function detectType(text) {
   const t = text.toLowerCase();
+  // Common Tamil intent cues keep simple captures usable when model refinement is offline.
+  const tamilEvent = /(?:கூட்டம்|சந்திப்பு|நிகழ்ச்சி|பிறந்தநாள்|மீட்டிங்)/u.test(text);
+  const tamilTask = /(?:செய்ய வேண்டும்|செய்யணும்|வேண்டும்|வேணும்|அழை|அனுப்|பே|முடி|நினைவூட்டு)/u.test(text) ||
+    /\b(?:pannanum|pannanu|seiyanum|venum|anupanum|anuppu|koopidu|pesanum|mudikkanum)\b/i.test(text);
   if (
-    /\b(tomorrow|today|at \d|am|pm|meeting|deadline|due|schedule)\b/.test(
+    (tamilEvent || /\b(tomorrow|today|at \d|am|pm|meeting|deadline|due|schedule)\b/.test(
       t,
-    ) &&
-    /\b(meeting|event|appointment|sync|demo)\b/.test(t)
+    )) &&
+    (tamilEvent || /\b(meeting|event|appointment|sync|demo)\b/.test(t))
   )
     return "event";
   if (
@@ -2411,6 +2418,7 @@ function detectType(text) {
     )
   )
     return "task";
+  if (tamilTask) return "task";
   return "memory";
 }
 let extractDebounce = null;
@@ -2592,9 +2600,29 @@ function onCaptureInput() {
   }
 
   clearTimeout(extractDebounce);
+  // Apply the on-device read in this input turn. The old 700ms timer delayed even the local
+  // suggestion, although only the optional model request needs to wait for typing to settle.
+  const local = extractLocally(text);
+  if (document.getElementById("captureText").value !== text) return;
+  applyExtraction(local, text);
+  const localParts = localSplitItems(text, local);
+  captureLastPlan = (localParts || [local])
+    .map((entry) => (entry && typeof entry === "object" ? { ...entry, title: entry.title || text } : null))
+    .filter((entry) => entry && String(entry.title || "").trim());
+  captureLastText = text;
+  if (localParts) setCapturePlan(localParts, []);
+
+  if (!captureNeedsModelHelp(text, local)) {
+    document.getElementById("captureHint").textContent = "";
+    if (local.confidence === "high") {
+      scheduleAutoSave(localParts || [{ ...local, title: local.title || text }], text);
+    }
+    return;
+  }
   document.getElementById("captureHint").innerHTML =
-    icon("sparkles") + " Reading…";
-  extractDebounce = setTimeout(() => extractWithAI(text), 700);
+    icon("sparkles") + " Suggestions ready · checking details…";
+  const prepared = { local, localParts };
+  extractDebounce = setTimeout(() => extractWithAI(text, prepared), 250);
 }
 
 /* Smart capture, in two beats.
@@ -2679,10 +2707,10 @@ function localSplitItems(text, fallback) {
   return parts2;
 }
 
-async function extractWithAI(text) {
-  const local = extractLocally(text);
+async function extractWithAI(text, prepared = null) {
+  const local = prepared?.local || extractLocally(text);
   if (document.getElementById("captureText").value !== text) return;
-  applyExtraction(local, text);
+  if (!prepared) applyExtraction(local, text);
 
   if (!captureSmartEnabled) return;
   if (!captureNeedsModelHelp(text, local)) return;
@@ -2691,6 +2719,7 @@ async function extractWithAI(text) {
   const ai = await requestModelExtraction(text);
   // The person kept typing while the request was in flight; the answer is now stale.
   if (document.getElementById("captureText").value !== text) return;
+  cancelAutoSave();
   if (ai) applyExtraction(mergeExtractions(local, ai), text);
   // After the form settles, so the plan and the fields cannot disagree on the main item.
   if (ai) setCapturePlan(ai.items, ai.ambiguous);
@@ -2698,7 +2727,7 @@ async function extractWithAI(text) {
      items without the model being asked a second time. The local rules only ever describe the one
      entry the form is editing, so they stand in as a single-entry plan — the same shape the server
      returns, so finishCaptureDialogue() does not have to know which path ran. */
-  const localParts = localSplitItems(text, local);
+  const localParts = prepared?.localParts ?? localSplitItems(text, local);
   captureLastPlan = (ai?.items?.length ? ai.items : localParts || [local])
     .map((entry) => (entry && typeof entry === "object" ? { ...entry, title: entry.title || text } : null))
     .filter((entry) => entry && String(entry.title || "").trim());
@@ -2708,7 +2737,12 @@ async function extractWithAI(text) {
   /* A list found on the device saves the same way an AI-provided one does, and is previewed the same
      way, because both go through captureLastPlan and setCapturePlan. Nothing about the preview, the
      save or the Undo knows or cares which of the two produced the entries. */
-  else if (localParts) setCapturePlan(localParts, []);
+  else if (localParts) {
+    setCapturePlan(localParts, []);
+    scheduleAutoSave(localParts, text);
+  } else if (local.confidence === "high") {
+    scheduleAutoSave([{ ...local, title: local.title || text }], text);
+  }
 }
 
 function renderCapturePlan() {
@@ -3885,11 +3919,14 @@ function parseLocalDate(text, now) {
     t.match(/\b(?:at\s+)?(\d{1,2})(?::|\.)(\d{2})\s*(am|pm)\b/) ||
     t.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/) ||
     t.match(/\bat\s+(\d{1,2})[:.](\d{2})\b/) ||
-    t.match(/\b(\d{1,2}):(\d{2})\b/);
+    t.match(/\b(\d{1,2}):(\d{2})\b/) ||
+    text.match(/(?:காலை|மாலை|இரவு)?\s*(\d{1,2})\s*மணி/u);
 
   const d = new Date(ref);
+  const tamilTomorrow = /(?:நாளை|நாளைக்கு|நாளைக்குள்)/u.test(text) || /\bnaalaiku|naalai\b/i.test(text);
+  const tamilToday = /(?:இன்று|இன்றைக்கு)/u.test(text) || /\binnaiku|inniku\b/i.test(text);
 
-  if (/\btomorrow\b/.test(t)) {
+  if (/\btomorrow\b/.test(t) || tamilTomorrow) {
     d.setDate(d.getDate() + 1);
   } else if (DAY_WORD_RE.test(t)) {
     const target = DAY_NAMES.indexOf(t.match(DAY_WORD_RE)[1]);
@@ -3897,7 +3934,8 @@ function parseLocalDate(text, now) {
     if (delta === 0) delta = 7; // "friday" said on a Friday means the coming one
     d.setDate(d.getDate() + delta);
   } else if (
-    !/\b(today|tonight|this morning|this afternoon|this evening)\b/.test(t)
+    !/\b(today|tonight|this morning|this afternoon|this evening)\b/.test(t) && !tamilToday &&
+    !/(?:காலை|மாலை|இரவு)/u.test(text)
   ) {
     return null;
   }
@@ -3906,8 +3944,9 @@ function parseLocalDate(text, now) {
     let h = parseInt(timeMatch[1], 10);
     if (timeMatch[3] === "pm" && h < 12) h += 12;
     if (timeMatch[3] === "am" && h === 12) h = 0;
+    if (/மாலை|இரவு/u.test(text) && h < 12) h += 12;
     d.setHours(h, timeMatch[2] ? parseInt(timeMatch[2], 10) : 0, 0, 0);
-  } else if (/\btonight\b/.test(t)) d.setHours(21, 0, 0, 0);
+  } else if (/\btonight\b/.test(t) || /இரவு/u.test(text)) d.setHours(21, 0, 0, 0);
   else if (/\bevening\b/.test(t)) d.setHours(19, 0, 0, 0);
   else if (/\bafternoon\b/.test(t)) d.setHours(14, 0, 0, 0);
   else d.setHours(9, 0, 0, 0);
@@ -4296,6 +4335,10 @@ function extractLocally(text) {
    are not for a sentence carrying a promise and a date, for a vague time, or for anything they
    only half-read. Calling the model costs a request, so it is reserved for those cases. */
 function captureNeedsModelHelp(text, local) {
+  // The English keyword rules below cannot reliably resolve non-English intent, names or places.
+  // Give every detected supported language and transliterated capture to the multilingual model;
+  // if it is unavailable, the visible local result remains editable and is never translated.
+  if (detectCaptureLanguage(text) && detectCaptureLanguage(text) !== CAPTURE_LATIN_TAG) return true;
   if (VAGUE_TIME_RE.test(text)) return true;
   if (COMMITMENT_RE.test(text)) return true;
   if (local?.confidence !== "high") return true;

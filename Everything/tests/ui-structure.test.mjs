@@ -2346,8 +2346,9 @@ check('the plan is shown before saving, and every row can be edited or dropped',
 check('a clear sentence creates itself, and a doubtful one asks instead', () => {
   assert.match(js, /function capturePlanIsClear\(items\)/, 'the auto-create gate is missing');
   // Any doubt at all blocks it, which is what makes the "Done." path safe to take silently.
-  assert.match(js, /!entry\.ambiguous\)/, 'an ambiguous entry must block the auto-create');
+  assert.match(js, /entry\.confidence === "high" && !entry\.ambiguous/, 'only a clear, high-confidence entry may auto-create');
   assert.match(js, /if \(ai\?\.items\?\.length\) scheduleAutoSave\(ai\.items, text\)/, 'the model reply must reach the auto-create');
+  assert.match(js, /else if \(local\.confidence === "high"\)\s*\{\s*scheduleAutoSave/, 'a high-confidence local fallback must still auto-create when the model is unavailable');
   // A file and a link must never auto-save: there is nothing in either to read, so the app has no
   // basis for deciding, and a link's own field is the URL rather than a sentence.
   assert.match(js, /if \(captureChannel === "file" \|\| captureChannel === "link"\) return;/,

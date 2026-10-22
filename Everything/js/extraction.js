@@ -7,13 +7,15 @@ const LOCAL_EXTRACTION_KINDS = ["task", "event", "memory", "waiting", "openloop"
 const LOCAL_EXTRACTION_PRIORITIES = ["high", "medium", "low"];
 const LOCAL_EXTRACTION_RECURRENCE = ["none", "daily", "weekly", "monthly", "yearly"];
 
-function buildLocalExtractionPrompt(text, today) {
+function buildLocalExtractionPrompt(text, today, timeZone = "the user's local timezone") {
   return `Today is ${today}. Turn this sentence into JSON for a personal productivity app.
 
 Return ONLY this shape:
 {"items":[{"kind":"${LOCAL_EXTRACTION_KINDS.join("|")}","title":"short imperative title","dueDate":"ISO 8601 or empty string","person":"name or empty string","project":"name or empty string","location":"place the sentence names, or empty string","priority":"${LOCAL_EXTRACTION_PRIORITIES.join("|")} or empty string","recurrence":"${LOCAL_EXTRACTION_RECURRENCE.join("|")}","confidence":"high|medium|low","ambiguous":"one short question or empty string"}]}
 
 Rules: one sentence can carry several things, so return one entry per distinct thing rather than merging them. Never invent a date; if the wording is vague, leave dueDate empty. Never invent a place either: location is only for a place the sentence actually names ("at the office"). "waiting for X" is waiting. An undecided question is openloop. A fact about a person is memory.
+
+Preserve the person's original language, script, and meaning in titles and questions. Understand Tamil, Hindi, Telugu, Kannada, Malayalam, English, transliteration and mixed-language input. Classify by intent even when the input is not English. Do not translate or transliterate names. Keep a named location in the location field. Resolve relative dates against ${today} in ${timeZone}; return an ISO 8601 date/time with offset only when the sentence supports it. Ask in ambiguous instead of guessing.
 
 Sentence: ${text}`;
 }
@@ -45,9 +47,9 @@ function cleanLocalExtractionItem(raw) {
   };
 }
 
-async function requestLocalExtraction(text, today) {
+async function requestLocalExtraction(text, today, timeZone) {
   const reply = await localModelComplete(
-    [{ role: "user", content: buildLocalExtractionPrompt(text, today) }],
+    [{ role: "user", content: buildLocalExtractionPrompt(text, today, timeZone) }],
     { json: true },
   );
   if (!reply) return null;
@@ -75,8 +77,9 @@ async function requestModelExtraction(text) {
     month: "long",
     day: "numeric",
   });
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
   // Local first: it is free, and on a phone-sized budget a quota is worth spending last.
-  const local = await requestLocalExtraction(String(text).slice(0, 2000), today);
+  const local = await requestLocalExtraction(String(text).slice(0, 2000), today, timeZone);
   if (local) return local;
   try {
     const res = await apiFetch("/api/ask", {
@@ -86,6 +89,7 @@ async function requestModelExtraction(text) {
         action: "extract",
         text: String(text).slice(0, 2000),
         today,
+        timeZone,
       }),
     });
     if (!res.ok) return null;
@@ -112,6 +116,7 @@ function mergeExtractions(local, ai) {
     "dueDate",
     "person",
     "project",
+    "location",
     "priority",
     "recurrence",
     "ambiguous",

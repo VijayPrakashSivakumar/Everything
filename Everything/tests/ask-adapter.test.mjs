@@ -464,10 +464,11 @@ await check('an explicit AI_PROVIDER pins the primary', async () => {
    The capture sheet writes this straight into the form, so a hallucinated kind, a bogus date or
    an unexpected priority must be rejected rather than rendered. */
 await check('capture extraction reads a clean JSON reply', async () => {
-  const parsed = parseExtraction('{"kind":"task","title":"Call Ravi about the quote","dueDate":"2026-09-26T10:00:00.000Z","person":"Ravi","project":"Atlas","priority":"high","recurrence":"none","confidence":"high","ambiguous":""}');
+  const parsed = parseExtraction('{"kind":"task","title":"Call Ravi about the quote","dueDate":"2026-09-26T10:00:00.000Z","person":"Ravi","project":"Atlas","location":"சென்னை","priority":"high","recurrence":"none","confidence":"high","ambiguous":""}');
   assert.equal(parsed.kind, 'task');
   assert.equal(parsed.title, 'Call Ravi about the quote');
   assert.equal(parsed.person, 'Ravi');
+  assert.equal(parsed.location, 'சென்னை', 'a Unicode location must survive extraction');
   assert.equal(parsed.priority, 'high');
   assert.equal(parsed.recurrence, 'none');
   assert.equal(parsed.confidence, 'high');
@@ -498,12 +499,16 @@ await check('capture extraction rejects unusable replies without throwing', asyn
 });
 
 await check('the extraction prompt refuses to invent a date and carries the date', async () => {
-  const prompt = buildExtractionPrompt('Maybe Friday about the quote', 'Friday, September 25, 2026');
+  const prompt = buildExtractionPrompt('Maybe Friday about the quote', 'Friday, September 25, 2026', 'Asia/Kolkata');
   assert.match(prompt, /Friday, September 25, 2026/, 'the current date must reach the model');
   assert.match(prompt, /Never invent a date/i, 'the prompt must forbid inventing a date');
   assert.match(prompt, /Maybe Friday about the quote/, 'the sentence must be included');
   assert.match(prompt, /waiting/, 'the prompt must explain the non-task kinds');
   assert.match(prompt, /openloop/, 'the prompt must explain open loops');
+  assert.match(prompt, /Tamil, Hindi, Telugu, Kannada, Malayalam/i, 'the model must understand supported local languages');
+  assert.match(prompt, /original language/i, 'titles must keep the language the user wrote');
+  assert.match(prompt, /Asia\/Kolkata/, 'relative dates must use the user timezone');
+  assert.match(prompt, /location/i, 'the prompt must preserve named locations');
 });
 
 /* ---------- Capture plan: one sentence, several things ---------- */
