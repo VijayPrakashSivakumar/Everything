@@ -2468,16 +2468,7 @@
               <option value="ml-IN">മലയാളം — translate to Malayalam</option>
             </select>
           </div>
-          <!-- 2. One-click capture: records audio AND transcribes it in the chosen language, then
-               feeds the words straight into the capture pipeline — no second step. -->
-          <button
-            class="btn"
-            id="voiceRecordBtn"
-            onclick="toggleVoiceRecording()"
-          >
-            <i data-lucide="mic" aria-hidden="true"></i
-            ><span id="voiceRecordLabel">Capture voice</span>
-          </button>
+          <!-- Voice recording is controlled by the single mic beside the text input. -->
           <!-- The private, on-device reader. Hidden until a recording finishes with no words from the
                live recogniser, at which point it is the only way to get a transcript out of a
                recording. Reads the audio on this device with Whisper — nothing is uploaded. -->
@@ -2637,9 +2628,7 @@
         </div>
 
         <!-- Main text -->
-        <!-- Main text. The mic sits ON the box: one tap from any channel starts a capture, so
-             nobody has to find the Voice menu first. The panel's own button stays for the fuller
-             voice flow — language chips, audio preview, the private on-device reader. -->
+        <!-- Main text and the single voice capture control. -->
         <div class="capture-text-wrap">
           <textarea
             id="captureText"

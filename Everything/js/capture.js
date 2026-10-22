@@ -268,9 +268,14 @@ function syncDetectedCaptureLanguage(text) {
 
 
 function setVoiceRecordLabel(label, icon) {
-  const btn = document.getElementById("voiceRecordBtn");
+  const btn = document.getElementById("voiceRecordBtn") || document.getElementById("captureMicBtn");
   if (!btn) return;
-  btn.innerHTML = `<i data-lucide="${icon || "mic"}" aria-hidden="true"></i><span id="voiceRecordLabel">${label}</span>`;
+  if (btn.id === "captureMicBtn") {
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  } else {
+    btn.innerHTML = `<i data-lucide="${icon || "mic"}" aria-hidden="true"></i><span id="voiceRecordLabel">${label}</span>`;
+  }
   refreshIcons();
 }
 
@@ -310,6 +315,9 @@ function syncCaptureMicState(state) {
         ? "Converting speech to text"
         : "Start voice capture",
   );
+  if (!document.getElementById("voiceRecordBtn")) {
+    mic.title = state === "recording" ? "Stop voice capture" : state === "stopping" ? "Converting speech to text" : "Start voice capture";
+  }
 }
 
 /* Silence auto-stop, armed when the recogniser actually starts (never during the permission
@@ -465,6 +473,9 @@ function settleVoiceCapture() {
        it failed. Offer the private, on-device reader over the same recording — the one thing
        the Web Speech API cannot do. Shown only now, so the primary path stays the default. */
     setVoiceLocalSttVisible(voiceRecordingWasLive);
+    // If live browser recognition is unavailable, use the microphone recording itself so
+    // stopping capture still produces text in the same input without another manual step.
+    if (voiceRecordingWasLive && pendingBlob) transcribeRecordingLocally();
     return;
   }
   /* The transcript is the captured voice — persist it so the save path can store it
@@ -603,7 +614,7 @@ function applyVoiceTranscript(finalText) {
 function startVoiceTranscription() {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
-    setVoiceLiveTranscript("This browser cannot turn speech into text here — the recording is still saved.");
+    setVoiceLiveTranscript("Recording your voice. I’ll turn it into text when you stop.");
     return false;
   }
   if (captureRecordRecognition) return true;
@@ -773,7 +784,7 @@ function startVoiceTranscription() {
         }, 300);
         return true;
       }
-      setVoiceLiveTranscript("Speech recognition could not start — the recording can still be saved.");
+      setVoiceLiveTranscript("Recording your voice. I’ll turn it into text when you stop.");
       return false;
     }
   };
@@ -874,10 +885,10 @@ async function toggleVoiceRecording() {
   voiceCaptureBusy = true;
   voiceRecordingWasLive = false;
   try {
-    /* Velora order: words FIRST, audio second. The recogniser needs no stream, so it
-       starts before getUserMedia — on a phone where the recorder fails, the words are
-       already on screen instead of the whole capture dying at the permission prompt. */
-    const transcriptionLive = startVoiceTranscription();
+    /* Request microphone access first. Android WebView grants this through a native
+       permission bridge; starting SpeechRecognition before that grant makes WebView
+       return not-allowed and can leave a recording with no transcript. */
+    let transcriptionLive = false;
     try {
       const micStreamPromise = navigator.mediaDevices.getUserMedia({ audio: true });
       // Kept so a recognition `not-allowed` that lands before the system dialog is answered
@@ -893,28 +904,14 @@ async function toggleVoiceRecording() {
         voiceMicPermission = null;
         return;
       }
+      transcriptionLive = startVoiceTranscription();
     } catch (micError) {
-      // The microphone prompt was denied or has no device. Velora keeps listening anyway
-      // when it can and says plainly what happened — the words path is independent.
-      if (transcriptionLive) {
-        setVoiceLiveTranscript("Listening… speak your capture. (Audio attachment unavailable — words still work.)");
-        setVoiceRecordState("recording");
-        setVoiceRecordLabel("Stop capture", "square");
-      } else {
-        stopVoiceTranscription();
-        setVoiceRecordState("idle");
-        const hasSR = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-        const hasMD = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-        if (!hasSR && !hasMD) {
-          await alertDialog({ title: "Voice unavailable", body: "This browser cannot record audio or transcribe speech. Use the text input to create tasks, events and notes instead." });
-        } else if (!hasSR) {
-          await alertDialog({ title: "Microphone blocked", body: "Speech recognition is not available in this browser, and microphone access was denied. You can still type your capture." });
-        } else if (!hasMD) {
-          await alertDialog({ title: "Microphone unavailable", body: "This browser cannot access the microphone. Speech recognition may still work — try tapping the mic again. Otherwise, type your capture instead." });
-        } else {
-          await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
-        }
-      }
+      stopVoiceTranscription();
+      voiceMicPermission = null;
+      voiceCaptureBusy = false;
+      setVoiceRecordState("idle");
+      setVoiceRecordLabel("Capture voice", "mic");
+      setVoiceLiveTranscript("Microphone access was blocked. Allow microphone access for this site, then tap the mic to try again.");
       return;
     }
     recordedChunks = [];
