@@ -143,13 +143,13 @@ function mergeExtractions(local, ai) {
   return merged;
 }
 function closeCapture() {
-  stopVoiceDictation();
-  stopVoiceTranscription();
+  // Voice capture is fully owned by js/voice-capture.js now.
+  if (window.__voiceCapture?.resetVoiceCaptureState)
+    window.__voiceCapture.resetVoiceCaptureState();
   // The answer recogniser is separate, so it is not covered by the line above and has to be told
   // explicitly, or it would keep the microphone open behind a closed sheet.
   stopCaptureAnswerDictation();
   resetCaptureDialogue();
-  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
   const modal = document.getElementById("captureModal");
   modal.classList.remove("open");
   lockPageScroll(false);

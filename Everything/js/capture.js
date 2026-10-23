@@ -36,13 +36,6 @@ const CAPTURE_TYPES = [
   { id: "file", icon: "paperclip", label: "File" },
   { id: "link", icon: "link", label: "Link" },
 ];
-let mediaRecorder = null;
-let recordedChunks = [];
-let recordingSeconds = 0;
-let recordingInterval = null;
-let pendingBlob = null;
-let pendingBlobExt = null;
-
 /* Dictation languages. The browser recogniser only understands one language per session, so one of
    these has to be chosen before the first word arrives.
 
@@ -54,14 +47,6 @@ let pendingBlobExt = null;
 
    `tag` is the BCP-47 code the Web Speech API expects; `label` is shown in the picker.
    `hint` is a native-script example so the option is recognisable to the person speaking. */
-const VOICE_LANGUAGES = [
-  { tag: "en-IN", label: "English", hint: "English" },
-  { tag: "ta-IN", label: "Tamil", hint: "தமிழ்" },
-  { tag: "hi-IN", label: "Hindi", hint: "हिन्दी" },
-  { tag: "te-IN", label: "Telugu", hint: "తెలుగు" },
-  { tag: "kn-IN", label: "Kannada", hint: "ಕನ್ನಡ" },
-  { tag: "ml-IN", label: "Malayalam", hint: "മലയാളം" },
-];
 
 /* ---------- Automatic language detection ----------
 
@@ -77,30 +62,6 @@ const VOICE_LANGUAGES = [
      - it only ever corrects a guess the app made itself; a chip the person tapped is a decision
        and is never overridden (captureVoiceLangAuto / captureOcrLangAuto)
      - a detection is remembered, so the correction is needed at most once per person */
-const CAPTURE_SCRIPT_LANGUAGES = [
-  { re: /[\u0B80-\u0BFF]/, tag: "ta-IN", ocr: "ta", label: "Tamil" },
-  { re: /[\u0900-\u097F]/, tag: "hi-IN", ocr: "hi", label: "Hindi" },
-  { re: /[\u0C00-\u0C7F]/, tag: "te-IN", ocr: "te", label: "Telugu" },
-  { re: /[\u0C80-\u0CFF]/, tag: "kn-IN", ocr: "kn", label: "Kannada" },
-  { re: /[\u0D00-\u0D7F]/, tag: "ml-IN", ocr: "ml", label: "Malayalam" },
-];
-const CAPTURE_LATIN_TAG = "en-IN";
-
-/* The language of a piece of text, or "" when the text carries no letters at all.
-   Script wins outright — Tamil characters are Tamil no matter what. Latin text is
-   checked for romanised Indian-language words first (Tanglish/Hinglish/etc: the way
-   people actually dictate when the keyboard is English), and only falls back to
-   English when nothing matches. This is what lets a Tamil speaker be heard even
-   when the recogniser started in English: the first few Latin words betray the
-   language and trigger a hot-swap. */
-const CAPTURE_ROMAN_WORDS = [
-  { re: /\b(nalla|illa|irukku|iruku|vanakkam|nandri|nanri|eppadi|enna|ungal|unakku|yen|inga|anga|ponga|vaanga|seri|illainga|sapadu|amma|appa|pannanum|pannunga|seiyanum|venum|naalaiku|naalai|innaiku|inniku|sollu|anupu|romba|konjam|irukken|varuven)\b/i, tag: "ta-IN" },
-  { re: /\b(aap|tum|aapka|tumhara|kya|kaise|accha|achha|nahi|haan|shukriya|dhanyavad|bhai|kaam|paani|khana|ghar|mera|tera|bahut|zaroor|karna|karo|kal|aaj|bhejo|chahiye|mujhe|milna|yaad)\b/i, tag: "hi-IN" },
-  { re: /\b(bagunnara|ela|emi|cheppu|avunu|kadhu|ledhu|dhanyavadalu|namaste|anna|akka|chelli|tammudu|intlo|bayata|tindi|nenu|nuvvu|chala|manchi|repu|ivala|cheyali|kavali|piluvu)\b/i, tag: "te-IN" },
-  { re: /\b(hegiddira|hegiddeera|yenu|yelli|illa|houdu|dhanyavada|namaskara|anna|akka|sari|oota|mane|nanna|ninna|bahala|chennagide|naale|ivattu|beku|maadi|heli|barutte)\b/i, tag: "kn-IN" },
-  { re: /\b(sukhamano|enthina|evide|illa|athe|nanni|sheri|namaskaram|chetta|chechi|veed|kazhichu|bhakshanam|ente|ninte|valare|kollam|nale|innu|venam|cheyyanam|parayu|vilikku)\b/i, tag: "ml-IN" },
-];
-
 function detectCaptureLanguage(text) {
   const value = String(text || "");
   if (!value.trim()) return "";
@@ -177,17 +138,8 @@ function rememberCaptureLanguage(tag) {
 }
 
 
-/* Chosen once per capture and reused, so the recorded audio and the transcript agree. Always a
-   real BCP-47 tag: the auto mode lives in its own flag rather than in this variable, because this
-   variable is what the recogniser is handed. */
-let captureVoiceLang = "";
-/* True until the person taps a language chip. While true a confident detection may correct the
-   guess; a tap turns it off for this capture, which is what makes "tap to correct" stick. */
-let captureVoiceLangAuto = true;
 /* The same bargain for the picture reader: auto until a chip says otherwise. */
 let captureOcrLangAuto = true;
-/* The language actually used for the last dictation, saved onto the capture. */
-let captureVoiceLanguage = "";
 
 function defaultVoiceLang() {
   // Last seen first: the person's own captures know them better than their browser locale does,
@@ -347,10 +299,6 @@ function handleVoiceSilence() {
    first, in the language they were spoken; only a target the person explicitly chose sends them
    to the model, and a failure keeps the original words with an honest message. The keys live on
    the server (same provider chain as Ask) — nothing secret is ever in this file. */
-const VOICE_TRANSLATE_MEMORY_KEY = "everything_capture_translate";
-/* null = not read from storage yet; "" = read, and translation is off. */
-let captureVoiceTranslateTarget = null;
-
 function rememberedVoiceTranslateTarget() {
   try {
     const stored = localStorage.getItem(VOICE_TRANSLATE_MEMORY_KEY);
@@ -538,42 +486,6 @@ function toggleVoiceDictation() {
    MediaRecorder keeps the audio, SpeechRecognition keeps the words. One tap, one permission, and
    the words land in the capture box where the existing smart-capture pipeline picks them up as if
    they had been typed. */
-let captureRecordRecognition = null;
-let captureRecordWantListening = false;
-let captureRecordRestartTimer = null;
-let voiceLangSwapCount = 0;
-let voiceCaptureBusy = false;
-let voiceTranscript = "";
-let voiceTranscriptBase = "";
-/* True once the recogniser has emitted its own end, and the function to run when it does. The
-   browser is the only authority on when it has finished hearing the last word. */
-let voiceTranscriptionSettled = false;
-let voiceTranscriptionDone = null;
-let voiceTranscriptionStopTimer = null;
-/* Silence auto-stop. The recogniser is continuous, so without a deadline an abandoned capture
-   keeps listening — and recording — until someone remembers to stop it. The window is long
-   enough for a breath between sentences and is re-armed by every word, so it ends a forgotten
-   capture, never a paused speaker. Mutable so a test can watch it fire. */
-const VOICE_SILENCE_MS = 8000;
-let voiceSilenceMs = VOICE_SILENCE_MS;
-let voiceSilenceTimer = null;
-/* True once any word has come back this session: silence before the first word is a person
-   settling in, silence after it is a person who has finished. */
-let voiceHeardWords = false;
-/* Consecutive transport failures. Chrome's speech service answers `network` when offline, and an
-   endless respawn behind "keep speaking" hides that truth instead of telling it. */
-let voiceNetworkMisses = 0;
-/* The microphone stream promise for the live capture — kept so a recognition `not-allowed` that
-   arrives *before* the Android permission bridge answers can wait for the real answer instead of
-   killing the words path over a denial the person never gave. */
-let voiceMicPermission = null;
-let voiceMicRetryUsed = false;
-/* Whether THIS capture got a recorder going. The "no words" message and the private-reader offer
-   hinge on it; a module-level flag is what lets silence auto-stop share the same finish path. */
-let voiceRecordingWasLive = false;
-/* Bumps when a newer capture starts, so a translation in flight can never write into the next
-   capture's box. */
-let voiceTranslateToken = 0;
 
 function setVoiceLiveTranscript(text) {
   const live = document.getElementById("voiceLiveTranscript");
@@ -1982,10 +1894,6 @@ let captureAgenda = []; // Agenda lines, saved as the main item's checklist step
 let captureMainAsk = ""; // A question the model raised about the main item.
 let captureAutoSaveTimer = null; // Pending "Done." for a sentence that read clearly.
 let capturePlanTouched = false; // A row was corrected, so the app must not decide.
-let captureVoiceRecognition = null;
-let captureVoiceActive = false;
-let captureVoiceFinal = "";
-let captureVoiceBase = "";
 let captureSaveInFlight = false;
 
 /* ---------- One sentence, several things ----------
@@ -2283,29 +2191,9 @@ function openCapture() {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
-  document.getElementById("voiceDictationStatus").textContent = "";
-  captureVoiceLanguage = "";
-  voiceTranscript = "";
-  voiceTranscriptBase = "";
-  voiceLangSwapCount = 0;
-  voiceCaptureBusy = false;
-  voiceRecordingWasLive = false;
-  stopVoiceTranscription();
-  setVoiceLiveTranscript("");
-  // The private reader is offered only after a specific recording comes back empty, so it starts
-  // hidden on every fresh sheet rather than carrying over from the last capture.
-  setVoiceLocalSttVisible(false);
-  // Auto, not "whatever the browser speaks": the guess comes from this person's own captures.
-  resetVoiceLangForCapture();
-  renderVoiceLanguages();
-  pendingBlob = null;
-  pendingBlobExt = null;
-  if (mediaRecorder && mediaRecorder.state === "recording")
-    mediaRecorder.stop();
-  /* Single one-click entry point: language is picked first (above), then this one button
-     records + transcribes automatically into the capture pipeline. */
-  setVoiceRecordLabel("Capture voice", "mic");
-  setVoiceRecordState("idle");
+  // Voice capture state is owned by js/voice-capture.js.
+  if (window.__voiceCapture?.resetVoiceCaptureState)
+    window.__voiceCapture.resetVoiceCaptureState();
   /* The caret lands in the box, as it always has — a sheet you open and cannot type into is a sheet
      you have to tap before you can use. enterDialog keeps that behaviour and adds what was missing:
      Tab stays inside the sheet, and closing it hands focus back to whatever opened it. */

@@ -42,6 +42,7 @@ const SHELL_FILES = [
   './js/calendar.js',
   './js/item-panel.js',
   './js/capture.js',
+  './js/voice-capture.js',
   './js/extraction.js',
   './js/lists.js',
   './js/search.js',
