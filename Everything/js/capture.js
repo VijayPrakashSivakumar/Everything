@@ -2081,9 +2081,9 @@ function openCapture() {
   capturePlanTouched = false;
   cancelAutoSave();
   renderCapturePlan();
-  captureVoiceFinal = "";
-  captureVoiceBase = "";
-  stopVoiceDictation();
+  // Voice capture state is owned by js/voice-capture.js.
+  if (window.__voiceCapture?.resetVoiceCaptureState)
+    window.__voiceCapture.resetVoiceCaptureState();
   pickScope("shared");
   const row = document.getElementById("typeRow");
   const primary = CAPTURE_TYPES.filter((t) => CAPTURE_PRIMARY.includes(t.id));
