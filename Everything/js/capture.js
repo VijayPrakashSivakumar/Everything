@@ -734,96 +734,31 @@ async function toggleVoiceRecording() {
      It used to ask only about the recorder, so a capture whose audio had failed (or had
      already ended) could not be stopped at all: the same button started a second capture
      over the one still listening. */
-  const listening = Boolean(captureRecordRecognition);
-  if (recording || listening) {
-    /* Wait for the recogniser to actually finish instead of racing a timer.
-
-       This used to wait 400ms and then check whether anything had been heard. The browser
-       delivers the final transcript asynchronously, so a sentence that ended just before the
-       tap was discarded and the app confidently reported silence — which is exactly what the
-       person was told while they had been speaking the whole time. Timing cannot be fixed by
-       guessing a longer number; the recogniser emits its own end, and that is the only honest
-       signal that it has finished saying what it heard. */
-    /* A live recogniser ends on its own once it has flushed its last words, and that end
-       finishes the capture. But when there is no recogniser instance to end — Firefox, a
-       denied permission, the gap between respawns — waiting can only ever hit the backstop,
-       and the tap appears frozen for three seconds. Finishing immediately is what makes Stop
-       instant in exactly the cases that used to feel broken.
-
-       The settle itself lives at module level (settleVoiceCapture) because silence auto-stop
-       and this tap must share one finish path — two finish paths is two last words. */
-    if (!listening || voiceTranscriptionSettled) settleVoiceCapture();
-    else {
-      voiceTranscriptionSettled = true;
-      voiceTranscriptionDone = settleVoiceCapture;
-      setVoiceRecordState("stopping");
-      setVoiceRecordLabel("Converting speech to text…", "loader-circle");
-      setVoiceLiveTranscript("Converting speech to text…");
-      try {
-        // Ask the recogniser to wrap up now: the browser flushes its pending final results
-        // (which arrive through onresult) and then ends — and that end runs the settle.
-        // Waiting for a silence-based natural end instead is what made Stop feel like it lagged.
-        captureRecordRecognition.stop();
-      } catch (error) {
-        // Already ended; the backstop below still runs the settle.
-      }
-      // Backstop only. onend is what normally fires this; the timer exists for the browser that
-      // never delivers it, because a stuck recogniser must not leave the sheet mid-reset.
-      voiceTranscriptionStopTimer = setTimeout(settleVoiceCapture, 3000);
-    }
-    if (recording) mediaRecorder.stop();
+  if (recording) {
+    settleVoiceCapture();
+    mediaRecorder.stop();
     return;
   }
   /* ---------- Upfront availability checks ---------- */
-  const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   const hasMediaRecorder = !!window.MediaRecorder;
 
-  if (!hasSpeechRecognition && !hasMediaDevices) {
-    setVoiceLiveTranscript("Your browser cannot record or transcribe voice — please type your capture instead.");
+  if (!hasMediaDevices && !hasMediaRecorder) {
+    setVoiceLiveTranscript("Your browser cannot record voice — please type your capture instead.");
     setVoiceRecordState("idle");
-    await alertDialog({ title: "Voice not available", body: "This browser does not support speech recognition or microphone access. Use the text input to create tasks, events and notes." });
     return;
-  }
-  if (!hasSpeechRecognition) {
-    setVoiceLiveTranscript("This browser cannot transcribe speech — the recording will still be saved if your microphone works.");
-  } else if (!hasMediaDevices || !hasMediaRecorder) {
-    setVoiceLiveTranscript("This browser cannot record audio — speech-to-text will still work if the recogniser can start.");
   }
 
   let stream = null;
-  /* The guard goes up before the permission prompt, not after it: two taps during the prompt
-     used to both get past this check and race two recorders over one microphone. */
   voiceCaptureBusy = true;
   voiceRecordingWasLive = false;
   try {
-    /* Request microphone access first. Android WebView grants this through a native
-       permission bridge; starting SpeechRecognition before that grant makes WebView
-       return not-allowed and can leave a recording with no transcript. */
-    let transcriptionLive = false;
-    try {
-      const micStreamPromise = navigator.mediaDevices.getUserMedia({ audio: true });
-      // Kept so a recognition `not-allowed` that lands before the system dialog is answered
-      // can wait for the real answer and resume — see the not-allowed branch above.
-      voiceMicPermission = micStreamPromise.then((micStream) => micStream, () => null);
-      stream = await micStreamPromise;
-      // The sheet can be closed while the permission prompt is open. A capture nobody can see
-      // must not keep the microphone warm: the stream is stopped rather than promoted.
-      const sheet = document.getElementById("captureModal");
-      if (sheet && !sheet.classList.contains("open")) {
-        stream.getTracks().forEach((track) => track.stop());
-        stopVoiceTranscription();
-        voiceMicPermission = null;
-        return;
-      }
-      transcriptionLive = startVoiceTranscription();
-    } catch (micError) {
-      stopVoiceTranscription();
-      voiceMicPermission = null;
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // The sheet can be closed while the permission prompt is open.
+    const sheet = document.getElementById("captureModal");
+    if (sheet && !sheet.classList.contains("open")) {
+      stream.getTracks().forEach((track) => track.stop());
       voiceCaptureBusy = false;
-      setVoiceRecordState("idle");
-      setVoiceRecordLabel("Capture voice", "mic");
-      setVoiceLiveTranscript("Microphone access was blocked. Allow microphone access for this site, then tap the mic to try again.");
       return;
     }
     recordedChunks = [];

@@ -1,11 +1,11 @@
-/* ---------- Voice capture: single-click record + live transcribe ----------
+﻿/* ---------- Voice capture: single-click record + live transcribe ----------
    Complete rework of the voice capturing option. One tap starts both the
    microphone recording (MediaRecorder) and the live speech recogniser
    (Web Speech API) at the same moment, so words are captured as they are
-   spoken — not saved as a dead audio attachment.
+   spoken â€” not saved as a dead audio attachment.
 
    The transcript lands in the capture box through applyVoiceTranscript(),
-   which calls onCaptureInput() — the same entry point as typing. From there
+   which calls onCaptureInput() â€” the same entry point as typing. From there
    the existing smart-capture pipeline understands the sentence
    (task / event / memory / waiting / openloop), builds the plan, and
    saveCapture() stores it exactly like any other capture.
@@ -27,11 +27,11 @@
    in the picker; `hint` is a native-script example. */
 const VOICE_LANGUAGES = [
   { tag: "en-IN", label: "English", hint: "English" },
-  { tag: "ta-IN", label: "Tamil", hint: "தமிழ்" },
-  { tag: "hi-IN", label: "Hindi", hint: "हिन्दी" },
-  { tag: "te-IN", label: "Telugu", hint: "తెలుగు" },
-  { tag: "kn-IN", label: "Kannada", hint: "ಕನ್ನಡ" },
-  { tag: "ml-IN", label: "Malayalam", hint: "മലയാളം" },
+  { tag: "ta-IN", label: "Tamil", hint: "à®¤à®®à®¿à®´à¯" },
+  { tag: "hi-IN", label: "Hindi", hint: "à¤¹à¤¿à¤¨à¥à¤¦à¥€" },
+  { tag: "te-IN", label: "Telugu", hint: "à°¤à±†à°²à±à°—à±" },
+  { tag: "kn-IN", label: "Kannada", hint: "à²•à²¨à³à²¨à²¡" },
+  { tag: "ml-IN", label: "Malayalam", hint: "à´®à´²à´¯à´¾à´³à´‚" },
 ];
 
 const VOICE_TRANSLATE_MEMORY_KEY = "everything_capture_translate";
@@ -41,7 +41,7 @@ const VOICE_TRANSLATE_MEMORY_KEY = "everything_capture_translate";
    Script is the one signal about language that cannot be guessed at:
    Tamil characters are Tamil whether they appear in a sentence or alone.
    Latin script could be English, Hindi transliteration, Tamil transliteration
-   or anything else — so Latin falls back to the browser/default guess until
+   or anything else â€” so Latin falls back to the browser/default guess until
    the person picks or corrects a chip.
 
    Two rules keep this safe rather than clever:
@@ -61,7 +61,7 @@ const CAPTURE_LATIN_TAG = "en-IN";
 
 /* A small set of common Romanised function words so short Romanised Indian
    speech is not forced into English when the person clearly means their own
-   language. Kept deliberately small — this is a hint, not a dictionary. */
+   language. Kept deliberately small â€” this is a hint, not a dictionary. */
 const CAPTURE_ROMAN_WORDS = [
   "hai", "hain", "hona", "karna", "lena", "dena", "jana", "aana", "ka", "ki", "ke",
   "ko", "mein", "se", "ne", "to", "par", "aur", "ya", "nahi", "nahin", "main",
@@ -118,7 +118,7 @@ function defaultVoiceLang() {
     if (remembered && VOICE_LANGUAGES.some((entry) => entry.tag === remembered))
       return remembered;
   } catch (error) {
-    // Storage unavailable — fall through to the default below.
+    // Storage unavailable â€” fall through to the default below.
   }
   return "en-IN";
 }
@@ -179,7 +179,7 @@ function rememberCaptureLanguage(tag) {
   try {
     localStorage.setItem("everything_capture_voice_lang", tag);
   } catch (error) {
-    // Storage unavailable — silently skip.
+    // Storage unavailable â€” silently skip.
   }
   captureVoiceLangAuto = false;
 }
@@ -265,7 +265,7 @@ function rememberVoiceTranslateTarget(tag) {
     if (tag) localStorage.setItem(VOICE_TRANSLATE_MEMORY_KEY, tag);
     else localStorage.removeItem(VOICE_TRANSLATE_MEMORY_KEY);
   } catch (error) {
-    // Storage unavailable — silently skip.
+    // Storage unavailable â€” silently skip.
   }
 }
 
@@ -300,8 +300,8 @@ function maybeTranslateVoiceCapture(heard) {
   const sourceTag = captureVoiceLanguage || captureVoiceLang || "";
   if (sourceTag === target) return;
   const token = (voiceTranslateToken += 1);
-  setVoiceRecordLabel("Translating…", "languages");
-  setVoiceLiveTranscript(`Translating to ${voiceTagToTranslateName(target)}…`);
+  setVoiceRecordLabel("Translatingâ€¦", "languages");
+  setVoiceLiveTranscript(`Translating to ${voiceTagToTranslateName(target)}â€¦`);
   translateVoiceText(heard, sourceTag, target)
     .then((translated) => {
       if (token !== voiceTranslateToken) return;
@@ -309,14 +309,14 @@ function maybeTranslateVoiceCapture(heard) {
       if (!input || !translated) return;
       input.value = [voiceTranscriptBase, translated].filter(Boolean).join(" ");
       setVoiceLiveTranscript(
-        `Heard “${heard}” — translated to ${voiceTagToTranslateName(target)}: “${translated}”`,
+        `Heard â€œ${heard}â€ â€” translated to ${voiceTagToTranslateName(target)}: â€œ${translated}â€`,
       );
       onCaptureInput();
     })
     .catch(() => {
       if (token !== voiceTranslateToken) return;
       setVoiceLiveTranscript(
-        `Heard “${heard}”. Translation is unavailable right now — the original words were kept. Tap the mic to speak again.`,
+        `Heard â€œ${heard}â€. Translation is unavailable right now â€” the original words were kept. Tap the mic to speak again.`,
       );
     })
     .finally(() => {
@@ -432,18 +432,70 @@ function applyVoiceTranscript(finalText) {
   const spoken = voiceTranscript.trim();
   const input = document.getElementById("captureText");
   input.value = [voiceTranscriptBase, spoken].filter(Boolean).join(" ");
-  setVoiceLiveTranscript(spoken ? `Heard: “${spoken}”` : "");
+  setVoiceLiveTranscript(spoken ? `Heard: â€œ${spoken}â€` : "");
   if (spoken) {
     const detected = syncDetectedCaptureLanguage(spoken);
     if (detected) {
       captureVoiceLanguage = detected;
       setVoiceLiveTranscript(
-        `Heard: “${spoken}” — detected ${captureLanguageLabel(detected)}.`,
+        `Heard: â€œ${spoken}â€ â€” detected ${captureLanguageLabel(detected)}.`,
       );
     }
     maybeTranslateVoiceCapture(spoken);
   } else {
     onCaptureInput();
+  }
+}
+
+async function transcribeWithServer(audioBlob) {
+  const form = new FormData();
+  form.append("audio", audioBlob, "recording.webm");
+
+  try {
+    const response = await fetch("/api/stt.js", {
+      method: "POST",
+      body: form,
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (data.ok && data.transcript) {
+      return data.transcript.trim();
+    }
+
+    if (data.fallback) {
+      return null;
+    }
+
+    throw new Error(data.error || "Server STT failed");
+  } catch (error) {
+    console.error("Server STT error:", error);
+    return null;
+  }
+}
+
+async function transcribeWithWhisper() {
+  const button = document.getElementById("voiceLocalSttBtn");
+  if (button) button.disabled = true;
+  setVoiceLiveTranscript("Preparing the private reader - first run downloads it...");
+
+  try {
+    const engine = await loadSpeechEngine();
+    const samples = await decodeAudioForWhisper(pendingBlob);
+    const output = await engine(
+      samples,
+      { sampling_rate: 16000, chunk_length_s: 30, stride_length_s: 5 },
+    );
+    const spoken = String(output?.text || "").trim();
+    if (!spoken) return null;
+
+    // Trigger the normal applyVoiceTranscript flow so the input is populated.
+    applyVoiceTranscript(spoken);
+    return spoken;
+  } catch (error) {
+    console.error("Whisper transcription failed:", error);
+    return null;
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -456,10 +508,17 @@ function settleVoiceCapture() {
     clearTimeout(voiceTranscriptionStopTimer);
     voiceTranscriptionStopTimer = null;
   }
+
   const heard = voiceTranscript.trim();
 
+  // Stop the transcription (if any) and the audio recorder.
   stopVoiceTranscription();
   if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+  // Ensure pendingBlob is populated synchronously (mediaRecorder.onstop sets it async).
+  if (!pendingBlob && recordedChunks && recordedChunks.length > 0) {
+    pendingBlob = new Blob(recordedChunks, { type: "audio/webm" });
+    pendingBlobExt = "webm";
+  }
 
   captureRecordWantListening = false;
   captureRecordRecognition = null;
@@ -468,150 +527,70 @@ function settleVoiceCapture() {
   captureVoiceFinal = heard;
   setVoiceLocalSttVisible(false);
 
+  // If the live recogniser actually heard anything, use it directly (fast path).
   if (heard) {
-    setVoiceLiveTranscript(`Heard: “${heard}”`);
+    setVoiceLiveTranscript(`Heard: "${heard}"`);
     maybeTranslateVoiceCapture(heard);
+  } else if (pendingBlob) {
+    // No words from live recogniser - request server STT for the saved audio.
+    setVoiceLiveTranscript("Sending audio to server for transcription...");
+    transcribeWithServer(pendingBlob)
+      .then((transcript) => {
+        if (transcript) {
+          setVoiceLiveTranscript(`Heard: "${transcript}"`);
+          applyVoiceTranscript(transcript);
+          maybeTranslateVoiceCapture(transcript);
+        } else if (pendingBlob) {
+          // Server unavailable - fall back to on-device Whisper.
+          setVoiceLiveTranscript("Server busy - using on-device transcription...");
+          transcribeWithWhisper().then((result) => {
+            if (result) {
+              setVoiceLiveTranscript(`Heard: "${result}"`);
+              applyVoiceTranscript(result);
+              maybeTranslateVoiceCapture(result);
+            } else {
+              setVoiceLiveTranscript(
+                "Nothing transcribed. The audio is saved - type what you meant instead.",
+              );
+              onCaptureInput();
+            }
+          });
+        } else {
+          setVoiceLiveTranscript(
+            "Nothing was heard in that recording. The audio is saved - type what you meant instead.",
+          );
+          onCaptureInput();
+        }
+      })
+      .catch(() => {
+        // Server error - fall back to on-device Whisper.
+        setVoiceLiveTranscript("Server error - using on-device transcription...");
+        transcribeWithWhisper().then((result) => {
+          if (result) {
+            setVoiceLiveTranscript(`Heard: "${result}"`);
+            applyVoiceTranscript(result);
+            maybeTranslateVoiceCapture(result);
+          } else {
+            setVoiceLiveTranscript(
+              "Transcription failed. The audio is saved - type what you meant instead.",
+            );
+            onCaptureInput();
+          }
+        });
+      });
   } else {
     setVoiceLiveTranscript(
       voiceRecordingWasLive
-        ? "Nothing was heard in that recording. The audio is saved — type what you meant instead. Tap the mic to try again."
+        ? "Nothing was heard in that recording. The audio is saved - type what you meant instead. Tap the mic to try again."
         : "",
     );
     onCaptureInput();
   }
   voiceRecordingWasLive = false;
 }
-
-/* ---------- Speech recognition (live transcription) ---------- */
-
-function startVoiceTranscription() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) {
-    setVoiceLiveTranscript("Recording your voice. I’ll turn it into text when you stop.");
-    return false;
-  }
-  captureRecordWantListening = true;
-  voiceTranscriptionSettled = false;
-  voiceTranscriptionDone = null;
-  const recognition = new Recognition();
-  captureRecordRecognition = recognition;
-  recognition.lang = captureVoiceLang || defaultVoiceLang();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  let voiceHeardWords = false;
-  recognition.onstart = () => {
-    setVoiceLiveTranscript("Listening… speak your capture.");
-    armVoiceSilenceStop();
-  };
-  recognition.onresult = (event) => {
-    let finalText = "";
-    let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      let line = "";
-      for (const alt of result) line += alt.transcript;
-      if (result.isFinal) {
-        voiceHeardWords = true;
-        finalText += line + " ";
-      } else {
-        interim += line;
-      }
-    }
-    const combined = [voiceTranscriptBase, finalText.trim(), interim]
-      .filter(Boolean).join(" ");
-    const input = document.getElementById("captureText");
-    if (input) input.value = combined;
-    setVoiceLiveTranscript(combined
-      ? `Listening… ${interim ? `“${interim}”` : ""}${finalText.trim() ? " (heard so far)" : ""}`.trim()
-      : "Listening… speak your capture.");
-    if (finalText.trim()) {
-      voiceTranscriptBase = [voiceTranscriptBase, finalText.trim()].filter(Boolean).join(" ");
-    }
-  };
-  recognition.onerror = (event) => {
-    if (event.error === "not-allowed") {
-      setVoiceLiveTranscript("Microphone permission was denied.");
-      setVoiceRecordState("idle");
-      setVoiceRecordLabel("Capture voice", "mic");
-      captureRecordWantListening = false;
-      captureRecordRecognition = null;
-      return;
-    }
-    if (event.error === "no-speech") {
-      if (voiceHeardWords) {
-        setVoiceLiveTranscript("Paused — still listening…");
-        armVoiceSilenceStop();
-      } else {
-        settleVoiceCapture();
-      }
-      return;
-    }
-    if (event.error === "audio-capture") {
-      setVoiceLiveTranscript(
-        "No microphone was found or blocked — allow microphone access and tap the mic to try again.",
-      );
-      setVoiceRecordState("idle");
-      setVoiceRecordLabel("Capture voice", "mic");
-      captureRecordWantListening = false;
-      captureRecordRecognition = null;
-      return;
-    }
-    if (event.error === "language-not-supported") {
-      setVoiceLiveTranscript(
-        "This browser cannot transcribe that language live — the audio is still saved. Tap the mic to record again.",
-      );
-      captureRecordWantListening = false;
-      captureRecordRecognition = null;
-      return;
-    }
-    if (event.error === "network") {
-      voiceNetworkMisses += 1;
-      setVoiceLiveTranscript(
-        voiceNetworkMisses > 2
-          ? "The speech service keeps failing — check your connection, then tap the mic again."
-          : "Speech service unreachable — retrying.",
-      );
-      if (voiceNetworkMisses > 2) captureRecordWantListening = false;
-      return;
-    }
-    setVoiceLiveTranscript(
-      "Speech could not be transcribed — tap the mic to try again.",
-    );
-  };
-  recognition.onend = () => {
-    captureRecordRecognition = null;
-    if (voiceTranscriptionSettled) return;
-    settleVoiceCapture();
-  };
-  try {
-    recognition.start();
-    captureVoiceActive = true;
-    return true;
-  } catch (error) {
-    captureRecordRecognition = null;
-    captureVoiceActive = false;
-    setVoiceLiveTranscript("Could not start speech recognition — try again or type your capture instead.");
-    return false;
-  }
-}
-
+/* ---------- Settle: finish a capture (tap, silence, or backstop) ---------- */
 function stopVoiceTranscription() {
   captureRecordWantListening = false;
-  clearVoiceSilenceStop();
-  if (voiceTranscriptionStopTimer) {
-    clearTimeout(voiceTranscriptionStopTimer);
-    voiceTranscriptionStopTimer = null;
-  }
-  try {
-    if (captureRecordRecognition) {
-      captureRecordRecognition.onend = null;
-      captureRecordRecognition.onresult = null;
-      captureRecordRecognition.onerror = null;
-      captureRecordRecognition.stop();
-    }
-  } catch (error) {
-    // Already stopped by the browser; nothing to unwind.
-  }
   captureRecordRecognition = null;
   captureVoiceActive = false;
 }
@@ -664,24 +643,9 @@ async function toggleVoiceRecording() {
   }
   if (voiceCaptureBusy) return;
   const recording = Boolean(mediaRecorder && mediaRecorder.state === "recording");
-  const listening = Boolean(captureRecordRecognition);
-  if (recording || listening) {
-    if (!listening || voiceTranscriptionSettled) {
-      settleVoiceCapture();
-    } else {
-      voiceTranscriptionSettled = true;
-      voiceTranscriptionDone = settleVoiceCapture;
-      setVoiceRecordState("stopping");
-      setVoiceRecordLabel("Converting speech to text...", "loader-circle");
-      setVoiceLiveTranscript("Converting speech to text...");
-      try {
-        captureRecordRecognition.stop();
-      } catch (error) {
-        // Already ended; the backstop below still runs the settle.
-      }
-      voiceTranscriptionStopTimer = setTimeout(settleVoiceCapture, 3000);
-    }
-    if (recording) mediaRecorder.stop();
+  if (recording) {
+    settleVoiceCapture();
+    mediaRecorder.stop();
     return;
   }
   /* ---------- Start ---------- */
@@ -691,44 +655,34 @@ async function toggleVoiceRecording() {
   captureVoiceFinal = "";
   captureVoiceLanguage = "";
   captureVoiceActive = false;
-  const hasSpeechRecognition = !!(
-    window.SpeechRecognition || window.webkitSpeechRecognition
-  );
   const hasMediaDevices = !!(
     navigator.mediaDevices && navigator.mediaDevices.getUserMedia
   );
   const hasMediaRecorder = !!window.MediaRecorder;
-  if (!hasSpeechRecognition && !hasMediaDevices && !hasMediaRecorder) {
+  if (!hasMediaDevices && !hasMediaRecorder) {
     setVoiceLiveTranscript(
-      "Your browser cannot record or transcribe voice — please type your capture instead.",
+      "Your browser cannot record or transcribe voice â€” please type your capture instead.",
     );
     setVoiceRecordState("idle");
     voiceCaptureBusy = false;
     return;
   }
-  const transcriptionLive = startVoiceTranscription();
+  
   let stream = null;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     startVoiceRecording(stream);
     setVoiceRecordState("recording");
     setVoiceRecordLabel("Stop capture", "square");
-    setVoiceLiveTranscript(
-      transcriptionLive
-        ? "Listening… speak your capture."
-        : "Recording your voice. I’ll turn it into text when you stop.",
-    );
+    setVoiceLiveTranscript("Recording your voice. I'll turn it into text when you stop.");
     voiceRecordingWasLive = true;
   } catch (micError) {
-    // Microphone access was blocked — the recording could not start.
+    // Microphone access was blocked â€” the recording could not start.
     setVoiceLiveTranscript(
       "Microphone access was blocked. Allow microphone access for this site, then tap the mic to try again.",
     );
     setVoiceRecordState("idle");
     setVoiceRecordLabel("Capture voice", "mic");
-    if (!transcriptionLive) {
-      stopVoiceTranscription();
-    }
     voiceCaptureBusy = false;
     return;
   } finally {
@@ -739,19 +693,8 @@ async function toggleVoiceRecording() {
 /* ---------- Dictation (answering capture questions by voice) ---------- */
 
 function stopVoiceDictation() {
-  const recognition = captureVoiceRecognition;
   captureVoiceRecognition = null;
   captureVoiceActive = false;
-  if (recognition) {
-    try {
-      recognition.onend = null;
-      recognition.onresult = null;
-      recognition.onerror = null;
-      recognition.stop();
-    } catch (error) {
-      // Recognition may already be stopped by the browser.
-    }
-  }
 }
 
 /* ---------- Private, on-device speech recognition (fallback) ---------- */
@@ -822,7 +765,7 @@ async function transcribeRecordingLocally() {
   const button = document.getElementById("voiceLocalSttBtn");
   if (button) button.disabled = true;
   setVoiceLiveTranscript(
-    "Preparing the private reader (first run downloads it, once)…",
+    "Preparing the private reader (first run downloads it, once)â€¦",
   );
   try {
     const engine = await loadSpeechEngine();
@@ -834,14 +777,14 @@ async function transcribeRecordingLocally() {
     const spoken = String(output?.text || "").trim();
     if (!spoken) {
       setVoiceLiveTranscript(
-        "The on-device reader could not make out any words. The audio is saved — type what you meant.",
+        "The on-device reader could not make out any words. The audio is saved â€” type what you meant.",
       );
       return;
     }
     applyVoiceTranscript(spoken);
   } catch (error) {
     setVoiceLiveTranscript(
-      "On-device transcription is unavailable right now. The audio is saved — type what you meant instead.",
+      "On-device transcription is unavailable right now. The audio is saved â€” type what you meant instead.",
     );
   } finally {
     if (button) button.disabled = false;
@@ -872,7 +815,7 @@ function resetVoiceCaptureState() {
 
 function activateVoiceChannel() {
   const input = document.getElementById("captureText");
-  if (input) input.placeholder = "Type or dictate a note…";
+  if (input) input.placeholder = "Type or dictate a noteâ€¦";
   const panel = document.getElementById("voiceCaptureUI");
   if (panel) panel.style.display = "block";
 }
@@ -892,7 +835,7 @@ window.__voiceCapture = {
   applyVoiceTranscript,
   settleVoiceCapture,
   toggleVoiceRecording,
-  startVoiceTranscription,
+
   transcribeRecordingLocally,
   setVoiceRecordState,
   setVoiceRecordLabel,
