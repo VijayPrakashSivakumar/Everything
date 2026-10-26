@@ -530,7 +530,7 @@ function startVoiceTranscription() {
   };
   recognition.onerror = (event) => {
     if (event.error === "not-allowed") {
-      setVoiceLiveTranscript("Microphone permission was denied. Allow microphone access for this site, then tap the mic again.");
+      setVoiceLiveTranscript("Microphone permission was denied.");
       setVoiceRecordState("idle");
       setVoiceRecordLabel("Capture voice", "mic");
       captureRecordWantListening = false;
@@ -547,13 +547,36 @@ function startVoiceTranscription() {
       return;
     }
     if (event.error === "audio-capture") {
-      setVoiceLiveTranscript("Microphone access was blocked. Allow microphone access for this site, then tap the mic to try again.");
+      setVoiceLiveTranscript(
+        "No microphone was found or blocked — allow microphone access and tap the mic to try again.",
+      );
       setVoiceRecordState("idle");
       setVoiceRecordLabel("Capture voice", "mic");
       captureRecordWantListening = false;
       captureRecordRecognition = null;
       return;
     }
+    if (event.error === "language-not-supported") {
+      setVoiceLiveTranscript(
+        "This browser cannot transcribe that language live — the audio is still saved. Tap the mic to record again.",
+      );
+      captureRecordWantListening = false;
+      captureRecordRecognition = null;
+      return;
+    }
+    if (event.error === "network") {
+      voiceNetworkMisses += 1;
+      setVoiceLiveTranscript(
+        voiceNetworkMisses > 2
+          ? "The speech service keeps failing — check your connection, then tap the mic again."
+          : "Speech service unreachable — retrying.",
+      );
+      if (voiceNetworkMisses > 2) captureRecordWantListening = false;
+      return;
+    }
+    setVoiceLiveTranscript(
+      "Speech could not be transcribed — tap the mic to try again.",
+    );
   };
   recognition.onend = () => {
     captureRecordRecognition = null;
@@ -649,8 +672,8 @@ async function toggleVoiceRecording() {
       voiceTranscriptionSettled = true;
       voiceTranscriptionDone = settleVoiceCapture;
       setVoiceRecordState("stopping");
-      setVoiceRecordLabel("Converting speech to text…", "loader-circle");
-      setVoiceLiveTranscript("Converting speech to text…");
+      setVoiceRecordLabel("Converting speech to text...", "loader-circle");
+      setVoiceLiveTranscript("Converting speech to text...");
       try {
         captureRecordRecognition.stop();
       } catch (error) {
@@ -675,7 +698,7 @@ async function toggleVoiceRecording() {
     navigator.mediaDevices && navigator.mediaDevices.getUserMedia
   );
   const hasMediaRecorder = !!window.MediaRecorder;
-  if (!hasSpeechRecognition && !hasMediaDevices) {
+  if (!hasSpeechRecognition && !hasMediaDevices && !hasMediaRecorder) {
     setVoiceLiveTranscript(
       "Your browser cannot record or transcribe voice — please type your capture instead.",
     );
@@ -697,18 +720,17 @@ async function toggleVoiceRecording() {
     );
     voiceRecordingWasLive = true;
   } catch (micError) {
+    // Microphone access was blocked — the recording could not start.
+    setVoiceLiveTranscript(
+      "Microphone access was blocked. Allow microphone access for this site, then tap the mic to try again.",
+    );
+    setVoiceRecordState("idle");
+    setVoiceRecordLabel("Capture voice", "mic");
     if (!transcriptionLive) {
       stopVoiceTranscription();
-      setVoiceRecordState("idle");
-      setVoiceRecordLabel("Capture voice", "mic");
-      setVoiceLiveTranscript(
-        "Microphone access was blocked. Allow microphone access for this site, then tap the mic to try again.",
-      );
-    } else {
-      setVoiceLiveTranscript(
-        "Recording your voice without microphone access — speech-to-text will still work if the recogniser can start.",
-      );
     }
+    voiceCaptureBusy = false;
+    return;
   } finally {
     voiceCaptureBusy = false;
   }
