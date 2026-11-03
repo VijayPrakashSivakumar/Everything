@@ -175,8 +175,7 @@ class MainActivity : AppCompatActivity() {
                     request.grant(request.resources)
                     return
                 }
-                // A second mic tap while the system dialog is open must not lose the request.
-                pendingVoiceRequest?.deny()
+                // Store the pending request so we can replay it once the user answers the system dialog.
                 pendingVoiceRequest = request
                 audioPermission.launch(Manifest.permission.RECORD_AUDIO)
             }
