@@ -4074,10 +4074,13 @@ function extractLocally(text) {
   // not been spent yet and that is a reminder, not an expense.
   if (textLooksLikeMoneyOwed(text)) {
     result.kind = "task";
+    captureType = "task";
   } else if (parseAmountFromText(text) !== null && textLooksLikeBill(text)) {
     result.kind = "bill";
+    captureType = "bill";
   } else if (parseAmountFromText(text) !== null && textLooksLikeExpense(text)) {
     result.kind = "expense";
+    captureType = "expense";
   } else if (/\bwaiting (on|for)\b/i.test(text)) result.kind = "waiting";
   else if (/\b(need to decide|undecided|not sure yet)\b/i.test(text))
     result.kind = "openloop";
