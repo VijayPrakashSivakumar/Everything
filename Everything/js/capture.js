@@ -7,6 +7,8 @@
    filled the front of the row. That read as "capture is manual" when in fact a dictated sentence
    already reached the same understanding pipeline as a typed one. */
 const CAPTURE_PRIMARY = ["text", "voice", "image"];
+const CAPTURE_LATIN_TAG = "en";
+const CAPTURE_SCRIPT_LANGUAGES = ["en", "ta", "hi", "te", "kn", "ml"];
 let captureMoreTypesOpen = false;
 
 function toggleMoreTypes() {
