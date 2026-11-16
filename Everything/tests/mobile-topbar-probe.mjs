@@ -96,14 +96,15 @@ try {
     });
 
     await check(`${width}px: action controls use the intended header row`, async () => {
-      assert.equal(layout.paletteDisplay === 'none', width <= 600, 'quick-jump visibility does not match the phone breakpoint');
       if (width <= 600) {
+        assert.equal(layout.paletteDisplay, 'none', 'quick-jump should stay out of the phone topbar');
         assert.equal(layout.actionsDisplay, 'flex');
         assert.ok(Math.abs((layout.actions.top + layout.actions.bottom) / 2 - (layout.menu.top + layout.menu.bottom) / 2) < 2, `actions are not aligned with the menu: ${JSON.stringify({ actions: layout.actions, menu: layout.menu })}`);
         assert.ok(Math.abs((layout.capture.top + layout.capture.bottom) / 2 - (layout.menu.top + layout.menu.bottom) / 2) < 2, 'brand mark is not aligned with the menu');
         assert.ok(layout.searchToggle.width >= 40 && layout.searchToggle.height >= 40, 'mobile search target is too small');
         assert.notEqual(layout.captureDisplay, 'none', 'the Capture shortcut disappeared on mobile');
       } else {
+        assert.equal(layout.paletteDisplay === 'none', width > 1024, 'quick-jump visibility does not match the desktop breakpoint');
         assert.equal(layout.actionsDisplay, 'contents');
         for (const button of layout.actionButtons) {
           assert.ok(Math.abs((button.top + button.bottom) / 2 - layout.topbarCenter) < 2, `${button.label} moved below the search row`);
@@ -116,12 +117,12 @@ try {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.locator('#hamburger').click();
     assert.ok(await page.locator('#sidebar').evaluate((element) => element.classList.contains('open')));
-    await page.locator('.sidebar-collapse').click();
+    await page.locator('#sidebarBackdrop').click({ position: { x: 300, y: 360 } });
     assert.ok(!(await page.locator('#sidebar').evaluate((element) => element.classList.contains('open'))));
     assert.equal(await page.locator('#paletteBtn').evaluate((element) => getComputedStyle(element).display), 'none');
     await page.setViewportSize({ width: 1280, height: 850 });
     await page.waitForTimeout(60);
-    await page.locator('#paletteBtn').click();
+    await page.keyboard.press('Control+Shift+K');
     assert.ok(await page.locator('#commandPalette').evaluate((element) => element.classList.contains('open')));
     await page.keyboard.press('Escape');
   });

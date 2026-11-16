@@ -4,7 +4,7 @@ const SUPABASE_KEY = "sb_publishable_jMzHLX9CER8VD5N7UPY89Q_4qh5fwjs";
 // This browser-facing key is the public publishable key; row-level security enforces access. Never put a secret/service-role key here.
 
 // Bump when the DOM contract in index.html changes. See repairVersionMismatch() below.
-const APP_BUILD = "2026-10-15.1";
+const APP_BUILD = "2026-11-16.1";
 
 /* A deploy can briefly serve a mixed build: fresh index.html alongside a cached style.css or
    script.js. The new markup then calls handlers the old script never defined, which looks like a

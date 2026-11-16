@@ -286,6 +286,88 @@ try {
     assert.equal(outcome.pipelineRuns, 1, 'the smart-capture pipeline must receive the transcript');
   });
 
+  await check('Stop keeps late speech results and waits for the audio blob', async () => {
+    const outcome = await page.evaluate(async () => {
+      const previousSpeechRecognition = window.SpeechRecognition;
+      const previousMediaRecorder = window.MediaRecorder;
+      const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+      const previousOnCaptureInput = window.onCaptureInput;
+      let pipelineRuns = 0;
+      let liveRecognition;
+      class FinalizingRecognition {
+        start() { liveRecognition = this; this.onstart?.(); }
+        stop() {
+          if (this.delivered) return;
+          this.delivered = true;
+          const result = { isFinal: true };
+          result[0] = { transcript: 'final words after stop' };
+          this.onresult?.({ resultIndex: 0, results: [result] });
+          this.onend?.();
+        }
+      }
+      class DelayedRecorder {
+        constructor() { this.state = 'inactive'; }
+        start() {
+          this.state = 'recording';
+          this.ondataavailable?.({ data: new Blob(['audio'], { type: 'audio/webm' }) });
+        }
+        stop() {
+          this.state = 'inactive';
+          setTimeout(() => this.onstop?.(), 50);
+        }
+      }
+      Object.defineProperty(window, 'SpeechRecognition', {
+        configurable: true,
+        value: FinalizingRecognition,
+      });
+      window.MediaRecorder = DelayedRecorder;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
+      });
+      window.onCaptureInput = () => { pipelineRuns += 1; };
+      try {
+        openCapture();
+        pickType('voice', true);
+        document.getElementById('captureText').value = '';
+        await toggleVoiceRecording();
+        await toggleVoiceRecording();
+        const stopping = {
+          state: document.getElementById('captureMicBtn').dataset.state,
+          blobReady: !!pendingBlob,
+        };
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const finished = {
+          transcript: document.getElementById('captureText').value,
+          savedTranscript: captureVoiceFinal,
+          blobSize: pendingBlob?.size || 0,
+          state: document.getElementById('captureMicBtn').dataset.state,
+          pipelineRuns,
+          recognitionStillActive: !!captureRecordRecognition,
+        };
+        closeCapture();
+        return { stopping, finished };
+      } finally {
+        window.onCaptureInput = previousOnCaptureInput;
+        if (previousSpeechRecognition === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previousSpeechRecognition;
+        if (previousMediaRecorder === undefined) delete window.MediaRecorder;
+        else window.MediaRecorder = previousMediaRecorder;
+        if (mediaDevicesDescriptor) Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+        else delete navigator.mediaDevices;
+        if (document.getElementById('captureModal').classList.contains('open')) closeCapture();
+      }
+    });
+    assert.equal(outcome.stopping.state, 'stopping', 'the mic must show that final results are being collected');
+    assert.equal(outcome.stopping.blobReady, false, 'the test must exercise a delayed recorder finalization');
+    assert.equal(outcome.finished.transcript, 'final words after stop', 'Stop must preserve the recogniser final result');
+    assert.equal(outcome.finished.savedTranscript, 'final words after stop', 'the final transcript must be retained for save');
+    assert.ok(outcome.finished.blobSize > 0, 'the audio blob must be ready before capture returns to idle');
+    assert.equal(outcome.finished.state, 'idle', 'the mic must return to idle after both paths finish');
+    assert.equal(outcome.finished.pipelineRuns, 1, 'late words must enter the same capture pipeline');
+    assert.equal(outcome.finished.recognitionStillActive, false, 'the recogniser must be released after Stop');
+  });
+
   await check('a browser with no speech recognition still records', async () => {
     // Recognition is best-effort. Firefox has no webkitSpeechRecognition at all and the audio is
     // still worth keeping, so this must return false and say why rather than throw.
@@ -306,6 +388,65 @@ try {
       'it must say the audio is safe');
   });
 
+  await check('recording-only browsers stop cleanly and offer local transcription', async () => {
+    const outcome = await page.evaluate(async () => {
+      const previousSpeechRecognition = window.SpeechRecognition;
+      const previousWebkitRecognition = window.webkitSpeechRecognition;
+      const previousMediaRecorder = window.MediaRecorder;
+      const previousLocalTranscriber = window.transcribeRecordingLocally;
+      const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+      let localReads = 0;
+      class RecordingOnlyRecorder {
+        constructor() { this.state = 'inactive'; }
+        start() {
+          this.state = 'recording';
+          this.ondataavailable?.({ data: new Blob(['voice audio'], { type: 'audio/webm' }) });
+        }
+        stop() { this.state = 'inactive'; this.onstop?.(); }
+      }
+      delete window.SpeechRecognition;
+      delete window.webkitSpeechRecognition;
+      window.MediaRecorder = RecordingOnlyRecorder;
+      window.transcribeRecordingLocally = async () => { localReads += 1; };
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
+      });
+      try {
+        openCapture();
+        pickType('voice', true);
+        document.getElementById('captureText').value = '';
+        await toggleVoiceRecording();
+        const started = document.getElementById('captureMicBtn').dataset.state === 'recording';
+        await toggleVoiceRecording();
+        return {
+          started,
+          state: document.getElementById('captureMicBtn').dataset.state,
+          blobSize: pendingBlob?.size || 0,
+          localReads,
+          localButtonVisible: document.getElementById('voiceLocalSttBtn').style.display !== 'none',
+        };
+      } finally {
+        if (previousSpeechRecognition === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previousSpeechRecognition;
+        if (previousWebkitRecognition === undefined) delete window.webkitSpeechRecognition;
+        else window.webkitSpeechRecognition = previousWebkitRecognition;
+        if (previousMediaRecorder === undefined) delete window.MediaRecorder;
+        else window.MediaRecorder = previousMediaRecorder;
+        if (previousLocalTranscriber === undefined) delete window.transcribeRecordingLocally;
+        else window.transcribeRecordingLocally = previousLocalTranscriber;
+        if (mediaDevicesDescriptor) Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+        else delete navigator.mediaDevices;
+        if (document.getElementById('captureModal').classList.contains('open')) closeCapture();
+      }
+    });
+    assert.ok(outcome.started, 'recording must start without a browser speech-recognition API');
+    assert.equal(outcome.state, 'idle', 'stopping audio-only capture must release the mic');
+    assert.ok(outcome.blobSize > 0, 'the audio-only capture must produce a blob');
+    assert.equal(outcome.localReads, 1, 'the saved recording must be offered to local transcription');
+    assert.ok(outcome.localButtonVisible, 'the on-device reader must be available to the user');
+  });
+
   await check('romanised Tamil is detected without any manual language power', async () => {
     // The automatic-language promise: Tanglish typed or heard mid-capture must read as Tamil,
     // while a short English phrase must stay English so "call Anna tomorrow" is not hijacked.
@@ -321,6 +462,29 @@ try {
     assert.equal(outcome.hindiRoman, 'hi-IN', `Hinglish must detect as Hindi, got ${outcome.hindiRoman}`);
     assert.equal(outcome.englishShort, 'en-IN', `"call Anna tomorrow" must stay English, got ${outcome.englishShort}`);
     assert.equal(outcome.englishPlain, 'en-IN', `plain English must stay English, got ${outcome.englishPlain}`);
+  });
+
+  await check('typed text reaches the same smart-capture pipeline', async () => {
+    const outcome = await page.evaluate(() => {
+      openCapture();
+      const input = document.getElementById('captureText');
+      input.value = 'call the dentist tomorrow';
+      onCaptureInput();
+      const result = {
+        value: input.value,
+        processed: captureLastText,
+        kind: captureType,
+        suggestions: captureLastPlan.length,
+      };
+      cancelAutoSave();
+      clearTimeout(extractDebounce);
+      closeCapture();
+      return result;
+    });
+    assert.equal(outcome.value, 'call the dentist tomorrow');
+    assert.equal(outcome.processed, outcome.value, 'typed words must be processed, not just displayed');
+    assert.equal(outcome.kind, 'task', 'the capture pipeline must classify typed text');
+    assert.ok(outcome.suggestions > 0, 'the capture pipeline must prepare a saveable suggestion');
   });
 
   await check('the recogniser keeps listening across a browser pause', async () => {
@@ -514,7 +678,7 @@ try {
       const voiceShows = {
         voice: document.getElementById('voiceCaptureUI').style.display,
         lang: document.getElementById('voiceLangRow').children.length,
-        record: !!document.getElementById('voiceRecordBtn'),
+        record: !!document.getElementById('captureMicBtn'),
       };
       pickType('image', true);
       const imageShows = {
@@ -601,7 +765,7 @@ try {
       let live;
       class SilentRecognition {
         start() { live = this; live?.onstart?.(); }
-        stop() {}
+        stop() { this.onend?.(); }
       }
       class SilentRecorder {
         constructor() { this.state = 'inactive'; }
@@ -623,7 +787,7 @@ try {
         return {
           stopped: !captureRecordWantListening && !captureRecordRecognition && !voiceCaptureBusy,
           recorderClosed: !mediaRecorder || mediaRecorder.state !== 'recording',
-          state: document.getElementById('voiceRecordBtn').dataset.state,
+          state: document.getElementById('captureMicBtn').dataset.state,
           micState: document.getElementById('captureMicBtn').dataset.state,
           live: document.getElementById('voiceLiveTranscript').textContent,
         };
@@ -730,6 +894,84 @@ try {
     assert.ok(outcome.want, 'the words path must still be wanted after a denial the person never gave');
   });
 
+  await check('a stale microphone prompt cannot attach to a reopened capture', async () => {
+    const outcome = await page.evaluate(async () => {
+      const previousSpeechRecognition = window.SpeechRecognition;
+      const previousMediaRecorder = window.MediaRecorder;
+      const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+      let resolveOldPermission;
+      let calls = 0;
+      let recorderCount = 0;
+      let oldStops = 0;
+      let newStops = 0;
+      const oldStream = { getTracks: () => [{ stop() { oldStops += 1; } }] };
+      const newStream = { getTracks: () => [{ stop() { newStops += 1; } }] };
+      class PromptRecognition {
+        start() { this.onstart?.(); }
+        stop() { this.onend?.(); }
+      }
+      class PromptRecorder {
+        constructor() { recorderCount += 1; this.state = 'inactive'; }
+        start() { this.state = 'recording'; }
+        stop() { this.state = 'inactive'; this.onstop?.(); }
+      }
+      Object.defineProperty(window, 'SpeechRecognition', {
+        configurable: true,
+        value: PromptRecognition,
+      });
+      window.MediaRecorder = PromptRecorder;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: {
+          getUserMedia() {
+            calls += 1;
+            if (calls === 1) return new Promise((resolve) => { resolveOldPermission = resolve; });
+            return Promise.resolve(newStream);
+          },
+        },
+      });
+      try {
+        openCapture();
+        pickType('voice', true);
+        const oldAttempt = toggleVoiceRecording();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        closeCapture();
+        openCapture();
+        pickType('voice', true);
+        await toggleVoiceRecording();
+        const currentRecognition = captureRecordRecognition;
+        resolveOldPermission(oldStream);
+        await oldAttempt;
+        const result = {
+          calls,
+          recorderCount,
+          oldStops,
+          newStops,
+          currentRecognitionPreserved: captureRecordRecognition === currentRecognition,
+          currentStreamPreserved: captureMediaStream === newStream,
+          busy: voiceCaptureBusy,
+        };
+        closeCapture();
+        return result;
+      } finally {
+        if (document.getElementById('captureModal').classList.contains('open')) closeCapture();
+        if (previousSpeechRecognition === undefined) delete window.SpeechRecognition;
+        else window.SpeechRecognition = previousSpeechRecognition;
+        if (previousMediaRecorder === undefined) delete window.MediaRecorder;
+        else window.MediaRecorder = previousMediaRecorder;
+        if (mediaDevicesDescriptor) Object.defineProperty(navigator, 'mediaDevices', mediaDevicesDescriptor);
+        else delete navigator.mediaDevices;
+      }
+    });
+    assert.equal(outcome.calls, 2, 'both capture attempts must reach their own permission requests');
+    assert.equal(outcome.recorderCount, 1, 'the abandoned request must not start a recorder later');
+    assert.equal(outcome.oldStops, 1, 'the abandoned permission grant must immediately release its stream');
+    assert.equal(outcome.newStops, 0, 'the old request must not stop the current capture stream');
+    assert.ok(outcome.currentRecognitionPreserved, 'the old request must not stop the current recogniser');
+    assert.ok(outcome.currentStreamPreserved, 'the current capture must keep its own stream');
+    assert.equal(outcome.busy, false, 'the old request must not leave the new capture busy');
+  });
+
   await check('translation is a separate, chosen step that can never lose the spoken words', async () => {
     // Recognition and translation are different things: the words land first, only an explicit
     // target sends them to the model, and a failure keeps the original with an honest message.
@@ -777,6 +1019,62 @@ try {
     assert.match(outcome.ok.live, /nalla irukku/, 'the original words must stay visible next to it');
     assert.equal(outcome.failed.value, 'nalla irukku', 'a failed translation must keep the spoken words');
     assert.match(outcome.failed.live, /original words were kept/i, 'a failed translation must say what happened');
+  });
+
+  await check('media upload failure is visible and cannot save an attachment-free item', async () => {
+    const outcome = await page.evaluate(async () => {
+      const previousUpload = window.uploadPendingBlob;
+      const previousDbSave = window.dbSaveItem;
+      const originalLength = state.items.length;
+      const url = 'https://storage.example/captures/image.png';
+      window.dbSaveItem = async () => {};
+      try {
+        openCapture();
+        pickType('image', true);
+        document.getElementById('captureText').value = 'warranty text';
+        pendingBlob = new File(['image'], 'warranty.png', { type: 'image/png' });
+        pendingBlobExt = 'png';
+        imageOcrText = 'warranty text';
+        window.uploadPendingBlob = async () => {
+          const error = new Error('test upload failure');
+          error.name = 'CaptureMediaUploadError';
+          throw error;
+        };
+        const failed = await saveCapture(true);
+        const afterFailure = {
+          result: failed,
+          count: state.items.length,
+          modalOpen: document.getElementById('captureModal').classList.contains('open'),
+          fileRetained: pendingBlob instanceof File,
+          hint: document.getElementById('captureHint').textContent,
+        };
+        window.uploadPendingBlob = async () => url;
+        const saved = await saveCapture(true);
+        return {
+          afterFailure,
+          countAfterSave: state.items.length,
+          created: Array.isArray(saved) ? saved[0] : null,
+          originalLength,
+        };
+      } finally {
+        window.uploadPendingBlob = previousUpload;
+        window.dbSaveItem = previousDbSave;
+        if (document.getElementById('captureModal').classList.contains('open')) closeCapture();
+      }
+    });
+    assert.equal(outcome.afterFailure.result, false, 'an upload failure must fail the capture save');
+    assert.equal(outcome.afterFailure.count, outcome.originalLength, 'no metadata-only item may be created');
+    assert.ok(outcome.afterFailure.modalOpen, 'the sheet must remain open so the user can retry');
+    assert.ok(outcome.afterFailure.fileRetained, 'the selected image must remain available for retry');
+    assert.match(
+      outcome.afterFailure.hint,
+      /attachment|sign in|upload/i,
+      `the reason must be clear (got "${outcome.afterFailure.hint}")`,
+    );
+    assert.equal(outcome.countAfterSave, outcome.originalLength + 1, 'a successful retry must create one item');
+    assert.equal(outcome.created?.mediaUrl, 'https://storage.example/captures/image.png');
+    assert.equal(outcome.created?.sourceType, 'image', 'the saved item must retain its capture channel');
+    assert.equal(outcome.created?.captureMetadata?.ocrText, 'warranty text', 'the OCR result must be persisted');
   });
 } finally {
   await browser.close();

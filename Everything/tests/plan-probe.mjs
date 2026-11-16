@@ -94,9 +94,15 @@ try {
 
   await check('saving writes one item per row, and the agenda becomes a checklist step', async () => {
     await typeIt(MULTI);
+    const savedCountBefore = await page.evaluate(() => state.items.length);
     await page.click('#captureSaveBtn');
     await page.waitForTimeout(900);
-    const saved = await page.evaluate(() => state.items.map((i) => ({ id: i.id, title: i.title, kind: i.kind, rawText: i.rawText, checklist: (i.checklist || []).map((s) => s.text), planOf: i.captureMetadata?.planOf })));
+    const saved = await page.evaluate((before) =>
+      state.items
+        .slice(0, Math.max(0, state.items.length - before))
+        .map((i) => ({ id: i.id, title: i.title, kind: i.kind, rawText: i.rawText, checklist: (i.checklist || []).map((s) => s.text), planOf: i.captureMetadata?.planOf })),
+      savedCountBefore,
+    );
     assert.equal(saved.length, 2, `expected 2 saved items, got ${JSON.stringify(saved.map((i) => i.title))}`);
     const main = saved.find((i) => i.kind === 'event');
     const extra = saved.find((i) => i.title === 'Send the proposal');

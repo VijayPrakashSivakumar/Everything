@@ -143,9 +143,7 @@ function mergeExtractions(local, ai) {
   return merged;
 }
 function closeCapture() {
-  // Voice capture is fully owned by js/voice-capture.js now.
-  if (window.__voiceCapture?.resetVoiceCaptureState)
-    window.__voiceCapture.resetVoiceCaptureState();
+  resetVoiceCaptureState();
   // The answer recogniser is separate, so it is not covered by the line above and has to be told
   // explicitly, or it would keep the microphone open behind a closed sheet.
   stopCaptureAnswerDictation();
@@ -433,7 +431,11 @@ async function saveCapture(forceSave = false, options = {}) {
   } catch (error) {
     console.error("Capture save failed:", error);
     const hint = document.getElementById("captureHint");
-    if (hint) hint.textContent = "Could not save this capture. Please try again.";
+    if (hint) {
+      hint.textContent = error?.name === "CaptureMediaUploadError"
+        ? error.message
+        : "Could not save this capture. Please try again.";
+    }
     return false;
   } finally {
     captureSaveInFlight = false;

@@ -46,7 +46,7 @@ try {
   });
   await page.waitForTimeout(300);
   // Stand on a real control first, so "focus came back here" has somewhere to come back to.
-  await page.evaluate(() => { document.querySelector('.capture-btn').focus(); });
+  await page.evaluate(() => { document.querySelector('.brand-home').focus(); });
 
   await check('every overlay is a dialog with an accessible name', async () => {
     // Read from the markup rather than from a list kept here, so a sixth modal added later is

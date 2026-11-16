@@ -1845,6 +1845,31 @@ h1.page-title,
   cursor: pointer;
 }
 
+.sidebar-palette-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 8px;
+  border: var(--border-w) solid var(--sidebar-rule);
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--sidebar-fg-muted);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.sidebar-palette-btn:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-fg-strong);
+}
+
+.sidebar-palette-btn > i {
+  flex: 0 0 auto;
+}
+
 .sidebar-profile-avatar {
   width: 28px;
   height: 28px;
@@ -1880,7 +1905,17 @@ h1.page-title,
   display: none;
 }
 
+.sidebar.collapsed .sidebar-palette-label {
+  display: none;
+}
+
 .sidebar.collapsed .sidebar-profile {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsed .sidebar-palette-btn {
   justify-content: center;
   padding-left: 0;
   padding-right: 0;
@@ -2091,6 +2126,12 @@ h1.page-title,
 }
 
 @media (max-width: 600px) {
+  .palette-btn {
+    display: none;
+  }
+}
+
+@media (min-width: 1025px) {
   .palette-btn {
     display: none;
   }

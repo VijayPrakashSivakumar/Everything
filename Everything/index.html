@@ -33,9 +33,9 @@
     <link rel="stylesheet" href="style.css" />
     <link rel="manifest" href="./manifest.json" />
     <meta name="theme-color" content="#4361ee" />
-    <!-- Must match APP_BUILD in script.js. If they differ, the page reloads itself from the
+    <!-- Must match APP_BUILD in js/core.js. If they differ, the page reloads itself from the
          network, which repairs a mixed build (new markup + stale cached CSS/JS). -->
-    <meta name="everything-build" content="2026-10-15.1" />
+    <meta name="everything-build" content="2026-11-16.1" />
     <!-- A PNG, not the SVG. iOS ignores an SVG here and silently falls back to a screenshot of the
          page, so the installed icon was a picture of the app rather than the brand mark. -->
     <link rel="apple-touch-icon" href="./icon-192.png" />
@@ -538,6 +538,17 @@
         </div>
         <div class="sidebar-caption">MENU</div>
         <div class="nav" id="navList"></div>
+        <button
+          class="sidebar-palette-btn"
+          id="sidebarPaletteBtn"
+          type="button"
+          onclick="openPaletteFromSidebar()"
+          aria-label="Jump to a page, task, person or project"
+          title="Jump to anything"
+        >
+          <i data-lucide="command" aria-hidden="true"></i>
+          <span class="sidebar-palette-label">Jump to anything</span>
+        </button>
         <button class="sidebar-profile" onclick="switchView('settings')" title="Open settings">
           <span class="sidebar-profile-avatar" id="sidebarProfileInitial">?</span>
           <span class="sidebar-profile-copy"><strong id="sidebarProfileName">Your account</strong><small>Settings</small></span>
@@ -2170,8 +2181,33 @@
               </button>
             </div>
           </div>
-        <!-- SUPPORT VIEW -->
-        <div class="view" id="view-support">
+          <!-- HELP VIEW -->
+          <div class="view" id="view-help">
+            <div class="cards">
+              <div class="card">
+                <header class="support-hero">
+                  <span class="support-hero-icon" aria-hidden="true">
+                    <i data-lucide="life-ring"></i>
+                  </span>
+                  <div class="support-hero-copy">
+                    <p class="support-eyebrow">Getting started</p>
+                    <h1 class="page-title">Help &amp; demo</h1>
+                    <p class="page-sub">Capture a thought in the way that works best for you.</p>
+                  </div>
+                </header>
+                <div class="form-card">
+                  <h2 class="card-title">Capture anything</h2>
+                  <p class="page-sub">Type a note, use the microphone to dictate, or add a photo from your camera or gallery. Review the result, then save it to your workspace.</p>
+                  <button class="btn primary" type="button" onclick="openCapture()">
+                    <i data-lucide="plus" aria-hidden="true"></i>
+                    <span>Open Capture</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- SUPPORT VIEW -->
+          <div class="view" id="view-support">
           <div class="cards">
             <div class="card">
               <header class="support-hero">
@@ -3499,7 +3535,6 @@
     <script src="js/calendar.js"></script>
     <script src="js/item-panel.js"></script>
     <script src="js/capture.js"></script>
-    <script src="js/voice-capture.js"></script>
     <script src="js/extraction.js"></script>
     <script src="js/lists.js"></script>
     <script src="js/search.js"></script>

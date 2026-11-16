@@ -7,8 +7,66 @@
    filled the front of the row. That read as "capture is manual" when in fact a dictated sentence
    already reached the same understanding pipeline as a typed one. */
 const CAPTURE_PRIMARY = ["text", "voice", "image"];
-const CAPTURE_LATIN_TAG = "en";
-const CAPTURE_SCRIPT_LANGUAGES = ["en", "ta", "hi", "te", "kn", "ml"];
+const CAPTURE_LATIN_TAG = "en-IN";
+const CAPTURE_SCRIPT_LANGUAGES = [
+  { tag: "ta-IN", ocr: "ta", label: "Tamil", re: /[\u0B80-\u0BFF]/u },
+  { tag: "hi-IN", ocr: "hi", label: "Hindi", re: /[\u0900-\u097F]/u },
+  { tag: "te-IN", ocr: "te", label: "Telugu", re: /[\u0C00-\u0C7F]/u },
+  { tag: "kn-IN", ocr: "kn", label: "Kannada", re: /[\u0C80-\u0CFF]/u },
+  { tag: "ml-IN", ocr: "ml", label: "Malayalam", re: /[\u0D00-\u0D7F]/u },
+];
+const CAPTURE_ROMAN_WORDS = [
+  { tag: "ta-IN", re: /^(?:nalla|irukku|nanri|vanakkam|enaku|enga|ippadi|eppadi|edho|edhai|naan|nee|avar|ungal|vanthu|poga|chellu|sari|naalaiku|pannanum|pannanu|seiyanum|venum|anupanum|anuppu|koopidu|pesanum|mudikkanum)$/i },
+  { tag: "hi-IN", re: /^(?:hai|hain|hona|karna|lena|dena|jana|aana|ka|ki|ke|ko|mein|se|ne|to|par|aur|ya|nahi|nahin|main|tum|aap|yeh|woh|kya|kab|kahan|kaise|kyun|bahut|accha|ho)$/i },
+];
+const VOICE_LANGUAGES = [
+  { tag: "en-IN", label: "English", hint: "English" },
+  { tag: "ta-IN", label: "Tamil", hint: "தமிழ்" },
+  { tag: "hi-IN", label: "Hindi", hint: "हिन्दी" },
+  { tag: "te-IN", label: "Telugu", hint: "తెలుగు" },
+  { tag: "kn-IN", label: "Kannada", hint: "ಕನ್ನಡ" },
+  { tag: "ml-IN", label: "Malayalam", hint: "മലയാളം" },
+];
+const VOICE_TRANSLATE_MEMORY_KEY = "everything_capture_translate";
+let captureVoiceLang = "";
+let captureVoiceLangAuto = true;
+let captureVoiceLanguage = "";
+let captureVoiceFinal = "";
+let captureVoiceRecognition = null;
+let captureVoiceActive = false;
+let captureVoiceTranslateTarget = null;
+let voiceTranslateToken = 0;
+let voiceLangSwapCount = 0;
+let voiceHeardWords = false;
+let voiceNetworkMisses = 0;
+let voiceMicRetryUsed = false;
+let voiceMicPermission = null;
+let voiceMicPromptPending = false;
+let voiceCaptureBusy = false;
+let voiceCaptureGeneration = 0;
+let voiceRecordingWasLive = false;
+let voiceTranscript = "";
+let voiceTranscriptBase = "";
+let captureRecordWantListening = false;
+let captureRecordRecognition = null;
+let captureRecordRestartTimer = null;
+let voiceTranscriptionStopTimer = null;
+let voiceTranscriptionDone = null;
+let voiceTranscriptionSettled = true;
+const VOICE_STOP_TIMEOUT_MS = 3000;
+let voiceRecorderSettled = true;
+let voiceCaptureFinalizing = false;
+let voiceCaptureFinalized = false;
+let voiceRecordingFailed = false;
+let voiceSilenceTimer = null;
+let voiceSilenceMs = 8000;
+let mediaRecorder = null;
+let captureMediaStream = null;
+let recordedChunks = [];
+let recordingSeconds = 0;
+let recordingInterval = null;
+let pendingBlob = null;
+let pendingBlobExt = null;
 let captureMoreTypesOpen = false;
 
 function toggleMoreTypes() {
@@ -75,17 +133,17 @@ function detectCaptureLanguage(text) {
   const words = value.toLowerCase().split(/[^a-z]+/).filter(Boolean);
   let bestTag = "";
   let bestHits = 0;
-  for (const entry of CAPTURE_ROMAN_WORDS) {
-    const pattern = new RegExp(entry.re.source, "i");
-    let hits = 0;
-    for (const word of words) if (pattern.test(word)) hits += 1;
+  for (const language of new Set(CAPTURE_ROMAN_WORDS.map((entry) => entry.tag))) {
+    const patterns = CAPTURE_ROMAN_WORDS.filter((entry) => entry.tag === language);
+    const hits = words.filter((word) => patterns.some((entry) => entry.re.test(word))).length;
     if (hits > bestHits) {
       bestHits = hits;
-      bestTag = entry.tag;
+      bestTag = language;
     }
   }
-  if (bestHits >= 2 || (bestHits === 1 && words.length >= 4)) return bestTag;
-  return CAPTURE_LATIN_TAG;
+  return bestHits >= 2 || (bestHits === 1 && words.length >= 4)
+    ? bestTag
+    : CAPTURE_LATIN_TAG;
 }
 
 function captureLanguageLabel(tag) {
@@ -277,6 +335,10 @@ function syncCaptureMicState(state) {
 /* Silence auto-stop, armed when the recogniser actually starts (never during the permission
    prompt — nobody should be cut off for reading a dialog) and re-armed by every word. */
 function armVoiceSilenceStop() {
+  if (voiceMicPromptPending) {
+    clearVoiceSilenceStop();
+    return;
+  }
   clearVoiceSilenceStop();
   voiceSilenceTimer = setTimeout(handleVoiceSilence, voiceSilenceMs);
 }
@@ -399,33 +461,128 @@ function maybeTranslateVoiceCapture(heard) {
 }
 
 function settleVoiceCapture() {
+  if (voiceCaptureFinalizing || voiceCaptureFinalized) return;
+  voiceCaptureFinalizing = true;
+  captureRecordWantListening = false;
+  clearTimeout(captureRecordRestartTimer);
+  captureRecordRestartTimer = null;
+  clearVoiceSilenceStop();
+  const recognition = captureRecordRecognition;
+  const recorder = mediaRecorder;
+  const recorderNeedsStop = Boolean(recorder && recorder.state === "recording");
+  if (recognition || recorderNeedsStop) {
+    voiceTranscriptionStopTimer = setTimeout(() => {
+      if (voiceCaptureFinalized) return;
+      const activeRecognition = captureRecordRecognition;
+      captureRecordRecognition = null;
+      if (activeRecognition) {
+        activeRecognition.onresult = null;
+        activeRecognition.onerror = null;
+        activeRecognition.onend = null;
+        try {
+          activeRecognition.stop();
+        } catch (error) {
+          // The recogniser may have stopped while the backstop fired.
+        }
+      }
+      const activeRecorder = mediaRecorder;
+      if (activeRecorder && activeRecorder.state === "recording") {
+        try {
+          activeRecorder.stop();
+        } catch (error) {
+          voiceRecordingFailed = true;
+          voiceRecorderSettled = true;
+        }
+      }
+      voiceTranscriptionSettled = true;
+      voiceTranscriptionDone = null;
+      if (!voiceRecorderSettled) {
+        voiceRecordingFailed = true;
+        voiceRecorderSettled = true;
+      }
+      finishVoiceCapture();
+    }, VOICE_STOP_TIMEOUT_MS);
+  }
+  if (recognition) {
+    setVoiceRecordState("stopping");
+    setVoiceRecordLabel("Converting…", "loader");
+    voiceTranscriptionDone = finishVoiceCapture;
+    try {
+      recognition.stop();
+    } catch (error) {
+      voiceTranscriptionSettled = true;
+      voiceTranscriptionDone = null;
+    }
+  } else {
+    voiceTranscriptionSettled = true;
+  }
+
+  if (recorder && recorder.state === "recording") {
+    try {
+      recorder.stop();
+    } catch (error) {
+      voiceRecordingFailed = true;
+      voiceRecorderSettled = true;
+    }
+  } else {
+    voiceRecorderSettled = true;
+  }
+  finishVoiceCapture();
+}
+
+function finishVoiceCapture() {
+  if (
+    voiceCaptureFinalized ||
+    !voiceCaptureFinalizing ||
+    !voiceTranscriptionSettled ||
+    !voiceRecorderSettled
+  ) return;
+  voiceCaptureFinalized = true;
+  voiceCaptureFinalizing = false;
+  voiceTranscriptionSettled = true;
   clearTimeout(voiceTranscriptionStopTimer);
   voiceTranscriptionStopTimer = null;
   voiceTranscriptionDone = null;
-  /* Read the settled flag first: stopVoiceTranscription clears the want-flag and nulls onend,
-     so calling it before checking would report silence even when words arrived. */
+  clearTimeout(captureRecordRestartTimer);
+  captureRecordRestartTimer = null;
+  clearVoiceSilenceStop();
+  captureRecordWantListening = false;
+  const recognition = captureRecordRecognition;
+  captureRecordRecognition = null;
+  if (recognition) {
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    try {
+      recognition.stop();
+    } catch (error) {
+      // The recogniser may have ended while its final result was being delivered.
+    }
+  }
   const heard = voiceTranscript.trim();
-  stopVoiceTranscription();
-  // Silence (or the backstop) can finish a capture without a tap, so the recorder must be
-  // closed here too — an abandoned capture must not keep the microphone open. On the tap
-  // path this is a no-op: the tap already stopped it.
-  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
-  voiceTranscriptionSettled = true;
   setVoiceRecordState("idle");
   setVoiceRecordLabel(heard ? "Capture again" : "Capture voice", "mic");
   if (!heard) {
     setVoiceLiveTranscript(
-      voiceRecordingWasLive
+      voiceRecordingFailed
+        ? "The recording could not be finalized. Please try again or type your capture instead."
+        : voiceRecordingWasLive && pendingBlob
         ? "Nothing was heard in that recording. The audio is saved — type what you meant instead. Tap the mic to try again."
         : "Nothing was heard. Type what you meant instead. Tap the mic to try again.",
     );
     /* No words came back from the live recogniser: either this browser has none (Firefox), or
        it failed. Offer the private, on-device reader over the same recording — the one thing
        the Web Speech API cannot do. Shown only now, so the primary path stays the default. */
-    setVoiceLocalSttVisible(voiceRecordingWasLive);
+    setVoiceLocalSttVisible(voiceRecordingWasLive && Boolean(pendingBlob));
     // If live browser recognition is unavailable, use the microphone recording itself so
     // stopping capture still produces text in the same input without another manual step.
-    if (voiceRecordingWasLive && pendingBlob) transcribeRecordingLocally();
+    if (
+      voiceRecordingWasLive &&
+      pendingBlob &&
+      !(window.SpeechRecognition || window.webkitSpeechRecognition)
+    ) {
+      transcribeRecordingLocally();
+    }
     return;
   }
   /* The transcript is the captured voice — persist it so the save path can store it
@@ -526,9 +683,17 @@ function applyVoiceTranscript(finalText) {
    capture still works — exactly how Velora's listen() behaves. Recording is an
    attachment, never a gate. */
 function startVoiceTranscription() {
+  voiceTranscriptionSettled = false;
+  voiceCaptureFinalizing = false;
+  voiceCaptureFinalized = false;
+  voiceRecordingFailed = false;
+  voiceRecorderSettled = true;
+  voiceTranscript = "";
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
-    setVoiceLiveTranscript("Recording your voice. I’ll turn it into text when you stop.");
+    setVoiceLiveTranscript(
+      "Live speech recognition is unavailable. The recording is still saved; use the on-device reader after you stop.",
+    );
     return false;
   }
   if (captureRecordRecognition) return true;
@@ -630,13 +795,38 @@ function startVoiceTranscription() {
         // still pending, wait for its answer: when the grant lands, listening resumes itself.
         if (!voiceMicRetryUsed && voiceMicPermission) {
           voiceMicPermission.then((micStream) => {
-            if (!micStream || !captureRecordWantListening || captureRecordRecognition) return;
+            if (!micStream) {
+              captureRecordWantListening = false;
+              clearTimeout(captureRecordRestartTimer);
+              captureRecordRestartTimer = null;
+              stopVoiceTranscription();
+              voiceTranscriptionSettled = true;
+              voiceRecorderSettled = true;
+              voiceCaptureFinalizing = false;
+              voiceCaptureFinalized = true;
+              voiceTranscriptionDone = null;
+              clearTimeout(voiceTranscriptionStopTimer);
+              voiceTranscriptionStopTimer = null;
+              setVoiceRecordState("idle");
+              setVoiceRecordLabel("Capture voice", "mic");
+              setVoiceLiveTranscript(
+                "Microphone permission was denied. Allow microphone access for this site, or type your capture instead.",
+              );
+              return;
+            }
+            if (!captureRecordWantListening || captureRecordRecognition) return;
             voiceMicRetryUsed = true;
             setVoiceLiveTranscript("Microphone is ready — listening again…");
             clearTimeout(captureRecordRestartTimer);
             captureRecordRestartTimer = setTimeout(() => {
               if (captureRecordWantListening && !captureRecordRecognition && !voiceTranscriptionDone) spawnRecognition();
             }, 150);
+          }).catch(() => {
+            if (captureRecordWantListening) {
+              setVoiceLiveTranscript(
+                "Microphone access was denied. Allow microphone access for this site, or type your capture instead.",
+              );
+            }
           });
           return;
         }
@@ -679,11 +869,10 @@ function startVoiceTranscription() {
         return;
       }
       voiceTranscriptionSettled = true;
-      clearTimeout(voiceTranscriptionStopTimer);
-      voiceTranscriptionStopTimer = null;
       const done = voiceTranscriptionDone;
       voiceTranscriptionDone = null;
       if (done) done();
+      else settleVoiceCapture();
     };
     try {
       recognition.start();
@@ -728,42 +917,142 @@ function stopVoiceTranscription() {
   if (!graceful) captureRecordRecognition = null;
 }
 
+function resetVoiceCaptureState() {
+  voiceCaptureGeneration += 1;
+  voiceCaptureBusy = false;
+  voiceMicPromptPending = false;
+  voiceTranscriptionDone = null;
+  stopVoiceTranscription();
+  clearVoiceSilenceStop();
+  clearTimeout(voiceTranscriptionStopTimer);
+  voiceTranscriptionStopTimer = null;
+  voiceTranscriptionDone = null;
+  clearTimeout(captureRecordRestartTimer);
+  captureRecordRestartTimer = null;
+  clearInterval(recordingInterval);
+  recordingInterval = null;
+  if (mediaRecorder) {
+    mediaRecorder.onstop = null;
+    if (mediaRecorder.state === "recording") {
+      try {
+        mediaRecorder.stop();
+      } catch (error) {
+        // The browser may have stopped the recorder while the sheet was closing.
+      }
+    }
+    mediaRecorder = null;
+  }
+  captureMediaStream?.getTracks().forEach((track) => track.stop());
+  captureMediaStream = null;
+  const preview = document.getElementById("voicePreview");
+  if (preview) {
+    preview.pause();
+    if (preview.src.startsWith("blob:")) URL.revokeObjectURL(preview.src);
+    preview.removeAttribute("src");
+    preview.style.display = "none";
+  }
+  const timer = document.getElementById("voiceTimer");
+  if (timer) timer.textContent = "";
+  recordedChunks = [];
+  pendingBlob = null;
+  pendingBlobExt = null;
+  voiceTranscript = "";
+  voiceTranscriptBase = "";
+  captureVoiceFinal = "";
+  voiceTranscriptionSettled = true;
+  voiceRecorderSettled = true;
+  voiceCaptureFinalizing = false;
+  voiceCaptureFinalized = false;
+  voiceRecordingFailed = false;
+  captureVoiceLanguage = "";
+  voiceRecordingWasLive = false;
+  captureVoiceActive = false;
+  voiceMicPermission = null;
+  voiceHeardWords = false;
+  voiceNetworkMisses = 0;
+  voiceMicRetryUsed = false;
+  resetVoiceLangForCapture();
+  setVoiceLiveTranscript("");
+  setVoiceLocalSttVisible(false);
+  setVoiceRecordState("idle");
+  setVoiceRecordLabel("Capture voice", "mic");
+}
+
 async function toggleVoiceRecording() {
   if (captureVoiceActive) stopVoiceDictation();
   if (voiceCaptureBusy) return;
   const recording = Boolean(mediaRecorder && mediaRecorder.state === "recording");
+  const listening = captureRecordWantListening || Boolean(captureRecordRecognition);
   /* Stop is offered whenever *anything* is running — the recorder, the recogniser, or both.
      It used to ask only about the recorder, so a capture whose audio had failed (or had
      already ended) could not be stopped at all: the same button started a second capture
      over the one still listening. */
-  if (recording) {
+  if (recording || listening) {
     settleVoiceCapture();
-    mediaRecorder.stop();
     return;
   }
-  /* ---------- Upfront availability checks ---------- */
   const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   const hasMediaRecorder = !!window.MediaRecorder;
+  const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
-  if (!hasMediaDevices && !hasMediaRecorder) {
-    setVoiceLiveTranscript("Your browser cannot record voice — please type your capture instead.");
+  if (!hasSpeechRecognition && (!hasMediaDevices || !hasMediaRecorder)) {
+    setVoiceLiveTranscript(
+      "This browser cannot record or transcribe voice. Please type your capture instead.",
+    );
     setVoiceRecordState("idle");
     return;
   }
 
-  let stream = null;
+  pendingBlob = null;
+  pendingBlobExt = null;
+  recordedChunks = [];
+  const sessionId = ++voiceCaptureGeneration;
   voiceCaptureBusy = true;
   voiceRecordingWasLive = false;
+  voiceMicPromptPending = hasMediaDevices && hasMediaRecorder;
+  voiceRecorderSettled = true;
+  voiceCaptureFinalizing = false;
+  voiceCaptureFinalized = false;
+  voiceRecordingFailed = false;
+  setVoiceLocalSttVisible(false);
+  const transcriptionStarted = startVoiceTranscription();
+  if (!hasMediaDevices || !hasMediaRecorder) {
+    voiceCaptureBusy = false;
+    if (transcriptionStarted) {
+      setVoiceRecordState("recording");
+      setVoiceRecordLabel("Stop capture", "square");
+      setVoiceLiveTranscript("Listening… speak your capture. Audio recording is unavailable.");
+    } else {
+      setVoiceRecordState("idle");
+    }
+    return;
+  }
+
+  let stream = null;
+  const permission = Promise.resolve().then(() =>
+    navigator.mediaDevices.getUserMedia({ audio: true }),
+  );
+  voiceMicPermission = permission.then(
+    (grantedStream) => grantedStream,
+    () => null,
+  );
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await permission;
+    if (sessionId !== voiceCaptureGeneration) {
+      stream?.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    if (!stream) throw new Error("Microphone permission was denied.");
+    voiceMicPromptPending = false;
+    if (captureRecordWantListening) armVoiceSilenceStop();
     // The sheet can be closed while the permission prompt is open.
     const sheet = document.getElementById("captureModal");
     if (sheet && !sheet.classList.contains("open")) {
       stream.getTracks().forEach((track) => track.stop());
-      voiceCaptureBusy = false;
+      stopVoiceTranscription();
       return;
     }
-    recordedChunks = [];
+    captureMediaStream = stream;
     try {
       const mimeType =
         (window.MediaRecorder?.isTypeSupported?.("audio/webm;codecs=opus") && "audio/webm;codecs=opus") ||
@@ -780,51 +1069,75 @@ async function toggleVoiceRecording() {
         const blob = new Blob(recordedChunks, { type });
         pendingBlob = blob;
         pendingBlobExt = ext;
-        document.getElementById("voicePreview").src = URL.createObjectURL(blob);
-        document.getElementById("voicePreview").style.display = "block";
+        voiceRecorderSettled = true;
+        const preview = document.getElementById("voicePreview");
+        if (preview) {
+          preview.src = URL.createObjectURL(blob);
+          preview.style.display = "block";
+        }
         clearInterval(recordingInterval);
-        document.getElementById("voiceTimer").textContent = "";
+        recordingInterval = null;
+        const timer = document.getElementById("voiceTimer");
+        if (timer) timer.textContent = "";
         setVoiceRecordLabel("Capture again", "mic");
-        stream.getTracks().forEach((t) => t.stop());
+        stream.getTracks().forEach((track) => track.stop());
+        captureMediaStream = null;
+        if (voiceCaptureFinalizing) finishVoiceCapture();
       };
       mediaRecorder.start(500);
       voiceRecordingWasLive = true;
+      voiceRecorderSettled = false;
       recordingSeconds = 0;
       recordingInterval = setInterval(() => {
         recordingSeconds++;
-        document.getElementById("voiceTimer").textContent =
-          `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
+        const timer = document.getElementById("voiceTimer");
+        if (timer) {
+          timer.textContent =
+            `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
+        }
       }, 1000);
     } catch (recordError) {
-      // getUserMedia succeeded, so the microphone itself works: what failed is recording from
-      // it. The words are already flowing, so the message must not claim the microphone is
-      // blocked or leave the person thinking nothing is happening.
       mediaRecorder = null;
-      setVoiceLiveTranscript("This browser cannot save the audio — your words are still being captured.");
+      stream.getTracks().forEach((track) => track.stop());
+      captureMediaStream = null;
+      if (!transcriptionStarted) {
+        throw recordError;
+      }
+      setVoiceLiveTranscript(
+        "Audio recording is unavailable, but live speech is still being captured.",
+      );
     }
-    // A fresh recording clears the previous one's private-reader offer; it is reshown only if this
-    // recording also comes back with no words.
-    setVoiceLocalSttVisible(false);
     setVoiceRecordState("recording");
     setVoiceRecordLabel("Stop capture", "square");
   } catch (e) {
-    stopVoiceTranscription();
+    if (sessionId !== voiceCaptureGeneration) {
+      stream?.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    voiceMicPromptPending = false;
+    if (captureRecordWantListening) armVoiceSilenceStop();
     if (stream) stream.getTracks().forEach((track) => track.stop());
+    captureMediaStream = null;
     if (!mediaRecorder || mediaRecorder.state !== "recording") mediaRecorder = null;
-    setVoiceRecordState("idle");
-    const hasSR = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    const hasMD = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-    if (!hasSR && !hasMD) {
-      await alertDialog({ title: "Voice unavailable", body: "This browser cannot record audio or transcribe speech. Use the text input to create tasks, events and notes instead." });
-    } else if (!hasSR) {
-      await alertDialog({ title: "Voice not available", body: "Speech recognition is not available in this browser. You can still type your capture to create tasks, events and notes." });
-    } else if (!hasMD) {
-      await alertDialog({ title: "Microphone unavailable", body: "This browser cannot access the microphone. Speech recognition may still work — try tapping the mic again. Otherwise, type your capture instead." });
+    if (transcriptionStarted && captureRecordWantListening) {
+      setVoiceRecordState("recording");
+      setVoiceRecordLabel("Stop capture", "square");
+      setVoiceLiveTranscript(
+        "Audio recording could not start, but live speech is still being captured. Speak your capture, then tap Stop.",
+      );
     } else {
-      await alertDialog({ title: "Microphone blocked", body: "Everything could not reach the microphone. Check the browser permission for this site, then try again." });
+      setVoiceRecordState("idle");
+      setVoiceRecordLabel("Capture voice", "mic");
+      setVoiceLiveTranscript(
+        "Microphone access was denied or recording is unavailable. Allow microphone access, or type your capture instead.",
+      );
     }
   } finally {
-    voiceCaptureBusy = false;
+    if (sessionId === voiceCaptureGeneration) {
+      voiceMicPermission = null;
+      voiceMicPromptPending = false;
+      voiceCaptureBusy = false;
+    }
   }
 }
 
@@ -1785,15 +2098,29 @@ function previewGenericFile() {
 }
 
 async function uploadPendingBlob() {
-  if (!pendingBlob || !sbUser) return null;
-  const path = `${sbUser}/${cid()}.${pendingBlobExt}`;
-  const { error } = await sb.storage.from("captures").upload(path, pendingBlob);
-  if (error) {
-    console.error("Upload failed:", error.message);
-    return null;
+  if (!pendingBlob) {
+    const error = new Error("The attachment is missing. Choose it again and retry.");
+    error.name = "CaptureMediaUploadError";
+    throw error;
   }
-  const { data } = sb.storage.from("captures").getPublicUrl(path);
-  return data.publicUrl;
+  if (!sbUser || !sb?.storage) {
+    const error = new Error("Sign in before saving a voice, image, or file attachment.");
+    error.name = "CaptureMediaUploadError";
+    throw error;
+  }
+  const path = `${sbUser}/${cid()}.${pendingBlobExt}`;
+  try {
+    const { error } = await sb.storage.from("captures").upload(path, pendingBlob);
+    if (error) throw error;
+    const { data } = sb.storage.from("captures").getPublicUrl(path);
+    if (!data?.publicUrl) throw new Error("Attachment URL was not returned.");
+    return data.publicUrl;
+  } catch (error) {
+    console.error("Capture attachment upload failed:", error?.message || error);
+    const failure = new Error("The attachment could not be uploaded. Check your connection and try again.");
+    failure.name = "CaptureMediaUploadError";
+    throw failure;
+  }
 }
 let captureAutoDetected = false;
 let captureScope = "shared";
@@ -2018,9 +2345,7 @@ function openCapture() {
   capturePlanTouched = false;
   cancelAutoSave();
   renderCapturePlan();
-  // Voice capture state is owned by js/voice-capture.js.
-  if (window.__voiceCapture?.resetVoiceCaptureState)
-    window.__voiceCapture.resetVoiceCaptureState();
+  resetVoiceCaptureState();
   pickScope("shared");
   const row = document.getElementById("typeRow");
   const primary = CAPTURE_TYPES.filter((t) => CAPTURE_PRIMARY.includes(t.id));
@@ -2128,9 +2453,6 @@ function openCapture() {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
-  // Voice capture state is owned by js/voice-capture.js.
-  if (window.__voiceCapture?.resetVoiceCaptureState)
-    window.__voiceCapture.resetVoiceCaptureState();
   /* The caret lands in the box, as it always has — a sheet you open and cannot type into is a sheet
      you have to tap before you can use. enterDialog keeps that behaviour and adds what was missing:
      Tab stays inside the sheet, and closing it hands focus back to whatever opened it. */

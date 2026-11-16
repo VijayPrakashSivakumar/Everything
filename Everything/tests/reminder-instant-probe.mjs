@@ -62,9 +62,12 @@ try {
     await page.evaluate(() => { document.getElementById('authScreen').style.display = 'none'; });
 
     await check(`[${zone}] the page is really running in the forced zone`, async () => {
-      const offset = await page.evaluate(() => new Date().getTimezoneOffset());
-      const expected = zone === 'Asia/Kolkata' ? -330 : 420;
-      assert.equal(offset, expected, `expected a ${expected} minute offset, got ${offset}`);
+      const offsets = await page.evaluate(() => [
+        new Date('2026-01-15T12:00:00Z').getTimezoneOffset(),
+        new Date('2026-07-15T12:00:00Z').getTimezoneOffset(),
+      ]);
+      const expected = zone === 'Asia/Kolkata' ? [-330, -330] : [480, 420];
+      assert.deepEqual(offsets, expected, `expected offsets ${expected.join(', ')}, got ${offsets.join(', ')}`);
     });
 
     await check(`[${zone}] a task with a due instant reminds at that instant`, async () => {

@@ -33,7 +33,7 @@ try {
   // Every item created here is thrown away by reloading, so nothing reaches a real account.
   await page.evaluate(() => { window.fetch = () => Promise.resolve({ ok: false, status: 0, json: async () => ({}) }); });
 
-  await check('the voice picker and recorder fit the narrow capture sheet', async () => {
+  await check('the voice picker and inline mic fit the narrow capture sheet', async () => {
     await page.setViewportSize({ width: 440, height: 477 });
     const layout = await page.evaluate(() => {
       openCapture();
@@ -45,8 +45,9 @@ try {
       return {
         panelDisplay: getComputedStyle(document.getElementById('voiceCaptureUI')).display,
         panel: rect('voiceCaptureUI'),
+        modal: rect('captureModal'),
         languages: rect('voiceLangRow'),
-        recorder: rect('voiceRecordBtn'),
+        mic: rect('captureMicBtn'),
         viewportWidth: document.documentElement.clientWidth,
         documentWidth: document.documentElement.scrollWidth,
       };
@@ -54,9 +55,9 @@ try {
     assert.equal(layout.panelDisplay, 'block', 'the voice controls should stack vertically');
     assert.ok(layout.languages.left >= layout.panel.left - 1, 'the language picker starts outside the voice panel');
     assert.ok(layout.languages.right <= layout.panel.right + 1, 'the language picker spills past the voice panel');
-    assert.ok(layout.recorder.left >= layout.panel.left - 1, 'the record button starts outside the voice panel');
-    assert.ok(layout.recorder.right <= layout.panel.right + 1, 'the record button spills past the voice panel');
-    assert.ok(layout.recorder.width >= layout.panel.width - 2, 'the record button is not full width');
+    assert.ok(layout.mic.left >= layout.modal.left - 1, 'the mic starts outside the capture sheet');
+    assert.ok(layout.mic.right <= layout.modal.right + 1, 'the mic spills past the capture sheet');
+    assert.ok(layout.mic.width > 0, 'the inline mic is not visible');
     assert.ok(layout.documentWidth <= layout.viewportWidth, 'the capture sheet introduces horizontal page overflow');
     await page.evaluate(() => closeCapture());
     await page.setViewportSize({ width: 1280, height: 900 });

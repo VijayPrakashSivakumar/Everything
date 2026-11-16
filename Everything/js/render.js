@@ -40,21 +40,6 @@ function switchView(id, options = {}) {
     if (typeof demoToggle === "function") demoToggle();
     return;
   }
-  if (id === "help") {
-    const helpOverlay = document.getElementById("demoOverlay");
-    if (helpOverlay) {
-      helpOverlay.hidden = false;
-      helpOverlay.classList.add("open");
-      document.body.classList.add("demo-open");
-    }
-    activeView = id;
-    document
-      .querySelectorAll(".view")
-      .forEach((v) => v.classList.remove("active"));
-    const helpView = document.getElementById("view-help");
-    if (helpView) helpView.classList.add("active");
-    return;
-  }
   if (!document.getElementById("view-" + id)) return;
   const changed = activeView !== id;
   if (changed && mode === "push") navPushView(id);
@@ -87,6 +72,14 @@ function switchView(id, options = {}) {
 
   const content = document.querySelector(".content");
   if (content) content.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  if (id === "help") {
+    const helpOverlay = document.getElementById("demoOverlay");
+    if (helpOverlay) {
+      helpOverlay.hidden = false;
+      helpOverlay.classList.add("open");
+      document.body.classList.add("demo-open");
+    }
+  }
 
   /* Mark the view as one the person navigated to, so the stylesheet can play the arrival animation
      only for that case.
