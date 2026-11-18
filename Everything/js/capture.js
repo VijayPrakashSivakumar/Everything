@@ -2303,14 +2303,34 @@ function scheduleAutoSave(items, text) {
   // Same reasoning for a picture that carried a date: the kind is still undecided.
   if (captureImageChoicePending) return;
   if (!capturePlanIsClear(items)) return;
+  // Additional guard: never auto-create if the user has manually overridden the type detection
+  // or touched the plan, unless they explicitly opted in via the smart toggle.
+  if (capturePlanTouched) return;
   captureAutoSaveTimer = setTimeout(() => {
     captureAutoSaveTimer = null;
     const field = document.getElementById("captureText");
     // Kept typing, or already started correcting the plan: do not decide for them.
     if (!field || field.value.trim() !== text) return;
-    if (captureDuplicate || capturePlanTouched || captureSaveInFlight) return;
+    if (captureDuplicate || captureSaveInFlight) return;
+    // Show visible indication that auto-save is about to happen
+    hintAutoSaveInProgress();
     saveCapture(true, { auto: true });
   }, AUTO_SAVE_SETTLE_MS);
+}
+
+function hintAutoSaveInProgress() {
+  // Provide visible feedback that the app is about to auto-save
+  const hint = document.getElementById("captureHint");
+  if (hint) {
+    const originalText = hint.textContent;
+    hint.textContent = "Saving…";
+    // Restore after a short delay
+    setTimeout(() => {
+      if (hint.textContent === "Saving…") {
+        hint.textContent = originalText || "";
+      }
+    }, 2000);
+  }
 }
 
 function pickScope(scope) {
