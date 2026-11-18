@@ -2366,6 +2366,7 @@ function openCapture() {
   cancelAutoSave();
   renderCapturePlan();
   resetVoiceCaptureState();
+  renderVoiceLanguages();  // NEW: show language chips on sheet open
   pickScope("shared");
   const row = document.getElementById("typeRow");
   const primary = CAPTURE_TYPES.filter((t) => CAPTURE_PRIMARY.includes(t.id));
