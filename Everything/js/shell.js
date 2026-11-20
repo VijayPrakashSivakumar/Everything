@@ -720,6 +720,8 @@ const FIELD_HELP = {
     "Planned is not on today yet. Today means you intend to do it now. In progress means started. Waiting is blocked on someone else. Someday is deliberately not now.",
   editPriority: "Higher priority sorts nearer the top of Today and Tasks.",
   editRecurrence: "Finishing a repeating task creates the next one automatically.",
+  captureVoiceTranslateTarget:
+    "Off keeps your own words visible. Choose a language to translate speech into that language. The translation runs through the model and stays visible alongside the original.",
 };
 
 /* Puts the "i" beside a label. Runs once, at boot, and skips anything already mounted so it is
