@@ -44,3 +44,9 @@ The **Smart Capture / Auto-create** feature provides the most help to users by:
 - **Memory**: Language choice is remembered per user so future captures start from the preferred language
 - **Fallback**: If no preference is set, the app uses the browser locale (improved from silently inheriting it, which previously caused Tamil or Hindi speakers to get English transcription)
 - **How it works**: When the capture sheet opens, language chips appear at the top. Tapping a language chip sets the dictation language for that capture and remembers the choice for future uses. This follows the same "visible automation" principle as the smart capture feature - the app's decision is visible and the user can take control in one tap.
+
+### Voice Translation Target Help Tip
+
+- **New**: The translation language selector now has a help tip ("i" icon) explaining its purpose
+- **What it does**: Off keeps your own words visible. Choose a language to translate speech into that language. The translation runs through the model and stays visible alongside the original.
+- **How it works**: An "i" icon appears beside the "Translate to" label. Tapping it opens a bubble with the help text. This follows the same pattern as the recurrence and priority help tips already in the capture sheet.
