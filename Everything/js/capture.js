@@ -2070,140 +2070,6 @@ async function runImageOcr() {
     }
     input.value = append ? `${existing.replace(/\s+$/, "")}\n\n${text}` : text;
     lastOcrWritten = append ? `${existing.replace(/\s+$/, "")}\n\n${text}` : text;
-/* ---------- Ask AI about image ----------
-
-    After OCR reads text from an image, ask the model to describe or extract key information.
-    This is deliberately optional: the person can always type the note themselves.
-    The model runs through the same provider chain as Ask, so a failed or unconfigured
-    model costs the refinement and nothing else — capture always saves with the OCR text.
-
-    The prompt keeps the person's original language and script, and asks for a concise
-    description or extraction — nothing open-ended that could generate a very long answer.
-   */
-async function askAboutImage() {
-  const text = imageOcrText.trim();
-  if (!text) return;
-
-  // Use the /api/ask endpoint with a structured prompt about the image content
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
-
-  try {
-    const res = await apiFetch('/api/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'extract',
-        text: text,
-        // Ask the model to describe/extract from the captured text
-        // The model already has the context of being in a productivity app
-      }),
-      signal: controller.signal,
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.extraction) throw new Error(data.error || 'no answer');
-
-    const extraction = data.extraction;
-    // extraction is the first item from the plan, so it is the most important read
-    const description =
-      extraction.title || extraction.ambiguous || extraction.kind
-        ? `${extraction.title || ''} ${extraction.ambiguous || ''}`.trim()
-        : '';
-
-    // Show the AI description in a visible hint below the capture box
-    const hint = document.getElementById('imageAiHint');
-    if (description) {
-      if (!hint) {
-        const row = document.getElementById('imageAiRow');
-        if (!row) {
-          // Insert AI hint row after the OCR status
-          const statusRow = document.getElementById('imageOcrStatusRow');
-          const newRow = document.createElement('div');
-          newRow.id = 'imageAiRow';
-          newRow.className = 'field-row';
-          newRow.style.marginTop = '8px';
-          newRow.innerHTML = `
-            <span class="field-label">AI description</span>
-            <div class="field-value" id="imageAiHint" style="margin-top: 4px; min-height: 24px;">
-              ${description}
-            </div>
-            <button class="btn tiny" id="imageAiAcceptBtn"
-                    style="margin-top: 4px; font-size: 12px; padding: 4px 8px"
-                    onclick="acceptImageAiDescription()">Use description</button>
-          `;
-          if (statusRow) statusRow.parentNode.insertBefore(newRow, statusRow.nextSibling);
-          else document.getElementById('captureText').parentNode.insertBefore(newRow, document.getElementById('captureText'));
-        }
-        const hintEl = document.getElementById('imageAiHint');
-        if (hintEl) hintEl.textContent = description;
-      }
-      setImageOcrStatus(`AI description ready — tap "Use description" to accept`);
-    } else {
-      if (hint) hint.remove();
-      setImageOcrStatus('AI could not describe the image — the original OCR text is kept.');
-    }
-  } catch (err) {
-if (typeof originalOnCaptureInput === 'function') {
-    originalOnCaptureInput();
-    askAboutImage();
-  }
-}
-    console.error('Image AI error:', err);
-    if (hint) hint.remove();
-    setImageOcrStatus('AI description unavailable — the original OCR text is kept.');
-} finally {
-    clearTimeout(timer);
-    // Show the "Ask AI about image" button when AI description is ready and OCR text exists
-    const aiBtn = document.getElementById('imageAiBtn');
-    const hasOcrText = imageOcrText && imageOcrText.trim();
-    if (aiBtn) {
-      if (hasOcrText && document.getElementById('imageAiHint')) {
-        aiBtn.style.display = 'block';
-      } else {
-        aiBtn.style.display = 'none';
-      }
-    }
-  }
-}
-
-/* ---------- Make "Ask AI about image" button appear after OCR ---------- */
-
-// Show the button when OCR text is set and hide when it's cleared
-const originalOnCaptureInput = onCaptureInput;
-onCaptureInput = function() {
-  const aiBtn = document.getElementById('imageAiBtn');
-  if (aiBtn) {
-    const hasOcrText = imageOcrText && imageOcrText.trim();
-    aiBtn.style.display = hasOcrText ? 'block' : 'none';
-  }
-  // Call original function if it exists
-  if (typeof originalOnCaptureInput === 'function') {
-    originalOnCaptureInput();
-  }
-};
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/* Helper: accept the AI description and put it in the capture box */
-function acceptImageAiDescription() {
-  const hint = document.getElementById('imageAiHint');
-  if (!hint) return;
-  const description = hint.textContent.trim();
-  const input = document.getElementById('captureText');
-  if (input) {
-    // Prepend the AI description so the person can edit/override
-    input.value = [imageOcrText, description].filter(Boolean).join(' \n ');
-    onCaptureInput();
-  }
-  setImageOcrStatus('Description added — type more or save as-is.');
-  // Remove the hint UI
-  if (hint && hint.parentNode) hint.parentNode.removeChild(hint);
-  const row = document.getElementById('imageAiRow');
-  if (row && row.parentNode) row.parentNode.removeChild(row);
-}
     setImageOcrStatus(
       append
         ? `Read ${text.length} characters and added it to what was already there. Edit anything that looks wrong, then save.`
@@ -2220,6 +2086,69 @@ function acceptImageAiDescription() {
     ocrBusy = false;
     setOcrButtonBusy(false);
   }
+}
+
+async function askAboutImage() {
+  const text = String(imageOcrText || "").trim();
+  if (!text) return;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await apiFetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "extract", text }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.extraction) throw new Error(data.error || "No answer");
+
+    const extraction = data.extraction;
+    const description =
+      `${extraction.title || ""} ${extraction.ambiguous || ""}`.trim();
+    if (!description) {
+      setImageOcrStatus("AI could not describe the image — the original OCR text is kept.");
+      return;
+    }
+
+    const statusRow = document.getElementById("imageOcrStatusRow");
+    let row = document.getElementById("imageAiRow");
+    if (!row) {
+      row = document.createElement("div");
+      row.id = "imageAiRow";
+      row.className = "field-row";
+      row.style.marginTop = "8px";
+      row.innerHTML =
+        '<span class="field-label">AI description</span>' +
+        '<div class="field-value" id="imageAiHint" style="margin-top: 4px; min-height: 24px;"></div>' +
+        '<button class="btn tiny" id="imageAiAcceptBtn" type="button" style="margin-top: 4px" onclick="acceptImageAiDescription()">Use description</button>';
+      if (statusRow) statusRow.parentNode.insertBefore(row, statusRow.nextSibling);
+      else document.getElementById("captureText").parentNode.insertBefore(row, document.getElementById("captureText"));
+    }
+    const hint = document.getElementById("imageAiHint");
+    if (hint) hint.textContent = description;
+    setImageOcrStatus('AI description ready — tap "Use description" to accept.');
+  } catch (error) {
+    console.warn("image ai failed:", error);
+    setImageOcrStatus("AI description unavailable — the original OCR text is kept.");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function acceptImageAiDescription() {
+  const hint = document.getElementById("imageAiHint");
+  if (!hint) return;
+  const description = hint.textContent.trim();
+  const input = document.getElementById("captureText");
+  if (input) {
+    input.value = [imageOcrText, description].filter(Boolean).join(" \n ");
+    onCaptureInput();
+  }
+  setImageOcrStatus("Description added — type more or save as-is.");
+  const row = document.getElementById("imageAiRow");
+  if (row) row.remove();
 }
 
 function previewGenericFile() {
@@ -2861,6 +2790,8 @@ function onLinkInput() {
 
 function onCaptureInput() {
   const text = document.getElementById("captureText").value;
+  const aiBtn = document.getElementById("imageAiBtn");
+  if (aiBtn) aiBtn.style.display = imageOcrText.trim() ? "block" : "none";
   captureExtraction = null;
   // A stale plan belongs to words the person has since changed, so it is dropped.
   capturePlan = [];
