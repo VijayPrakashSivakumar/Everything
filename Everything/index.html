@@ -2622,6 +2622,18 @@
             class="voice-dictation-status"
             aria-live="polite"
           ></p>
+<!-- AI description hint for image OCR - appears after OCR completes -->
+<div id="imageAiHint" class="voice-dictation-status" style="margin-top: 8px; display: none; min-height: 24px;"></div>
+<!-- AI ask button - appears after OCR completes -->
+<button
+  class="btn tiny"
+  id="imageAiBtn"
+  style="margin-top: 8px; width: 100%; display: none; font-size: 12.5px; padding: 6px 12px"
+  onclick="askAboutImage()"
+>
+  <i data-lucide="sparkles" aria-hidden="true"></i>
+  <span>Ask AI about image</span>
+</button>
         </div>
 
         <div id="fileCaptureUI" style="display: none; margin: 10px 0">
