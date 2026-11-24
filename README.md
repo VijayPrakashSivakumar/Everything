@@ -50,3 +50,9 @@ The **Smart Capture / Auto-create** feature provides the most help to users by:
 - **New**: The translation language selector now has a help tip ("i" icon) explaining its purpose
 - **What it does**: Off keeps your own words visible. Choose a language to translate speech into that language. The translation runs through the model and stays visible alongside the original.
 - **How it works**: An "i" icon appears beside the "Translate to" label. Tapping it opens a bubble with the help text. This follows the same pattern as the recurrence and priority help tips already in the capture sheet.
+
+### Recurrence Help Tip
+
+- **New**: The recurrence selector now has a help tip ("i" icon) explaining its purpose
+- **What it does**: Finishing a repeating task creates the next one automatically, a week (or a month) after the date you completed it.
+- **How it works**: An "i" icon appears beside the "Repeats" label. Tapping it opens a bubble with the help text. This follows the same pattern as the voice translation and priority help tips already in the capture sheet.
