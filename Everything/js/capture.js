@@ -2144,6 +2144,11 @@ async function askAboutImage() {
       setImageOcrStatus('AI could not describe the image — the original OCR text is kept.');
     }
   } catch (err) {
+if (typeof originalOnCaptureInput === 'function') {
+    originalOnCaptureInput();
+    askAboutImage();
+  }
+}
     console.error('Image AI error:', err);
     if (hint) hint.remove();
     setImageOcrStatus('AI description unavailable — the original OCR text is kept.');

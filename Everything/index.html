@@ -762,6 +762,12 @@
     font-size: 13.5px;
     cursor: pointer;
     border-bottom: 1px solid var(--border);
+<!-- Home-screen widget for quick access -->
+<div class="widget-quick" id="quickWidget" style="display: none; margin: 8px; padding: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; min-width: 200px; font-size: 12.5px;">
+  <div style="font-weight: 600; margin-bottom: 8px;">Due Today</div>
+  <div id="widgetItemCount" style="color: var(--muted); margin-bottom: 8px;">0 items</div>
+  <button class="btn tiny" style="width: 100%; font-size: 12px; padding: 6px 12px;" onclick="switchView('today')">Open Today</button>
+</div>
   "
 >
   Help &amp; demo
